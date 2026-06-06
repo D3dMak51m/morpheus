@@ -1,17 +1,8 @@
 """
-ORPHEUS — Guardrails Module (AI Output Validator)
-===================================================
-Validates generated text before it is sent to MYRMIDON for publication.
-Ensures the output does not contain detectable AI markers, promotional
-language, or content that would trigger platform safety filters.
-
-Validation rules:
-  1. No common AI-generated phrases ("as an AI", "I'm a language model", etc.)
-  2. No excessive hashtag usage
-  3. No corporate/promotional tone markers
-  4. Length bounds enforcement
-  5. No repeated sentences or phrases
-  6. Basic profanity/toxicity filtering (to avoid platform bans)
+ORPHEUS — Guardrails Validator
+================================
+Validates synthesized LLM outputs to ensure they are free of AI markers,
+meet length constraints, and match the persona's style.
 """
 
 import logging
@@ -20,159 +11,89 @@ from typing import Tuple
 
 logger = logging.getLogger("orpheus.guardrails")
 
-# ── AI marker patterns (case-insensitive) ─────────────────────────────────
-
-AI_MARKER_PATTERNS = [
-    r"\bas an ai\b",
-    r"\bi'?m a language model\b",
-    r"\bi'?m an ai\b",
-    r"\bas a large language model\b",
-    r"\bai assistant\b",
-    r"\bi cannot provide\b",
-    r"\bi don'?t have personal\b",
-    r"\bmy training data\b",
-    r"\bi was trained\b",
-    r"\baccording to my knowledge\b",
-    r"\bI'?m not able to\b",
-    r"\bmy programming\b",
-    r"\bI'?m designed to\b",
-    r"\bI'?m here to help\b",
-    r"\bI appreciate your\b",
-    r"\bgreat question\b",
-    r"\bthat's a great\b",
-    r"\blet me help you\b",
-    r"\bcertainly!\b",
-    r"\babsolutely!\b",
-    r"\bdefinitely!\b",
-    r"\bof course!\b",
-    # Russian AI markers
-    r"\bкак ии\b",
-    r"\bкак языковая модель\b",
-    r"\bя не могу предоставить\b",
-    r"\bмои тренировочные данные\b",
-    r"\bсогласно моим знаниям\b",
-    r"\bотличный вопрос\b",
-    r"\bбезусловно!\b",
+# Common AI phrasing markers that ruin the illusion of a human persona
+AI_MARKERS = [
+    r"as an ai",
+    r"i am an ai",
+    r"as a language model",
+    r"в качестве искусственного интеллекта",
+    r"как ии",
+    r"я искусственный интеллект",
+    r"я языковая модель",
+    r"however, it is important to note",
+    r"it's important to note",
+    r"важно отметить, что",
+    r"я не могу",
+    r"i cannot",
+    r"i apologize",
+    r"приношу свои извинения",
+    r"as a helpful assistant",
+    r"как полезный помощник"
 ]
 
-# Compile patterns for performance
-_ai_marker_regex = re.compile(
-    "|".join(AI_MARKER_PATTERNS),
-    re.IGNORECASE,
-)
-
-# ── Promotional/corporate tone markers ────────────────────────────────────
-
-PROMO_PATTERNS = [
-    r"#\w+\s*#\w+\s*#\w+",  # 3+ consecutive hashtags
-    r"\bcheck out\b.*\blink\b",
-    r"\bsubscribe\b.*\bchannel\b",
-    r"\bfollow me\b",
-    r"\blike and share\b",
-    r"\buse code\b",
-    r"\bdiscount\b.*\blink\b",
-    r"\bподписывайтесь\b",
-    r"\bставьте лайк\b",
-    r"\bссылка в описании\b",
+# Marketing / Spam markers
+SPAM_MARKERS = [
+    r"click here",
+    r"нажми сюда",
+    r"переходи по ссылке",
+    r"купить сейчас",
+    r"subscribe to",
+    r"подписывайтесь на канал"
 ]
 
-_promo_regex = re.compile(
-    "|".join(PROMO_PATTERNS),
-    re.IGNORECASE,
-)
+class OutputGuardrails:
+    def __init__(self):
+        self.ai_patterns = [re.compile(marker, re.IGNORECASE) for marker in AI_MARKERS]
+        self.spam_patterns = [re.compile(marker, re.IGNORECASE) for marker in SPAM_MARKERS]
 
-# ── Length bounds ─────────────────────────────────────────────────────────
+    def validate_output(self, text: str) -> Tuple[bool, str]:
+        """
+        Validates the text against strict rules.
+        Returns (is_valid, reason_if_invalid).
+        """
+        if not text or not text.strip():
+            return False, "Output is empty."
 
-MIN_RESPONSE_LENGTH = 10    # Characters
-MAX_RESPONSE_LENGTH = 1000  # Characters
+        text_lower = text.lower()
 
+        # 1. Length bounds
+        if len(text) < 10:
+            return False, "Output is too short (less than 10 characters)."
+        
+        if len(text) > 2000:
+            return False, "Output is too long (exceeds 2000 characters)."
 
-def validate_text(text: str) -> Tuple[bool, str]:
-    """
-    Run all guardrail checks on a generated text.
+        # 2. Check for AI markers
+        for pattern in self.ai_patterns:
+            if pattern.search(text_lower):
+                return False, f"Detected AI marker: {pattern.pattern}"
 
-    Returns:
-        Tuple of (is_safe: bool, cleaned_text: str).
-        If is_safe is False, the text should NOT be published.
-        cleaned_text contains minor sanitizations applied to safe text.
-    """
-    if not text or not text.strip():
-        logger.warning("Guardrails: empty text received.")
-        return False, ""
+        # 3. Check for spam/marketing markers
+        for pattern in self.spam_patterns:
+            if pattern.search(text_lower):
+                return False, f"Detected spam/marketing marker: {pattern.pattern}"
 
-    cleaned = text.strip()
+        # 4. Check for excessive repetition (e.g., LLM looping)
+        words = text_lower.split()
+        if len(words) > 20:
+            # Check if any 3-word phrase repeats more than 3 times
+            phrases = [" ".join(words[i:i+3]) for i in range(len(words)-2)]
+            for phrase in set(phrases):
+                if phrases.count(phrase) > 3:
+                    return False, "Output contains excessive repetition."
 
-    # ── Check 1: AI markers ───────────────────────────────────────
-    ai_match = _ai_marker_regex.search(cleaned)
-    if ai_match:
-        logger.warning(
-            "Guardrails REJECT — AI marker detected: '%s'",
-            ai_match.group(),
-        )
-        return False, cleaned
+        # 5. Check for formatting breaks (raw JSON, code blocks)
+        if "```" in text:
+            return False, "Output contains markdown code blocks."
+        if text.strip().startswith("{") and text.strip().endswith("}"):
+            return False, "Output leaked raw JSON format."
 
-    # ── Check 2: Promotional language ─────────────────────────────
-    promo_match = _promo_regex.search(cleaned)
-    if promo_match:
-        logger.warning(
-            "Guardrails REJECT — promotional pattern detected: '%s'",
-            promo_match.group(),
-        )
-        return False, cleaned
+        # 6. Check for Character Slip markers
+        slip_markers = [
+            "as a persona", "i am roleplaying", "here is my response", "вот мой ответ"
+        ]
+        for marker in slip_markers:
+            if marker in text_lower:
+                return False, f"Character slip detected: {marker}"
 
-    # ── Check 3: Length bounds ────────────────────────────────────
-    if len(cleaned) < MIN_RESPONSE_LENGTH:
-        logger.warning(
-            "Guardrails REJECT — text too short (%d chars, min=%d).",
-            len(cleaned),
-            MIN_RESPONSE_LENGTH,
-        )
-        return False, cleaned
-
-    if len(cleaned) > MAX_RESPONSE_LENGTH:
-        logger.info(
-            "Guardrails TRIM — text too long (%d chars, max=%d). Truncating.",
-            len(cleaned),
-            MAX_RESPONSE_LENGTH,
-        )
-        # Truncate at the last sentence boundary before the limit
-        truncated = cleaned[:MAX_RESPONSE_LENGTH]
-        last_period = max(
-            truncated.rfind("."),
-            truncated.rfind("!"),
-            truncated.rfind("?"),
-        )
-        if last_period > MIN_RESPONSE_LENGTH:
-            cleaned = truncated[: last_period + 1]
-        else:
-            cleaned = truncated
-
-    # ── Check 4: Repeated sentences ──────────────────────────────
-    sentences = re.split(r"[.!?]+", cleaned)
-    sentences = [s.strip().lower() for s in sentences if s.strip()]
-    if len(sentences) >= 2:
-        unique = set(sentences)
-        if len(unique) < len(sentences) * 0.5:
-            logger.warning(
-                "Guardrails REJECT — excessive repetition detected (%d/%d unique).",
-                len(unique),
-                len(sentences),
-            )
-            return False, cleaned
-
-    # ── Check 5: Excessive exclamation/emoji density ─────────────
-    exclamation_count = cleaned.count("!")
-    if exclamation_count > 5:
-        logger.info(
-            "Guardrails SANITIZE — reducing excessive exclamation marks (%d).",
-            exclamation_count,
-        )
-        # Replace consecutive exclamation marks
-        cleaned = re.sub(r"!{2,}", "!", cleaned)
-
-    # ── Check 6: Strip trailing whitespace and normalize ─────────
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    cleaned = cleaned.strip()
-
-    logger.debug("Guardrails PASS — text length=%d chars.", len(cleaned))
-    return True, cleaned
+        return True, "Valid"

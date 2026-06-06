@@ -9,7 +9,7 @@ Endpoints:
   POST /api/v1/memory/search  — Find past dialog matches by semantic similarity
   POST /api/v1/memory/save    — Store a new dialog summary as a vector embedding
 
-Embedding model: multilingual-e5-small (runs on CPU).
+Embedding model: intfloat/multilingual-e5-small (runs strictly on CPU).
 """
 
 import logging
@@ -22,6 +22,7 @@ import chromadb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
@@ -31,7 +32,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("muninn")
 
-# ── ChromaDB Configuration ───────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────────────────────
 
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "/app/chroma_db")
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-small")
@@ -40,6 +41,7 @@ COLLECTION_NAME = "morpheus_agent_memory"
 # Global references set during lifespan
 chroma_client: Optional[chromadb.ClientAPI] = None
 memory_collection: Optional[chromadb.Collection] = None
+embedding_model: Optional[SentenceTransformer] = None
 
 
 # ── Pydantic schemas (exact JSON contracts from bootstrap_protocols.md) ──
@@ -83,8 +85,8 @@ class HealthResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Initialize ChromaDB client and collection on startup."""
-    global chroma_client, memory_collection
+    """Initialize ChromaDB client, collection and embedding model on startup."""
+    global chroma_client, memory_collection, embedding_model
 
     logger.info("MUNINN starting — initializing ChromaDB (persist_dir=%s)...", CHROMA_PERSIST_DIR)
 
@@ -101,6 +103,11 @@ async def lifespan(application: FastAPI):
         COLLECTION_NAME,
         doc_count,
     )
+    
+    logger.info("Loading embedding model '%s' strictly on CPU...", EMBEDDING_MODEL_NAME)
+    embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu')
+    logger.info("Embedding model loaded.")
+
     yield
     logger.info("MUNINN shutting down.")
 
@@ -145,14 +152,12 @@ def search_memory(request: MemorySearchRequest) -> MemorySearchResponse:
 
     Finds the most relevant past conversation fragments between
     the specified agent and opponent, ranked by cosine similarity.
-
-    Contract (from bootstrap_protocols.md):
-      POST http://muninn:8002/api/v1/memory/search
-      Payload: { agent_id, opponent_id, query_text }
-      Response: { status, matches: [{ text, distance }] }
     """
-    if memory_collection is None:
-        raise HTTPException(status_code=503, detail="ChromaDB collection not initialized")
+    if memory_collection is None or embedding_model is None:
+        raise HTTPException(status_code=503, detail="Services not initialized")
+
+    # Generate embedding
+    query_embedding = embedding_model.encode([request.query_text]).tolist()
 
     # Build a composite filter for agent+opponent scoping
     where_filter = {
@@ -164,7 +169,7 @@ def search_memory(request: MemorySearchRequest) -> MemorySearchResponse:
 
     try:
         results = memory_collection.query(
-            query_texts=[request.query_text],
+            query_embeddings=query_embedding,
             n_results=5,
             where=where_filter,
         )
@@ -202,17 +207,17 @@ def save_memory(request: MemorySaveRequest) -> MemorySaveResponse:
 
     The dialog_summary is embedded using multilingual-e5-small (CPU)
     and indexed with agent_id + opponent_id metadata for scoped retrieval.
-
-    Contract (from bootstrap_protocols.md):
-      POST http://muninn:8002/api/v1/memory/save
-      Payload: { agent_id, opponent_id, dialog_summary }
     """
-    if memory_collection is None:
-        raise HTTPException(status_code=503, detail="ChromaDB collection not initialized")
+    if memory_collection is None or embedding_model is None:
+        raise HTTPException(status_code=503, detail="Services not initialized")
 
     memory_id = str(uuid.uuid4())
 
+    # Generate embedding
+    doc_embedding = embedding_model.encode([request.dialog_summary]).tolist()
+
     memory_collection.add(
+        embeddings=doc_embedding,
         documents=[request.dialog_summary],
         metadatas=[
             {

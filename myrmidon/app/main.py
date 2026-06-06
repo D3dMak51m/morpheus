@@ -287,65 +287,70 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
 def _execute_telegram(task: dict, credentials: dict) -> None:
     """
     Execute a Telegram action via Pyrogram MTProto.
-    Full implementation in Stage 4 (Pyrogram session management).
     """
     task_id = task.get("task_id")
     text_to_publish = task.get("text_to_publish", "")
+    target_url = task.get("target_url", "")
+    agent_id = task.get("agent_id")
 
     logger.info(
         "Task %s — Telegram execution via Pyrogram. "
-        "Text length: %d chars. MTProto driver will be activated in Stage 4.",
+        "Text length: %d chars.",
         task_id,
         len(text_to_publish),
     )
 
-    # Stage 4 integration point:
-    # 1. Initialize Pyrogram client with session cookies
-    # 2. Navigate to target chat/channel
-    # 3. Type and send the message with human-like timing
-    # 4. Handle DM bypass if applicable
-
-    typing_delay = calculate_typing_delay(len(text_to_publish))
-    logger.debug(
-        "Task %s — typing emulation would take %.1fs for %d chars.",
-        task_id,
-        typing_delay,
-        len(text_to_publish),
-    )
+    from app.drivers.tg_client import TelegramDriver
+    driver = TelegramDriver(agent_id, credentials)
+    success = driver.execute_comment(target_url, text_to_publish)
+    
+    if success:
+         logger.info("Task %s completed successfully on Telegram.", task_id)
+    else:
+         logger.error("Task %s failed on Telegram.", task_id)
 
 
 def _execute_appium(task: dict, credentials: dict) -> None:
     """
     Execute a mobile platform action via Appium.
-    Full implementation in Stage 4 (Page Object drivers).
     """
     task_id = task.get("task_id")
     platform = task.get("target_platform")
     text_to_publish = task.get("text_to_publish", "")
+    target_url = task.get("target_url", "")
+    agent_id = task.get("agent_id")
 
     logger.info(
         "Task %s — %s execution via Appium. "
-        "Text length: %d chars. Mobile driver will be activated in Stage 4.",
+        "Text length: %d chars.",
         task_id,
         platform,
         len(text_to_publish),
     )
 
-    # Stage 4 integration point:
-    # 1. Launch Android emulator with proxy configuration
-    # 2. Open target app via Appium
-    # 3. Navigate to target post
-    # 4. Simulate human reading delay
-    # 5. Type comment at ~200 chars/min
-    # 6. Post and verify
-
     simulate_read_delay()
-    typing_delay = calculate_typing_delay(len(text_to_publish))
-    logger.debug(
-        "Task %s — read delay applied, typing emulation would take %.1fs.",
-        task_id,
-        typing_delay,
-    )
+    
+    success = False
+    
+    if platform == "instagram":
+         from app.drivers.instagram import InstagramDriver
+         driver = InstagramDriver(agent_id, credentials)
+         success = driver.execute_comment(target_url, text_to_publish)
+    elif platform == "threads":
+         from app.drivers.threads import ThreadsDriver
+         driver = ThreadsDriver(agent_id, credentials)
+         success = driver.execute_comment(target_url, text_to_publish)
+    elif platform == "youtube":
+         from app.drivers.youtube import YouTubeDriver
+         driver = YouTubeDriver(agent_id, credentials)
+         success = driver.execute_comment(target_url, text_to_publish)
+    else:
+         logger.warning("Mobile driver for %s not fully implemented yet.", platform)
+
+    if success:
+         logger.info("Task %s completed successfully on %s.", task_id, platform)
+    else:
+         logger.error("Task %s failed on %s.", task_id, platform)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────

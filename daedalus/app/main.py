@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db, init_tables
 from app.db_explorer import router as db_explorer_router
+from app.analytics import router as analytics_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -126,6 +127,7 @@ app.add_middleware(
 # ── Include sub-routers ──────────────────────────────────────────────────
 
 app.include_router(db_explorer_router)
+app.include_router(analytics_router)
 
 
 # ── Pydantic request/response schemas ────────────────────────────────────

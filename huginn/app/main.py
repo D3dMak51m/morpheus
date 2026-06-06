@@ -9,12 +9,9 @@ Data flow:
   2. Classify content by layers: Global → Region → State → City → Personal
   3. Apply TTL filtering (X/Threads > 12h → discard, TG group > 2h → discard)
   4. Serialize events to Redis queue 'queue:raw_events' for ORPHEUS
-
-Full scraper implementations (Telethon parsers, web scrapers) will be
-built in Stage 2. This entrypoint establishes the Redis connection,
-validates queue health, and runs the polling loop skeleton.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -24,6 +21,11 @@ import time
 from typing import Optional
 
 import redis
+
+from app.router import classify_layers
+from app.scrapers.tg_scraper import run_tg_scraper
+from app.scrapers.web_scraper import run_web_scraper
+from app.scrapers.gamma_noise import run_gamma_noise_scheduler
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
@@ -45,7 +47,7 @@ TTL_THRESHOLDS = {
     "twitter": 12 * 3600,     # 12 hours for X/Twitter
     "threads": 12 * 3600,     # 12 hours for Threads
     "telegram_group": 2 * 3600,  # 2 hours for Telegram groups
-    "telegram_channel": 24 * 3600,  # 24 hours for Telegram channels (more generous)
+    "telegram_channel": 24 * 3600,  # 24 hours for Telegram channels
     "instagram": 24 * 3600,
     "facebook": 24 * 3600,
     "youtube": 48 * 3600,
@@ -118,32 +120,6 @@ def is_content_expired(platform: str, timestamp: int) -> bool:
     return age > threshold
 
 
-# ── Layer classification ──────────────────────────────────────────────────
-
-def classify_layers(text_content: str, source_metadata: Optional[dict] = None) -> dict:
-    """
-    Assign geographic and thematic layers to a piece of content.
-    Layers: Global, Region (Central Asia), State, City, Personal.
-
-    Full NLP-based classification will be implemented in Stage 2.
-    This skeleton uses metadata hints when available.
-    """
-    layers = {
-        "global": None,
-        "region": None,
-        "state": None,
-        "city": None,
-        "personal_tags": [],
-    }
-
-    if source_metadata:
-        layers["state"] = source_metadata.get("state")
-        layers["city"] = source_metadata.get("city")
-        layers["personal_tags"] = source_metadata.get("personal_tags", [])
-
-    return layers
-
-
 # ── Event publishing ──────────────────────────────────────────────────────
 
 def publish_raw_event(
@@ -185,16 +161,12 @@ def publish_raw_event(
 
 # ── Main loop ─────────────────────────────────────────────────────────────
 
-def main() -> None:
+async def main_loop() -> None:
     """
-    HUGINN main entrypoint.
-
-    1. Connect to Redis and verify queue accessibility.
-    2. Enter the polling loop (scrapers will be added in Stage 2).
-    3. On each cycle: run scrapers → filter by TTL → classify layers → publish to Redis.
+    HUGINN main entrypoint (Async).
     """
     logger.info("=" * 60)
-    logger.info("HUGINN News Aggregator — Starting Up")
+    logger.info("HUGINN News Aggregator — Starting Up (Stage 2)")
     logger.info("=" * 60)
 
     redis_client = connect_redis()
@@ -207,39 +179,34 @@ def main() -> None:
         queue_len,
     )
 
-    logger.info(
-        "Entering main polling loop (interval=%ds). "
-        "Scrapers will be activated in Stage 2.",
-        POLL_INTERVAL_SEC,
-    )
-
+    logger.info("Starting scraper tasks...")
+    
+    # Run scrapers concurrently
+    tg_task = asyncio.create_task(run_tg_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event))
+    web_task = asyncio.create_task(run_web_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event))
+    gamma_task = asyncio.create_task(run_gamma_noise_scheduler(redis_client, publish_raw_event))
+    
     while not _shutdown_requested:
         try:
-            # ── Stage 2 integration point ──────────────────────────
-            # Here the Telethon and BS4 scrapers will:
-            #   1. Fetch new posts from monitored channels/pages
-            #   2. Download media to /app/data_lake/raw_media/
-            #   3. Apply TTL filter via is_content_expired()
-            #   4. Classify layers via classify_layers()
-            #   5. Publish via publish_raw_event()
-            # ───────────────────────────────────────────────────────
-
             # Periodic TTL cleanup of stale cached posts
             cached_count = redis_client.llen("cache:post_ids")
             if cached_count > 0:
                 logger.debug("Post ID cache size: %d", cached_count)
 
-            time.sleep(POLL_INTERVAL_SEC)
-
+            await asyncio.sleep(POLL_INTERVAL_SEC)
         except redis.ConnectionError as exc:
             logger.error("Redis connection lost: %s — attempting reconnect...", exc)
             redis_client = connect_redis()
         except Exception:
             logger.exception("Unexpected error in HUGINN main loop")
-            time.sleep(POLL_INTERVAL_SEC)
+            await asyncio.sleep(POLL_INTERVAL_SEC)
 
+    # Cancel tasks on shutdown
+    tg_task.cancel()
+    web_task.cancel()
+    gamma_task.cancel()
     logger.info("HUGINN shutdown complete.")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_loop())
