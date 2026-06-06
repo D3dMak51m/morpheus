@@ -16,7 +16,11 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -25,6 +29,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db, init_tables
 from app.db_explorer import router as db_explorer_router
 from app.analytics import router as analytics_router
+from app.landscape import router as landscape_router
+from app.souls import router as souls_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -128,6 +134,14 @@ app.add_middleware(
 
 app.include_router(db_explorer_router)
 app.include_router(analytics_router)
+app.include_router(landscape_router)
+app.include_router(souls_router)
+
+# ── Static Frontend SPA ──────────────────────────────────────────────────
+
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # ── Pydantic request/response schemas ────────────────────────────────────
@@ -206,7 +220,7 @@ class UserInfoResponse(BaseModel):
 
 # ── Health Check ──────────────────────────────────────────────────────────
 
-@app.get("/", response_model=HealthResponse, tags=["System"])
+@app.get("/api/v1/health", response_model=HealthResponse, tags=["System"])
 def health_check() -> HealthResponse:
     """Service health and version check."""
     return HealthResponse(service="daedalus", status="operational", version="0.1.0")
@@ -461,3 +475,17 @@ def list_available_permissions(
 ) -> dict[str, list[str]]:
     """Return the full list of available atom permissions in the system."""
     return {"permissions": sorted(ATOM_PERMISSIONS)}
+
+
+# ── SPA Fallback (must be last) ──────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+async def spa_fallback(request: Request, full_path: str = ""):
+    """Serve the SPA index.html for all non-API routes."""
+    if full_path.startswith("api/") or full_path.startswith("static/"):
+        raise HTTPException(status_code=404)
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>DAEDALUS</h1><p>Frontend not built.</p>")

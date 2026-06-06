@@ -133,3 +133,105 @@ class SoulAccount(Base):
             f"<SoulAccount(id={self.id}, agent='{self.agent_id}', "
             f"platform='{self.platform}', user='{self.username}')>"
         )
+
+
+class AgentProfile(Base):
+    """
+    Full psychological profile for an AI agent persona.
+    Replaces static YAML personality files with a database-driven model.
+    ORPHEUS fetches these via DAEDALUS REST API at prompt-assembly time.
+    """
+    __tablename__ = "agent_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    codename: Mapped[str] = mapped_column(String(100), nullable=False)
+    caste: Mapped[str] = mapped_column(String(20), default="alpha", nullable=False)
+
+    # Identity
+    full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    birth_date: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    residence_city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    residence_state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    nationality: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    profession: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    education: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
+    # Language & Interests
+    spoken_languages: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    core_interests: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+
+    # Personality (tone, vocab_level, emoji_frequency, humor_style, typing_quirks)
+    communication_style: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+
+    # Behavioral Rules (max_posts_per_hour, min_delay, max_comment_length, dm_policy, etc.)
+    behavioral_rules: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+
+    # Platforms this agent operates on (e.g. ["telegram", "instagram"])
+    platforms: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+
+    # Geographic layer affinities (global, region, state, city, personal)
+    layers_affinity: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+
+    # Activity window (0-23 hours)
+    active_hours_start: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
+    active_hours_end: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
+
+    # Mission & Stance
+    core_mission: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    current_stance_modifiers: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AgentProfile(agent_id='{self.agent_id}', codename='{self.codename}', caste='{self.caste}')>"
+
+
+class ScrapingLandscape(Base):
+    """
+    Dynamic scraping target registry.
+    Replaces hardcoded TARGET_CHANNELS and TARGET_URLS in HUGINN scrapers.
+    Managed via DAEDALUS /api/v1/landscape endpoints.
+    """
+    __tablename__ = "scraping_landscape"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    target_identifier: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    associated_tags: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScrapingLandscape(platform='{self.platform}', target='{self.target_identifier}', active={self.is_active})>"
+
+
+class AgentActivityLog(Base):
+    """
+    Audit trail for every action dispatched by the MORPHEUS swarm.
+    Records comment text, target URL, agent, platform, and outcome.
+    """
+    __tablename__ = "agent_activity_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    text_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="dispatched", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<AgentActivityLog(agent='{self.agent_id}', action='{self.action_type}', status='{self.status}')>"

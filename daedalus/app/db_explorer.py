@@ -64,7 +64,7 @@ class RawQueryResponse(BaseModel):
 
 # ── Allowed tables (whitelist to prevent injection) ───────────────────────
 
-ALLOWED_TABLES = {"admin_users", "roles", "role_permissions", "user_roles", "souls_accounts"}
+ALLOWED_TABLES = {"admin_users", "roles", "role_permissions", "user_roles", "souls_accounts", "agent_profiles", "scraping_landscape", "agent_activity_logs"}
 
 
 def _validate_table_name(table: str) -> None:
