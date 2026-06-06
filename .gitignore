@@ -1,0 +1,44 @@
+# =============================================================
+# PROJECT MORPHEUS — .gitignore
+# =============================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files (contain secrets)
+.env
+
+# Docker
+*.log
+
+# Data (large files, temporary media)
+data_lake/raw_media/*
+!data_lake/raw_media/.gitkeep
+data_lake/logs/*
+!data_lake/logs/.gitkeep
+
+# ChromaDB persistence
+chroma_db/
+
+# OS
+.DS_Store
+Thumbs.db

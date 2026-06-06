@@ -1,0 +1,125 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: morpheus-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-morpheus_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-morpheus_secure_pass}
+      POSTGRES_DB: morpheus_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - morpheus_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-morpheus_admin} -d morpheus_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: morpheus-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - morpheus_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  muninn:
+    build: ./muninn
+    container_name: morpheus-muninn
+    ports:
+      - "8002:8002"
+    volumes:
+      - chromadata:/app/chroma_db
+    networks:
+      - morpheus_net
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  daedalus:
+    build: ./daedalus
+    container_name: morpheus-daedalus
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./global_config:/app/global_config
+    networks:
+      - morpheus_net
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  huginn:
+    build: ./huginn
+    container_name: morpheus-huginn
+    volumes:
+      - ./data_lake:/app/data_lake
+    networks:
+      - morpheus_net
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  orpheus:
+    build: ./orpheus
+    container_name: morpheus-orpheus
+    ports:
+      - "8001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./data_lake:/app/data_lake
+      - ./global_config:/app/global_config
+    networks:
+      - morpheus_net
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      muninn:
+        condition: service_started
+
+  myrmidon:
+    build: ./myrmidon
+    container_name: morpheus-myrmidon
+    volumes:
+      - ./global_config:/app/global_config
+    networks:
+      - morpheus_net
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  chromadata:
+
+networks:
+  morpheus_net:
+    driver: bridge
