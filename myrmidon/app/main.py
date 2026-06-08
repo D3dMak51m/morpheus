@@ -375,8 +375,23 @@ def _execute_appium(task: dict, credentials: dict) -> None:
         from app.adb_supervisor import ADBSupervisor
         adb_sup = ADBSupervisor()
         device_id = adb_sup.get_mapped_device(agent_id)
+        
         if device_id:
+            # Stage 12: Hardware isolation via Snapshots
+            # 1. Boot from clean state (load idle_snap)
+            adb_sup.manage_device_snapshot(device_id, "load", "idle_snap")
+            time.sleep(2) # Give the emulator a moment to settle
+            
+            # 2. Hardware spoof
             adb_sup.spoof_device_hardware(device_id, serial=f"SPOOF-{agent_id[:8]}")
+            
+            # 3. Enforce proxy inside Android via settings
+            proxy = credentials.get("assigned_proxy")
+            if proxy:
+                if "://" in proxy:
+                    proxy = proxy.split("://")[1]
+                host, port = proxy.split(":")
+                adb_sup.enforce_os_level_proxy(device_id, host, int(port))
         
         if platform == "instagram":
              from app.drivers.instagram import InstagramDriver
@@ -399,9 +414,15 @@ def _execute_appium(task: dict, credentials: dict) -> None:
         else:
              logger.error("Task %s failed on %s.", task_id, platform)
              _log_activity_to_daedalus(task, "FAILED")
+             
     except Exception as e:
         logger.error("Task %s crashed on %s: %s", task_id, platform, e)
         _log_activity_to_daedalus(task, "FAILED")
+    finally:
+        # Stage 12 Cleanup: Save snapshot and shutdown
+        if device_id:
+            adb_sup.manage_device_snapshot(device_id, "save", "idle_snap")
+            adb_sup.shutdown_device(device_id)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────

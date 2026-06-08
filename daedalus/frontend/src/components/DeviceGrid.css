@@ -89,3 +89,62 @@
   border: 1px dashed var(--border-subtle);
   border-radius: 12px;
 }
+
+.create-device-form {
+  display: flex;
+  gap: 8px;
+}
+.create-device-form input {
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+.device-assignment {
+  margin-top: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.agent-tag {
+  background: rgba(0,240,255,0.1);
+  color: var(--primary-color);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.assign-inputs {
+  display: flex;
+  gap: 6px;
+}
+.assign-inputs input {
+  flex: 1;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border-color);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+.btn-icon:hover {
+  background: rgba(255,255,255,0.1);
+}
+.text-danger { color: #ff4444; }
+.text-success { color: #00e676; }
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

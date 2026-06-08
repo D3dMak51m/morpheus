@@ -226,6 +226,16 @@ def main() -> None:
 
                 if not final_text:
                     logger.error("Failed to generate valid output for event %s after %d attempts.", event_id, MAX_REGENERATION_ATTEMPTS)
+                    # Update Daedalus status to rejected
+                    try:
+                        httpx.put(
+                            f"http://daedalus:8000/api/v1/huginn/internal/capture/{event_id}",
+                            json={"status": "rejected"},
+                            headers={"X-Internal-Token": "morpheus-internal-sync-key"},
+                            timeout=5.0
+                        )
+                    except Exception as e:
+                        logger.error("Failed to update Daedalus event status: %s", e)
                     continue
 
                 redis_client.incr("metrics:guardrail_successes")
@@ -246,6 +256,17 @@ def main() -> None:
                 redis_client.incr("metrics:comments_sent")
                 logger.info("Successfully pushed execution task for agent %s on %s.", agent_id, event.get("source_platform"))
                 
+                # Update Daedalus status to approved
+                try:
+                    httpx.put(
+                        f"http://daedalus:8000/api/v1/huginn/internal/capture/{event_id}",
+                        json={"status": "approved"},
+                        headers={"X-Internal-Token": "morpheus-internal-sync-key"},
+                        timeout=5.0
+                    )
+                except Exception as e:
+                    logger.error("Failed to update Daedalus event status: %s", e)
+
                 # Step 5: Amplify with Beta sub-tasks
                 generate_beta_subtasks(agent_id, task, redis_client, persona_engine)
                 

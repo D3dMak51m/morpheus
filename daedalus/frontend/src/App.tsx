@@ -7,11 +7,14 @@ import NewsHubInspector from './components/NewsHubInspector';
 import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
 import ActivityStream from './components/ActivityStream';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio } from 'lucide-react';
+import { AuthFactory } from './components/AuthFactory';
+import { SoulGenesisView } from './components/SoulGenesisView';
+import AccountsManager from './components/AccountsManager';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'souls' | 'devices' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
 
   const handleLogin = (jwt: string) => {
@@ -42,12 +45,34 @@ function App() {
           >
             <LayoutDashboard size={18} /> Dashboard
           </button>
+          
+          <div className="sidebar-group-label">PERSONAS</div>
+          <button
+            className={`nav-item ${activeView === 'accounts' ? 'active' : ''}`}
+            onClick={() => setActiveView('accounts')}
+          >
+            <Users size={18} /> Accounts
+          </button>
           <button
             className={`nav-item ${activeView === 'souls' ? 'active' : ''}`}
             onClick={() => setActiveView('souls')}
           >
-            <Shield size={18} /> Souls
+            <Shield size={18} /> Souls (Vault)
           </button>
+          <button
+            className={`nav-item ${activeView === 'genesis' ? 'active' : ''}`}
+            onClick={() => setActiveView('genesis')}
+          >
+            <Dna size={18} /> Soul Genesis
+          </button>
+          <button
+            className={`nav-item ${activeView === 'auth' ? 'active' : ''}`}
+            onClick={() => setActiveView('auth')}
+          >
+            <Key size={18} /> Auth Factory
+          </button>
+
+          <div className="sidebar-group-label">GATHERING</div>
           <button
             className={`nav-item ${activeView === 'landscape' ? 'active' : ''}`}
             onClick={() => setActiveView('landscape')}
@@ -60,6 +85,8 @@ function App() {
           >
             <Radio size={18} /> News Hub
           </button>
+          
+          <div className="sidebar-group-label">EXECUTION</div>
           <button
             className={`nav-item ${activeView === 'devices' ? 'active' : ''}`}
             onClick={() => setActiveView('devices')}
@@ -72,6 +99,8 @@ function App() {
           >
             <Activity size={18} /> Activity
           </button>
+          
+          <div className="sidebar-group-label">SYSTEM</div>
           <button
             className={`nav-item ${activeView === 'database' ? 'active' : ''}`}
             onClick={() => setActiveView('database')}
@@ -87,13 +116,16 @@ function App() {
       </nav>
 
       <main className="main-content">
-        {activeView === 'souls' && <SoulsContext token={token} />}
-        {activeView === 'landscape' && <LandscapeManager token={token} />}
-        {activeView === 'newshub' && <NewsHubInspector token={token} />}
-        {activeView === 'devices' && <DeviceGrid token={token} />}
-        {activeView === 'activity' && <ActivityStream token={token} />}
-        {activeView === 'database' && <DatabaseExplorer token={token} />}
-        {activeView === 'dashboard' && <Dashboard token={token} />}
+        <div style={{ display: activeView === 'accounts' ? 'block' : 'none', height: '100%' }}><AccountsManager token={token} /></div>
+        <div style={{ display: activeView === 'souls' ? 'block' : 'none', height: '100%' }}><SoulsContext token={token} /></div>
+        <div style={{ display: activeView === 'genesis' ? 'block' : 'none', height: '100%' }}><SoulGenesisView /></div>
+        <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory /></div>
+        <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeManager token={token} /></div>
+        <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
+        <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
+        <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityStream token={token} /></div>
+        <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
+        <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
       </main>
     </div>
   );

@@ -117,11 +117,12 @@ class SoulAccount(Base):
     __tablename__ = "souls_accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    agent_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(30), nullable=False)
     username: Mapped[str] = mapped_column(String(100), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     auth_cookies: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    device_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     assigned_proxy: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -262,3 +263,57 @@ class CapturedEvent(Base):
 
     def __repr__(self) -> str:
         return f"<CapturedEvent(id={self.id}, platform='{self.source_platform}', status='{self.status}')>"
+
+
+class VirtualDevice(Base):
+    """
+    Registry of physical or virtual devices (e.g. Android emulators).
+    Can be assigned or detached from AI agents dynamically.
+    """
+    __tablename__ = "virtual_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    assigned_agent_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="idle", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<VirtualDevice(id={self.id}, device_id='{self.device_id}', agent='{self.assigned_agent_id}')>"
+
+
+class AccountAuditLog(Base):
+    """
+    Audit trail for account reassignments and profile changes.
+    """
+    __tablename__ = "account_audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<AccountAuditLog(account_id={self.account_id}, action='{self.action}')>"
+
+
+class ProfileHistory(Base):
+    """
+    Stores historical versions of AgentProfiles to allow rollback.
+    """
+    __tablename__ = "profile_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    profile_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProfileHistory(id={self.id}, agent_id='{self.agent_id}')>"

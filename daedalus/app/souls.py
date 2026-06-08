@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, AgentProfile
+from app.models import AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/souls", tags=["Agent Souls"])
@@ -153,6 +153,14 @@ def update_profile(
     if not profile:
         raise HTTPException(status_code=404, detail=f"Profile for agent '{agent_id}' not found.")
 
+    # Save old profile to history before updating
+    old_profile_data = {
+        c.name: getattr(profile, c.name) for c in profile.__table__.columns
+        if c.name not in ["id", "created_at", "updated_at"]
+    }
+    history = ProfileHistory(agent_id=agent_id, profile_data=old_profile_data)
+    db.add(history)
+
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if value is not None:
@@ -161,6 +169,54 @@ def update_profile(
     db.commit()
     db.refresh(profile)
     return ProfileResponse.model_validate(profile)
+
+@router.post("/profiles/{agent_id}/rollback/{history_id}")
+def rollback_profile(
+    agent_id: str,
+    history_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    profile = db.query(AgentProfile).filter(AgentProfile.agent_id == agent_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile for agent '{agent_id}' not found.")
+    
+    history = db.query(ProfileHistory).filter(ProfileHistory.id == history_id, ProfileHistory.agent_id == agent_id).first()
+    if not history:
+        raise HTTPException(status_code=404, detail="History record not found")
+
+    # Save current state to history before rolling back
+    current_data = {
+        c.name: getattr(profile, c.name) for c in profile.__table__.columns
+        if c.name not in ["id", "created_at", "updated_at"]
+    }
+    new_history = ProfileHistory(agent_id=agent_id, profile_data=current_data)
+    db.add(new_history)
+
+    # Restore from history record
+    for field, value in history.profile_data.items():
+        if hasattr(profile, field) and field not in ["id", "agent_id"]:
+            setattr(profile, field, value)
+    
+    db.commit()
+    return {"status": "success", "message": "Profile rolled back"}
+
+class ProfileHistoryResponse(BaseModel):
+    id: int
+    agent_id: str
+    profile_data: dict
+    created_at: Any
+
+    class Config:
+        from_attributes = True
+
+@router.get("/profiles/{agent_id}/history", response_model=list[ProfileHistoryResponse])
+def get_profile_history(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    return db.query(ProfileHistory).filter(ProfileHistory.agent_id == agent_id).order_by(ProfileHistory.id.desc()).all()
 
 
 @router.delete("/profiles/{agent_id}")
@@ -225,3 +281,135 @@ def internal_list_profiles(
         }
 
     return {"profiles": result, "total": len(result)}
+@router.post("/genesis", response_model=ProfileResponse)
+def generate_genesis_profile(
+    seed: dict,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    """
+    Generate a new agent profile via the Genesis Engine.
+    """
+    from app.genesis_engine import generate_profile, GenesisSeed
+    
+    try:
+        # Validate input seed
+        seed_model = GenesisSeed(**seed)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid seed data: {e}")
+
+    # Check if agent_id already exists
+    existing = db.query(AgentProfile).filter(AgentProfile.agent_id == seed_model.agent_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Agent profile already exists with this ID.")
+
+    # Generate the profile
+    profile_data = generate_profile(seed_model)
+
+    # Save to database
+    new_profile = AgentProfile(**profile_data)
+    db.add(new_profile)
+    db.commit()
+    db.refresh(new_profile)
+
+    return new_profile
+
+# ── Accounts & Virtual Devices ─────────────────────────────────────────────
+
+class AccountResponse(BaseModel):
+    id: int
+    agent_id: Optional[str]
+    platform: str
+    username: str
+    status: str
+    device_id: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+@router.get("/accounts", response_model=list[AccountResponse])
+def get_accounts(db: Session = Depends(get_db)):
+    accounts = db.query(SoulAccount).all()
+    return accounts
+
+@router.put("/accounts/{account_id}/assign")
+def assign_account(
+    account_id: int,
+    agent_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    account = db.query(SoulAccount).filter(SoulAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    old_agent = account.agent_id
+    account.agent_id = agent_id
+    db.commit()
+
+    # Log
+    action = f"Unassigned from {old_agent}" if not agent_id else f"Assigned to {agent_id}"
+    log = AccountAuditLog(account_id=account.id, action=action)
+    db.add(log)
+    db.commit()
+
+    return {"status": "success", "agent_id": account.agent_id}
+
+class AccountAuditLogResponse(BaseModel):
+    id: int
+    account_id: int
+    action: str
+    details: Optional[str]
+    timestamp: Any
+
+    class Config:
+        from_attributes = True
+
+@router.get("/accounts/{account_id}/history", response_model=list[AccountAuditLogResponse])
+def get_account_history(
+    account_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    return db.query(AccountAuditLog).filter(AccountAuditLog.account_id == account_id).order_by(AccountAuditLog.id.desc()).all()
+
+class DeviceResponse(BaseModel):
+    id: int
+    device_id: str
+    assigned_agent_id: Optional[str]
+    status: str
+
+    class Config:
+        from_attributes = True
+
+@router.get("/devices", response_model=list[DeviceResponse])
+def get_devices(db: Session = Depends(get_db)):
+    return db.query(VirtualDevice).all()
+
+@router.post("/devices")
+def create_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    if db.query(VirtualDevice).filter(VirtualDevice.device_id == device_id).first():
+        raise HTTPException(status_code=400, detail="Device already exists")
+    
+    dev = VirtualDevice(device_id=device_id)
+    db.add(dev)
+    db.commit()
+    return {"status": "success"}
+
+@router.put("/devices/{id}/assign")
+def assign_device(
+    id: int,
+    agent_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    dev = db.query(VirtualDevice).filter(VirtualDevice.id == id).first()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Device not found")
+    dev.assigned_agent_id = agent_id
+    db.commit()
+    return {"status": "success"}

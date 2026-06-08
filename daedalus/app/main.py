@@ -32,6 +32,7 @@ from app.analytics import router as analytics_router
 from app.landscape import router as landscape_router
 from app.souls import router as souls_router
 from app.router_huginn_control import router as huginn_control_router
+from app.router_auth_factory import router as auth_factory_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -138,6 +139,7 @@ app.include_router(analytics_router)
 app.include_router(landscape_router)
 app.include_router(souls_router)
 app.include_router(huginn_control_router)
+app.include_router(auth_factory_router)
 
 # ── Static Frontend SPA ──────────────────────────────────────────────────
 

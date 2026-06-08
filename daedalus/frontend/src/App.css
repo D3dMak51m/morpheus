@@ -58,6 +58,18 @@ body {
   text-align: left;
 }
 
+.sidebar-group-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 15px;
+  margin-bottom: 5px;
+  padding-left: 10px;
+}
+
 .nav-item:hover {
   background: var(--bg-card);
   color: var(--text-main);

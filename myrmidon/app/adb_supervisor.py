@@ -108,6 +108,50 @@ class ADBSupervisor:
         self._executor.shutdown(wait=False)
         logger.info("ADBSupervisor: Proactive background monitoring loop stopped.")
 
+    # ── Snapshot Management ────────────────────────────────────────────────
+
+    def manage_device_snapshot(self, device_id: str, action: str, snapshot_name: str = "idle_snap") -> bool:
+        """
+        Manages emulator snapshots to ensure isolated execution states.
+        action can be 'load' or 'save'.
+        """
+        if not device_id.startswith("emulator-"):
+            logger.warning("ADBSupervisor: Snapshot management is only supported on emulators. Skipping for %s", device_id)
+            return False
+            
+        try:
+            device = self._get_device(device_id)
+            if action == 'save':
+                logger.info("ADBSupervisor [%s]: Saving state to snapshot '%s'", device_id, snapshot_name)
+                # Ensure the emulator accepts the console command
+                output = device.shell(f"emu avd snapshot save {snapshot_name}")
+                return "OK" in output or "Error" not in output
+            elif action == 'load':
+                logger.info("ADBSupervisor [%s]: Loading state from snapshot '%s'", device_id, snapshot_name)
+                output = device.shell(f"emu avd snapshot load {snapshot_name}")
+                return "OK" in output or "Error" not in output
+            else:
+                logger.error("ADBSupervisor [%s]: Unknown snapshot action '%s'", device_id, action)
+                return False
+        except Exception as e:
+            logger.error("ADBSupervisor [%s]: Snapshot %s failed — %s", device_id, action, e)
+            return False
+
+    def shutdown_device(self, device_id: str) -> bool:
+        """Shuts down the emulator to reclaim host resources."""
+        if not device_id.startswith("emulator-"):
+            logger.warning("ADBSupervisor: Shutdown is only supported on emulators. Skipping for %s", device_id)
+            return False
+            
+        try:
+            logger.info("ADBSupervisor [%s]: Initiating asynchronous shutdown to reclaim resources.", device_id)
+            device = self._get_device(device_id)
+            device.shell("reboot -p") # or "emu kill" depending on the emulator setup
+            return True
+        except Exception as e:
+            logger.error("ADBSupervisor [%s]: Failed to shutdown device — %s", device_id, e)
+            return False
+
     def _monitor_loop(self) -> None:
         """
         Periodically polls the database for active mappings and checks device statuses 

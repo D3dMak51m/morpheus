@@ -40,7 +40,10 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
   const [error, setError] = useState('');
   
   // Tab State
-  const [activeTab, setActiveTab] = useState<'identity' | 'psychology' | 'mission'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'psychology' | 'mission' | 'history'>('identity');
+  
+  // History State
+  const [historyLogs, setHistoryLogs] = useState<any[]>([]);
   
   // JSON Edit State
   const [commStyleJson, setCommStyleJson] = useState('');
@@ -66,8 +69,38 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       setBehavioralRulesJson(JSON.stringify(selectedProfile.behavioral_rules || {}, null, 2));
       setStanceModifiersJson(JSON.stringify(selectedProfile.current_stance_modifiers || {}, null, 2));
       setJsonError('');
+      
+      if (activeTab === 'history') {
+        fetchHistory(selectedProfile.agent_id);
+      }
     }
-  }, [selectedProfile?.agent_id]);
+  }, [selectedProfile?.agent_id, activeTab]);
+
+  const fetchHistory = async (agentId: string) => {
+    try {
+      const res = await fetch(`/api/v1/souls/profiles/${agentId}/history`, { headers });
+      if (res.ok) setHistoryLogs(await res.json());
+    } catch (e) {
+      console.error('Failed to fetch history', e);
+    }
+  };
+
+  const handleRollback = async (historyId: number) => {
+    if (!selectedProfile) return;
+    if (!confirm('Are you sure you want to rollback this profile?')) return;
+    try {
+      const res = await fetch(`/api/v1/souls/profiles/${selectedProfile.agent_id}/rollback/${historyId}`, {
+        method: 'POST',
+        headers
+      });
+      if (res.ok) {
+        fetchProfiles();
+        setSelectedProfile(null);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const fetchProfiles = async () => {
     setLoading(true);
@@ -189,6 +222,10 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                   className={`tab-btn ${activeTab === 'mission' ? 'active' : ''}`} 
                   onClick={() => setActiveTab('mission')}
                 >Mission & Stance</button>
+                <button 
+                  className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`} 
+                  onClick={() => setActiveTab('history')}
+                >History & Rollback</button>
               </div>
             </div>
 
@@ -352,6 +389,43 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                       placeholder='{"topic_x": "support", "topic_y": "attack"}'
                     />
                     <p className="help-text">Dynamic modifiers applied to the Core Mission during runtime.</p>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'history' && (
+                <div className="form-grid">
+                  <div className="form-group full-width">
+                    <h3>Profile Audit History</h3>
+                    <p className="help-text">View and revert to previous versions of this profile.</p>
+                    <div className="history-list mt-4">
+                      {historyLogs.length === 0 ? <p className="text-muted">No history found.</p> : (
+                        <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                              <th style={{ padding: '8px' }}>Date</th>
+                              <th style={{ padding: '8px' }}>Preview</th>
+                              <th style={{ padding: '8px' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {historyLogs.map(log => (
+                              <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                <td style={{ padding: '8px' }}>{new Date(log.created_at).toLocaleString()}</td>
+                                <td style={{ padding: '8px', fontSize: '0.85em', color: '#888' }}>
+                                  {log.profile_data.full_name} ({log.profile_data.caste})
+                                </td>
+                                <td style={{ padding: '8px' }}>
+                                  <button className="btn-secondary" onClick={() => handleRollback(log.id)}>
+                                    Rollback to this version
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
