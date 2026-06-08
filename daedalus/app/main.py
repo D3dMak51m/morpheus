@@ -31,6 +31,7 @@ from app.db_explorer import router as db_explorer_router
 from app.analytics import router as analytics_router
 from app.landscape import router as landscape_router
 from app.souls import router as souls_router
+from app.router_huginn_control import router as huginn_control_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -136,12 +137,17 @@ app.include_router(db_explorer_router)
 app.include_router(analytics_router)
 app.include_router(landscape_router)
 app.include_router(souls_router)
+app.include_router(huginn_control_router)
 
 # ── Static Frontend SPA ──────────────────────────────────────────────────
 
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    # Vite build outputs JS/CSS to /assets/ — mount explicitly so the SPA can load them
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
 
 # ── Pydantic request/response schemas ────────────────────────────────────

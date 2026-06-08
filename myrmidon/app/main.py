@@ -25,6 +25,7 @@ import sys
 import time
 from typing import Optional
 
+import httpx
 import redis
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
@@ -46,6 +47,9 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "morpheus_secure_pass")
 DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "morpheus_db")
+
+DAEDALUS_URL = "http://daedalus:8000"
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 
 EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
 PROCESSING_TIMEOUT_SEC = 5
@@ -223,6 +227,33 @@ def simulate_read_delay() -> None:
     time.sleep(delay)
 
 
+# ── Activity Logging ─────────────────────────────────────────────────────
+
+def _log_activity_to_daedalus(task: dict, status: str) -> None:
+    """
+    Executes an authorized POST request directly to the DAEDALUS activity logging system
+    to instantly update the PostgreSQL agent_activity_logs table.
+    """
+    payload = {
+        "agent_id": task.get("agent_id", "unknown"),
+        "platform": task.get("target_platform", "unknown"),
+        "action_type": task.get("action_type", "comment"),
+        "target_url": task.get("target_url", ""),
+        "text_content": task.get("text_to_publish", ""),
+        "status": status,
+    }
+    
+    headers = {"X-Internal-Token": INTERNAL_API_TOKEN}
+    
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(f"{DAEDALUS_URL}/api/v1/analytics/internal/activity", json=payload, headers=headers)
+            resp.raise_for_status()
+            logger.debug("Activity logged to Daedalus: %s (status=%s)", task.get("task_id"), status)
+    except Exception as exc:
+        logger.error("Failed to log activity to Daedalus: %s", exc)
+
+
 # ── Task execution (routing) ─────────────────────────────────────────────
 
 def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
@@ -257,6 +288,7 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
             agent_id,
             platform,
         )
+        _log_activity_to_daedalus(task, "FAILED")
         return
 
     proxy = credentials.get("assigned_proxy")
@@ -282,6 +314,7 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
         _execute_appium(task, credentials)
     else:
         logger.warning("Task %s — unsupported platform '%s'. Skipping.", task_id, platform)
+        _log_activity_to_daedalus(task, "FAILED")
 
 
 def _execute_telegram(task: dict, credentials: dict) -> None:
@@ -300,14 +333,20 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
         len(text_to_publish),
     )
 
-    from app.drivers.tg_client import TelegramDriver
-    driver = TelegramDriver(agent_id, credentials)
-    success = driver.execute_comment(target_url, text_to_publish)
-    
-    if success:
-         logger.info("Task %s completed successfully on Telegram.", task_id)
-    else:
-         logger.error("Task %s failed on Telegram.", task_id)
+    try:
+        from app.drivers.tg_client import TelegramDriver
+        driver = TelegramDriver(agent_id, credentials)
+        success = driver.execute_comment(target_url, text_to_publish)
+        
+        if success:
+             logger.info("Task %s completed successfully on Telegram.", task_id)
+             _log_activity_to_daedalus(task, "SUCCESS")
+        else:
+             logger.error("Task %s failed on Telegram.", task_id)
+             _log_activity_to_daedalus(task, "FAILED")
+    except Exception as e:
+        logger.error("Task %s crashed on Telegram: %s", task_id, e)
+        _log_activity_to_daedalus(task, "FAILED")
 
 
 def _execute_appium(task: dict, credentials: dict) -> None:
@@ -331,26 +370,38 @@ def _execute_appium(task: dict, credentials: dict) -> None:
     simulate_read_delay()
     
     success = False
-    
-    if platform == "instagram":
-         from app.drivers.instagram import InstagramDriver
-         driver = InstagramDriver(agent_id, credentials)
-         success = driver.execute_comment(target_url, text_to_publish)
-    elif platform == "threads":
-         from app.drivers.threads import ThreadsDriver
-         driver = ThreadsDriver(agent_id, credentials)
-         success = driver.execute_comment(target_url, text_to_publish)
-    elif platform == "youtube":
-         from app.drivers.youtube import YouTubeDriver
-         driver = YouTubeDriver(agent_id, credentials)
-         success = driver.execute_comment(target_url, text_to_publish)
-    else:
-         logger.warning("Mobile driver for %s not fully implemented yet.", platform)
 
-    if success:
-         logger.info("Task %s completed successfully on %s.", task_id, platform)
-    else:
-         logger.error("Task %s failed on %s.", task_id, platform)
+    try:
+        from app.adb_supervisor import ADBSupervisor
+        adb_sup = ADBSupervisor()
+        device_id = adb_sup.get_mapped_device(agent_id)
+        if device_id:
+            adb_sup.spoof_device_hardware(device_id, serial=f"SPOOF-{agent_id[:8]}")
+        
+        if platform == "instagram":
+             from app.drivers.instagram import InstagramDriver
+             driver = InstagramDriver(agent_id, credentials)
+             success = driver.execute_comment(target_url, text_to_publish)
+        elif platform == "threads":
+             from app.drivers.threads import ThreadsDriver
+             driver = ThreadsDriver(agent_id, credentials)
+             success = driver.execute_comment(target_url, text_to_publish)
+        elif platform == "youtube":
+             from app.drivers.youtube import YouTubeDriver
+             driver = YouTubeDriver(agent_id, credentials)
+             success = driver.execute_comment(target_url, text_to_publish)
+        else:
+             logger.warning("Mobile driver for %s not fully implemented yet.", platform)
+
+        if success:
+             logger.info("Task %s completed successfully on %s.", task_id, platform)
+             _log_activity_to_daedalus(task, "SUCCESS")
+        else:
+             logger.error("Task %s failed on %s.", task_id, platform)
+             _log_activity_to_daedalus(task, "FAILED")
+    except Exception as e:
+        logger.error("Task %s crashed on %s: %s", task_id, platform, e)
+        _log_activity_to_daedalus(task, "FAILED")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────
@@ -368,6 +419,14 @@ def main() -> None:
     logger.info("=" * 60)
 
     redis_client = connect_redis()
+
+    # Start the Device API HTTP server in a background thread
+    try:
+        from app.device_api import start_device_api_server
+        start_device_api_server()
+    except Exception as e:
+        logger.warning("Device API server failed to start: %s (non-fatal)", e)
+
     db_session_factory = connect_postgres()
 
     # Verify execution queue

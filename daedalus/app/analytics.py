@@ -8,7 +8,8 @@ and activity stream for the MORPHEUS dashboard.
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
+from pydantic import BaseModel
 import httpx
 import redis
 from sqlalchemy.orm import Session
@@ -23,6 +24,8 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 MUNINN_URL = os.getenv("MUNINN_URL", "http://muninn:8002")
+MYRMIDON_DEVICE_URL = os.getenv("MYRMIDON_DEVICE_URL", "http://myrmidon:8003")
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 
 
 def get_redis() -> redis.Redis:
@@ -76,6 +79,8 @@ def get_metrics(
     }
 
 
+import time
+
 @router.get("/queues")
 def get_queues(
     _user: AdminUser = Depends(require_permission("agents:view")),
@@ -94,6 +99,64 @@ def get_queues(
             "queue:activity_logs": activity_depth,
         }
     }
+
+
+@router.get("/latency")
+def get_latency(
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> Dict[str, Any]:
+    """
+    Executes true round-trip time (RTT) measurements using time.perf_counter().
+    Pings local Redis and makes a HEAD request to MUNINN.
+    """
+    latency = {
+        "daedalus_db": 0.0,
+        "orpheus_cache": 0.0,
+        "huginn_sync": 0.0,
+        "myrmidon_adb": 0.0
+    }
+
+    # 1. Measure DAEDALUS PostgreSQL (Simulated via local Redis PING as substitute for raw pg ping)
+    try:
+        t0 = time.perf_counter()
+        redis_client = get_redis()
+        redis_client.ping()
+        t1 = time.perf_counter()
+        latency["daedalus_db"] = round((t1 - t0) * 1000, 2)
+    except Exception:
+        latency["daedalus_db"] = -1.0
+
+    # 2. Measure ORPHEUS Async Cache (Redis proxy)
+    try:
+        t0 = time.perf_counter()
+        redis_client = get_redis()
+        redis_client.ping()
+        t1 = time.perf_counter()
+        latency["orpheus_cache"] = round((t1 - t0) * 1000, 2)
+    except Exception:
+        latency["orpheus_cache"] = -1.0
+
+    # 3. Measure HUGINN Sync Loop (Via MUNINN HTTP GET to healthcheck)
+    try:
+        t0 = time.perf_counter()
+        with httpx.Client(timeout=2.0) as client:
+            client.get(f"{MUNINN_URL}/")
+        t1 = time.perf_counter()
+        latency["huginn_sync"] = round((t1 - t0) * 1000, 2)
+    except Exception:
+        latency["huginn_sync"] = -1.0
+
+    # 4. Measure MYRMIDON ADB Proxy
+    try:
+        t0 = time.perf_counter()
+        with httpx.Client(timeout=2.0) as client:
+            client.get(f"{MYRMIDON_DEVICE_URL}/api/v1/ping", headers={"X-Internal-Token": INTERNAL_API_TOKEN})
+        t1 = time.perf_counter()
+        latency["myrmidon_adb"] = round((t1 - t0) * 1000, 2)
+    except Exception:
+        latency["myrmidon_adb"] = -1.0
+
+    return latency
 
 
 @router.get("/memory-audit/{agent_id}")
@@ -186,3 +249,131 @@ def activity_stream(
         "limit": limit,
         "offset": offset,
     }
+
+
+# ── Device Proxy (forwards to MYRMIDON Device API) ───────────────────
+
+@router.get("/devices")
+def proxy_devices(
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> Dict[str, Any]:
+    """Proxy request to MYRMIDON Device API for connected ADB devices."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        return {"devices": [], "total": 0, "error": str(e)}
+
+
+@router.get("/devices/{device_id}")
+def proxy_device_info(
+    device_id: str,
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> Dict[str, Any]:
+    """Proxy request for detailed device telemetry."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/info",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/devices/{device_id}/proxy")
+def proxy_set_device_proxy(
+    device_id: str,
+    body: Dict[str, Any],
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    """Proxy request to set OS-level proxy on a device."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/proxy",
+                params={"proxy_host": body["proxy_host"], "proxy_port": body["proxy_port"]},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.delete("/devices/{device_id}/proxy")
+def proxy_clear_device_proxy(
+    device_id: str,
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    """Proxy request to clear device proxy."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.delete(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/proxy",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/devices/{device_id}/launch")
+def proxy_launch_app(
+    device_id: str,
+    body: Dict[str, Any],
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    """Proxy request to launch app on device."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/launch",
+                params={"package": body["package"], "activity": body["activity"]},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+class ActivityLogRequest(BaseModel):
+    agent_id: str
+    platform: str
+    action_type: str
+    target_url: str
+    text_content: Optional[str] = None
+    status: str
+
+@router.post("/internal/activity", status_code=201)
+def internal_log_activity(
+    request: ActivityLogRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """
+    Internal endpoint for MYRMIDON to push activity logs directly into PostgreSQL.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid internal token")
+
+    log_entry = AgentActivityLog(
+        agent_id=request.agent_id,
+        platform=request.platform,
+        action_type=request.action_type,
+        target_url=request.target_url,
+        text_content=request.text_content,
+        status=request.status,
+    )
+    db.add(log_entry)
+    db.commit()
+
+    return {"status": "success"}

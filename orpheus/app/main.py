@@ -23,9 +23,11 @@ from typing import Optional
 import redis
 
 from app.media_enricher import MediaEnricher
-from app.persona import PersonaEngine
+from app.persona import PersonaEngine, periodically_update_profiles_cache
 from app.guardrails import OutputGuardrails
 from app.coordination import generate_beta_subtasks
+import threading
+import asyncio
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
@@ -60,6 +62,26 @@ def _handle_signal(signum: int, frame) -> None:
 
 signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT, _handle_signal)
+
+# ── Background Task Runner ────────────────────────────────────────────────
+
+def run_async_background_tasks():
+    """Runs the asyncio event loop in a separate thread for background tasks."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # We can add more background async tasks here if needed
+    tasks = [
+        loop.create_task(periodically_update_profiles_cache())
+    ]
+    
+    try:
+        loop.run_until_complete(asyncio.gather(*tasks))
+    except Exception as e:
+        logger.error("Background async loop crashed: %s", e)
+    finally:
+        loop.close()
+
 
 # ── Redis connectivity ────────────────────────────────────────────────────
 
@@ -118,8 +140,13 @@ def generate_text(prompt: str) -> str:
 
 def main() -> None:
     logger.info("=" * 60)
-    logger.info("ORPHEUS Cognitive Brain — Starting Up (Stage 3)")
+    logger.info("ORPHEUS Cognitive Brain — Starting Up (Stage 10)")
     logger.info("=" * 60)
+
+    # Start background tasks
+    bg_thread = threading.Thread(target=run_async_background_tasks, daemon=True)
+    bg_thread.start()
+    logger.info("Background async caching thread started.")
 
     redis_client = connect_redis()
 
@@ -168,7 +195,7 @@ def main() -> None:
                     logger.warning("Failed to clean up media file %s: %s", media_path, e)
 
             # Route to all applicable agents
-            for agent_id, profile in persona_engine.profiles.items():
+            for agent_id, profile in persona_engine.get_all_profiles().items():
                 
                 # Check if agent monitors this platform
                 if event.get("source_platform") not in profile.get("platforms", []):
@@ -221,6 +248,17 @@ def main() -> None:
                 
                 # Step 5: Amplify with Beta sub-tasks
                 generate_beta_subtasks(agent_id, task, redis_client, persona_engine)
+                
+            # Update status in Daedalus after processing all profiles
+            try:
+                with httpx.Client(timeout=5.0) as client:
+                    client.put(
+                        f"http://daedalus:8000/api/v1/huginn/internal/capture/{event_id}",
+                        json={"status": "Processed"},
+                        headers={"X-Internal-Token": "morpheus-internal-sync-key"}
+                    )
+            except Exception as exc:
+                logger.warning("Failed to update event status in Daedalus for %s: %s", event_id, exc)
 
         except redis.ConnectionError as exc:
             logger.error("Redis connection lost: %s — reconnecting...", exc)

@@ -204,6 +204,7 @@ class ScrapingLandscape(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String(30), default="channel", nullable=False)
     target_identifier: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     associated_tags: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
@@ -212,7 +213,7 @@ class ScrapingLandscape(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<ScrapingLandscape(platform='{self.platform}', target='{self.target_identifier}', active={self.is_active})>"
+        return f"<ScrapingLandscape(platform='{self.platform}', type='{self.type}', target='{self.target_identifier}', active={self.is_active})>"
 
 
 class AgentActivityLog(Base):
@@ -235,3 +236,29 @@ class AgentActivityLog(Base):
 
     def __repr__(self) -> str:
         return f"<AgentActivityLog(agent='{self.agent_id}', action='{self.action_type}', status='{self.status}')>"
+
+
+class CapturedEvent(Base):
+    """
+    Raw intercepted event from the HUGINN gathering layer before being sent to ORPHEUS.
+    Allows SuperAdmins to manually inspect, rewrite, or override data.
+    """
+    __tablename__ = "captured_raw_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    source_platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_target: Mapped[str] = mapped_column(String(500), nullable=False)
+    post_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    text_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    media_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    media_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    layers: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+    timestamp: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<CapturedEvent(id={self.id}, platform='{self.source_platform}', status='{self.status}')>"

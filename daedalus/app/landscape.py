@@ -26,6 +26,7 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key
 
 class LandscapeCreateRequest(BaseModel):
     platform: str
+    type: str = "channel"
     target_identifier: str
     is_active: bool = True
     associated_tags: Optional[list[str]] = []
@@ -33,6 +34,7 @@ class LandscapeCreateRequest(BaseModel):
 
 class LandscapeUpdateRequest(BaseModel):
     platform: Optional[str] = None
+    type: Optional[str] = None
     target_identifier: Optional[str] = None
     is_active: Optional[bool] = None
     associated_tags: Optional[list[str]] = None
@@ -41,6 +43,7 @@ class LandscapeUpdateRequest(BaseModel):
 class LandscapeResponse(BaseModel):
     id: int
     platform: str
+    type: str
     target_identifier: str
     is_active: bool
     associated_tags: Optional[list[str]]
@@ -82,6 +85,7 @@ def create_target(
 
     target = ScrapingLandscape(
         platform=request.platform,
+        type=request.type,
         target_identifier=request.target_identifier,
         is_active=request.is_active,
         associated_tags=request.associated_tags,
@@ -106,6 +110,8 @@ def update_target(
 
     if request.platform is not None:
         target.platform = request.platform
+    if request.type is not None:
+        target.type = request.type
     if request.target_identifier is not None:
         target.target_identifier = request.target_identifier
     if request.is_active is not None:
@@ -150,8 +156,11 @@ def sync_targets(
 
     targets = db.query(ScrapingLandscape).filter(ScrapingLandscape.is_active == True).all()
 
-    grouped: dict[str, list[str]] = {}
+    grouped: dict[str, list[dict[str, str]]] = {}
     for t in targets:
-        grouped.setdefault(t.platform, []).append(t.target_identifier)
+        grouped.setdefault(t.platform, []).append({
+            "target_identifier": t.target_identifier,
+            "type": t.type
+        })
 
     return {"targets": grouped}

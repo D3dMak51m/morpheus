@@ -5,9 +5,9 @@ Background worker that connects to the Redis broker, verifies queue
 connectivity, and runs the main event loop for content aggregation.
 
 Data flow:
-  1. Scrape Telegram channels (Telethon), websites (BS4/requests)
+  1. Scrape Telegram channels (Telethon), websites (BS4/curl_cffi)
   2. Classify content by layers: Global → Region → State → City → Personal
-  3. Apply TTL filtering (X/Threads > 12h → discard, TG group > 2h → discard)
+  3. Apply TTL filtering
   4. Serialize events to Redis queue 'queue:raw_events' for ORPHEUS
 """
 
@@ -18,13 +18,15 @@ import os
 import signal
 import sys
 import time
-from typing import Optional
+from typing import Optional, Dict, List
 
+import httpx
 import redis
 
 from app.router import classify_layers
 from app.scrapers.tg_scraper import run_tg_scraper
 from app.scrapers.web_scraper import run_web_scraper
+from app.scrapers.social_feed_scraper import run_social_feed_scraper
 from app.scrapers.gamma_noise import run_gamma_noise_scheduler
 
 # ── Logging ───────────────────────────────────────────────────────────────
@@ -42,6 +44,9 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 RAW_EVENTS_QUEUE = "queue:raw_events"
 POLL_INTERVAL_SEC = int(os.getenv("HUGINN_POLL_INTERVAL", "30"))
 
+DAEDALUS_URL = "http://daedalus:8000"
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
+
 # TTL thresholds (seconds) for discarding stale content
 TTL_THRESHOLDS = {
     "twitter": 12 * 3600,     # 12 hours for X/Twitter
@@ -51,6 +56,16 @@ TTL_THRESHOLDS = {
     "instagram": 24 * 3600,
     "facebook": 24 * 3600,
     "youtube": 48 * 3600,
+    "web": 12 * 3600,
+}
+
+# Global State for Dynamic Targets
+ACTIVE_TARGETS: Dict[str, List[Dict[str, str]]] = {
+    "telegram": [],
+    "instagram": [],
+    "twitter": [],
+    "threads": [],
+    "web": [],
 }
 
 # ── Graceful shutdown ─────────────────────────────────────────────────────
@@ -108,6 +123,47 @@ def connect_redis(max_retries: int = 10, retry_delay: float = 3.0) -> redis.Redi
     sys.exit(1)
 
 
+# ── Landscape Target Synchronization ──────────────────────────────────────
+
+async def sync_landscape_loop() -> None:
+    """
+    Background worker that dynamically polls DAEDALUS for active scraping targets.
+    Mutates the global ACTIVE_TARGETS dict for scrapers to consume instantly.
+    """
+    logger.info("Starting landscape target synchronization loop...")
+    headers = {"X-Internal-Token": INTERNAL_API_TOKEN}
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while not _shutdown_requested:
+            try:
+                resp = await client.get(f"{DAEDALUS_URL}/api/v1/landscape/internal/sync-targets", headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                
+                targets_by_platform = data.get("targets", {})
+                
+                # Clear all first to handle deletions properly
+                for pf in ACTIVE_TARGETS.keys():
+                    ACTIVE_TARGETS[pf] = []
+                    
+                # Update global state atomically
+                for platform, targets in targets_by_platform.items():
+                    pf = platform.lower()
+                    if pf in ACTIVE_TARGETS:
+                        ACTIVE_TARGETS[pf] = targets
+                    else:
+                        ACTIVE_TARGETS[pf] = targets
+                        
+                logger.debug("Landscape targets synchronized: %s", {k: len(v) for k, v in ACTIVE_TARGETS.items()})
+                
+            except httpx.HTTPError as exc:
+                logger.error("Failed to sync targets from DAEDALUS: %s. Retaining last known memory state.", exc)
+            except Exception as exc:
+                logger.exception("Unexpected error during target synchronization. Retaining last known state.")
+                
+            await asyncio.sleep(60)
+
+
 # ── TTL filtering ─────────────────────────────────────────────────────────
 
 def is_content_expired(platform: str, timestamp: int) -> bool:
@@ -149,7 +205,22 @@ def publish_raw_event(
         "layers": layers,
         "timestamp": timestamp,
     }
+    
+    # Push to ORPHEUS via Redis
     redis_client.lpush(RAW_EVENTS_QUEUE, json.dumps(event, ensure_ascii=False))
+    
+    # Additionally push to DAEDALUS for administrative control (CapturedEvents view)
+    try:
+        import httpx
+        httpx.post(
+            "http://daedalus:8000/api/v1/huginn/internal/capture",
+            json=event,
+            headers={"X-Internal-Token": "morpheus-internal-sync-key"},
+            timeout=5.0
+        )
+    except Exception as e:
+        logger.error("Failed to push event to Daedalus: %s", e)
+        
     logger.info(
         "Event published to %s: id=%s, platform=%s, target=%s",
         RAW_EVENTS_QUEUE,
@@ -159,6 +230,37 @@ def publish_raw_event(
     )
 
 
+# ── Worker Pools ──────────────────────────────────────────────────────────
+
+async def individual_target_worker_pool(redis_client: redis.Redis) -> None:
+    """
+    Spawns and manages dynamic tasks for explicitly targeted channels and websites.
+    """
+    logger.info("Starting individual_target_worker_pool...")
+    
+    tg_task = asyncio.create_task(run_tg_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
+    web_task = asyncio.create_task(run_web_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
+    
+    while not _shutdown_requested:
+        await asyncio.sleep(5)
+        
+    tg_task.cancel()
+    web_task.cancel()
+
+async def timeline_feed_worker_pool(redis_client: redis.Redis) -> None:
+    """
+    Scans global home timelines/feeds ("лента") for authenticated proxy sessions.
+    """
+    logger.info("Starting timeline_feed_worker_pool...")
+    
+    feed_task = asyncio.create_task(run_social_feed_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
+    
+    while not _shutdown_requested:
+        await asyncio.sleep(5)
+        
+    feed_task.cancel()
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────
 
 async def main_loop() -> None:
@@ -166,7 +268,7 @@ async def main_loop() -> None:
     HUGINN main entrypoint (Async).
     """
     logger.info("=" * 60)
-    logger.info("HUGINN News Aggregator — Starting Up (Stage 2)")
+    logger.info("HUGINN News Aggregator — Starting Up (Stage 11)")
     logger.info("=" * 60)
 
     redis_client = connect_redis()
@@ -179,11 +281,14 @@ async def main_loop() -> None:
         queue_len,
     )
 
-    logger.info("Starting scraper tasks...")
+    logger.info("Starting scraper and synchronization tasks...")
     
-    # Run scrapers concurrently
-    tg_task = asyncio.create_task(run_tg_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event))
-    web_task = asyncio.create_task(run_web_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event))
+    # Spawn the three concurrent non-blocking loops requested
+    sync_task = asyncio.create_task(sync_landscape_loop())
+    individual_targets_task = asyncio.create_task(individual_target_worker_pool(redis_client))
+    timeline_feed_task = asyncio.create_task(timeline_feed_worker_pool(redis_client))
+    
+    # Also keep gamma noise running
     gamma_task = asyncio.create_task(run_gamma_noise_scheduler(redis_client, publish_raw_event))
     
     while not _shutdown_requested:
@@ -202,8 +307,9 @@ async def main_loop() -> None:
             await asyncio.sleep(POLL_INTERVAL_SEC)
 
     # Cancel tasks on shutdown
-    tg_task.cancel()
-    web_task.cancel()
+    sync_task.cancel()
+    individual_targets_task.cancel()
+    timeline_feed_task.cancel()
     gamma_task.cancel()
     logger.info("HUGINN shutdown complete.")
 

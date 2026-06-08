@@ -7,10 +7,19 @@ Executes Telegram actions via Pyrogram MTProto protocol.
 import logging
 import asyncio
 from typing import Optional
-from pyrogram import Client
-from pyrogram.errors import PeerIdInvalid, UsernameInvalid, ChannelInvalid, FloodWait
 import time
 import random
+
+# Pyrogram's sync wrapper calls asyncio.get_event_loop() at import time.
+# When uvloop is installed (e.g. from FastAPI), this fails in threads without a loop.
+# Fix: ensure a loop exists before importing pyrogram.
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+from pyrogram import Client
+from pyrogram.errors import PeerIdInvalid, UsernameInvalid, ChannelInvalid, FloodWait
 
 logger = logging.getLogger("myrmidon.drivers.tg_client")
 
