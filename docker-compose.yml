@@ -104,6 +104,10 @@ services:
   myrmidon:
     build: ./myrmidon
     container_name: morpheus-myrmidon
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - EMULATOR_CONSOLE_TOKEN=${EMULATOR_CONSOLE_TOKEN}
     volumes:
       - ./global_config:/app/global_config
     networks:

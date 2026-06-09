@@ -48,6 +48,20 @@ for i, c in enumerate(_row3_cyr): KEYBOARD_COORDS[c] = (135 + i * 90, 1600)
 # Special Keys
 KEYBOARD_COORDS[" "] = (540, 1750)
 KEYBOARD_COORDS["SHIFT"] = (80, 1600)
+KEYBOARD_COORDS["?123"] = (120, 1750) # Shift to symbols
+
+# Punctuation/Symbols (Mapped relative to ?123 layout)
+# Row 1 symbols: 1234567890
+_sym_row1 = "1234567890"
+for i, c in enumerate(_sym_row1): KEYBOARD_COORDS[c] = (54 + i * 108, 1300)
+# Row 2 symbols: @#$&_-(+)*
+_sym_row2 = "@#$&_-(+)*\"'"
+for i, c in enumerate(_sym_row2): KEYBOARD_COORDS[c] = (54 + i * 108, 1450)
+# Row 3 symbols: !:;,?
+_sym_row3 = "!:;,?/"
+for i, c in enumerate(_sym_row3): KEYBOARD_COORDS[c] = (160 + i * 108, 1600)
+# Specific symbols commonly used
+KEYBOARD_COORDS["."] = (800, 1750)
 
 # Hardware Keycodes
 KEYCODE_DEL = 67
@@ -154,6 +168,24 @@ class BaseMobileDriver:
                     action.perform()
                     time.sleep(0.1)
 
+            # Check if character is a symbol requiring ?123 tap
+            needs_symbols = char in _sym_row1 or char in _sym_row2 or char in _sym_row3 or char in "()[]{}" # dot is often on main layout, but let's assume strict layout
+            # The dot is usually on the main layout next to space, let's treat it as not needing ?123 if it's there
+            if char == ".":
+                needs_symbols = False
+                
+            if needs_symbols:
+                sym_coords = KEYBOARD_COORDS.get("?123")
+                if sym_coords:
+                    pointer = PointerInput(interaction.POINTER_TOUCH, "touch")
+                    action = ActionBuilder(self.driver, mouse=pointer)
+                    action.pointer_action.move_to_location(sym_coords[0], sym_coords[1])
+                    action.pointer_action.pointer_down()
+                    action.pointer_action.pause(0.05)
+                    action.pointer_action.pointer_up()
+                    action.perform()
+                    time.sleep(0.15) # Wait for symbol layout to render
+
             # Tap the actual character key
             x, y = coords
             
@@ -172,6 +204,21 @@ class BaseMobileDriver:
             action.pointer_action.pointer_up()
             
             action.perform()
+            
+            # Revert from symbols to alpha if needed
+            if needs_symbols:
+                time.sleep(0.05)
+                # the ?123 key often becomes "ABC" at the same location
+                sym_coords = KEYBOARD_COORDS.get("?123")
+                if sym_coords:
+                    pointer = PointerInput(interaction.POINTER_TOUCH, "touch")
+                    action = ActionBuilder(self.driver, mouse=pointer)
+                    action.pointer_action.move_to_location(sym_coords[0], sym_coords[1])
+                    action.pointer_action.pointer_down()
+                    action.pointer_action.pause(0.05)
+                    action.pointer_action.pointer_up()
+                    action.perform()
+                    time.sleep(0.1)
 
             # ── Strict Gaussian Keystroke Delay ────────────────────────────────
             # dt = max(0.04, random.normalvariate(0.12, 0.03))

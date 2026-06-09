@@ -114,25 +114,67 @@ class ADBSupervisor:
         """
         Manages emulator snapshots to ensure isolated execution states.
         action can be 'load' or 'save'.
+        Uses telnet to communicate with the emulator console.
         """
         if not device_id.startswith("emulator-"):
             logger.warning("ADBSupervisor: Snapshot management is only supported on emulators. Skipping for %s", device_id)
             return False
             
         try:
-            device = self._get_device(device_id)
+            # Extract port from device_id, e.g., 'emulator-5554' -> 5554
+            port_str = device_id.split("-")[1]
+            console_port = int(port_str)
+            
+            import telnetlib
+            
+            # Connect to emulator console
+            # The host is where the emulator is running, usually the same as ADB_HOST for remote setups
+            # or 'host.docker.internal' in docker. We use ADB_HOST.
+            host = self._host
+            
+            logger.info("ADBSupervisor [%s]: Connecting to emulator console at %s:%d", device_id, host, console_port)
+            tn = telnetlib.Telnet(host, console_port, timeout=10)
+            
+            # Read until 'OK' prompt
+            tn.read_until(b"OK", timeout=5)
+            
+            # Authenticate if necessary
+            auth_token = None
+            env_token = os.getenv("EMULATOR_CONSOLE_TOKEN")
+            
+            if env_token:
+                auth_token = env_token.strip()
+            else:
+                auth_token_path = os.path.expanduser("~/.emulator_console_auth_token")
+                if os.path.exists(auth_token_path):
+                    with open(auth_token_path, "r") as f:
+                        auth_token = f.read().strip()
+                        
+            if auth_token:
+                tn.write(f"auth {auth_token}\n".encode('ascii'))
+                tn.read_until(b"OK", timeout=5)
+            
             if action == 'save':
                 logger.info("ADBSupervisor [%s]: Saving state to snapshot '%s'", device_id, snapshot_name)
-                # Ensure the emulator accepts the console command
-                output = device.shell(f"emu avd snapshot save {snapshot_name}")
-                return "OK" in output or "Error" not in output
+                tn.write(f"avd snapshot save {snapshot_name}\n".encode('ascii'))
             elif action == 'load':
                 logger.info("ADBSupervisor [%s]: Loading state from snapshot '%s'", device_id, snapshot_name)
-                output = device.shell(f"emu avd snapshot load {snapshot_name}")
-                return "OK" in output or "Error" not in output
+                tn.write(f"avd snapshot load {snapshot_name}\n".encode('ascii'))
             else:
                 logger.error("ADBSupervisor [%s]: Unknown snapshot action '%s'", device_id, action)
+                tn.close()
                 return False
+                
+            output = tn.read_until(b"OK", timeout=30).decode('ascii')
+            tn.write(b"quit\n")
+            tn.close()
+            
+            if "Error" in output:
+                logger.error("ADBSupervisor [%s]: Snapshot %s failed — %s", device_id, action, output.strip())
+                return False
+                
+            return True
+            
         except Exception as e:
             logger.error("ADBSupervisor [%s]: Snapshot %s failed — %s", device_id, action, e)
             return False
@@ -274,7 +316,70 @@ class ADBSupervisor:
             # Also spoof serialno via setprop temporarily (build.prop handles the rest on reboot)
             device.shell(f'setprop ro.serialno "{serial}"')
             
-            logger.info("ADBSupervisor [%s]: Hardware spoofed successfully in /system/build.prop (SM-G998B).", device_id)
+            logger.info("ADBSupervisor [%s]: Hardware spoofed in /system/build.prop. Rebooting to apply changes...", device_id)
+            
+            # Explicitly reboot to apply changes
+            device.reboot()
+            
+            # Immediately discard the dead reference to avoid ConnectionResetError
+            device = None
+            logger.info("ADBSupervisor [%s]: Device reference dropped. Waiting for reconnection...", device_id)
+            
+            time.sleep(10)
+            reconnected = False
+            
+            for _ in range(12):
+                try:
+                    devices = self._client.devices()
+                    for d in devices:
+                        if d.serial == device_id:
+                            device = d
+                            reconnected = True
+                            break
+                except Exception:
+                    pass
+                    
+                if reconnected:
+                    break
+                time.sleep(5)
+                
+            if not reconnected or device is None:
+                logger.error("ADBSupervisor [%s]: Device failed to reconnect to ADB server after reboot.", device_id)
+                return False
+                
+            logger.info("ADBSupervisor [%s]: Reacquired fresh device handle. Polling sys.boot_completed...", device_id)
+            
+            # Wait for device to come back online and finish booting
+            max_wait = 60
+            booted = False
+            start_time = time.time()
+            
+            while time.time() - start_time < max_wait:
+                status = self.check_device_status(device_id)
+                if status == "online":
+                    try:
+                        # Wait for package manager / boot complete
+                        boot_anim = device.shell("getprop init.svc.bootanim").strip()
+                        sys_booted = device.shell("getprop sys.boot_completed").strip()
+                        
+                        if boot_anim == "stopped" and sys_booted == "1":
+                            booted = True
+                            break
+                    except Exception:
+                        pass
+                time.sleep(2)
+                
+            if not booted:
+                logger.error("ADBSupervisor [%s]: Device failed to boot within timeout after hardware spoofing.", device_id)
+                return False
+
+            # Verify the properties are populated correctly
+            verify_model = self._shell_prop(device, "ro.product.model")
+            if verify_model != "SM-G998B":
+                logger.error("ADBSupervisor [%s]: Hardware spoofing verification failed. Model is %s", device_id, verify_model)
+                return False
+                
+            logger.info("ADBSupervisor [%s]: Hardware spoofed successfully and verified (SM-G998B).", device_id)
             return True
         except Exception as e:
             logger.error("ADBSupervisor [%s]: True hardware spoofing failed — %s", device_id, e)
