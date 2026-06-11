@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -357,6 +358,42 @@ class Mission(Base):
 
     def __repr__(self) -> str:
         return f"<Mission(id={self.id}, title='{self.title}', status='{self.status}')>"
+
+
+class ScoutedTarget(Base):
+    """
+    Stage 18 — A viral post discovered by HUGINN's authenticated scouting engine.
+
+    HUGINN measures engagement velocity (engagement / hours-since-posted) against
+    a threshold; anything classified 'VIRAL' is pushed here for the operator's
+    Scouting Radar, where it can be dismissed or converted into a Mission draft.
+    """
+    __tablename__ = "scouted_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String(700), nullable=False, unique=True, index=True)
+    author_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    content_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Velocity metrics
+    velocity_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False, index=True)
+    engagement: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    posted_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # source epoch seconds
+
+    # pending → dismissed | converted_to_mission
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False, index=True)
+    mission_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ScoutedTarget(id={self.id}, platform='{self.platform}', "
+            f"velocity={self.velocity_score:.1f}, status='{self.status}')>"
+        )
 
 
 class MissionSquad(Base):

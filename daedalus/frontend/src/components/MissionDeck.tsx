@@ -4,6 +4,8 @@ import './MissionDeck.css';
 
 interface MissionDeckProps {
   token: string;
+  prefill?: { target_url: string; title: string; narrative_goal: string } | null;
+  onPrefillConsumed?: () => void;
 }
 
 interface AgentProfile {
@@ -67,7 +69,7 @@ const STATUS_COLORS: Record<string, string> = {
   failed: '#ef4444',
 };
 
-const MissionDeck: React.FC<MissionDeckProps> = ({ token }) => {
+const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillConsumed }) => {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -94,6 +96,18 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token }) => {
     const interval = setInterval(fetchMissions, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Pre-fill the builder when arriving from a Scouting Radar conversion.
+  useEffect(() => {
+    if (prefill) {
+      setTitle(prefill.title || '');
+      setTargetUrl(prefill.target_url || '');
+      setNarrativeGoal(prefill.narrative_goal || '');
+      fetchMissions();
+      onPrefillConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   const fetchAgents = async () => {
     try {

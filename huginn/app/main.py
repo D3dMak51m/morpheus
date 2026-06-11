@@ -28,6 +28,7 @@ from app.scrapers.tg_scraper import run_tg_scraper
 from app.scrapers.web_scraper import run_web_scraper
 from app.scrapers.social_feed_scraper import run_social_feed_scraper
 from app.scrapers.gamma_noise import run_gamma_noise_scheduler
+from app.scrapers.scouting_engine import run_scouting_engine
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
@@ -290,6 +291,9 @@ async def main_loop() -> None:
     
     # Also keep gamma noise running
     gamma_task = asyncio.create_task(run_gamma_noise_scheduler(redis_client, publish_raw_event))
+
+    # Stage 18: authenticated scouting engine (velocity-based viral discovery)
+    scouting_task = asyncio.create_task(run_scouting_engine())
     
     while not _shutdown_requested:
         try:
@@ -311,6 +315,7 @@ async def main_loop() -> None:
     individual_targets_task.cancel()
     timeline_feed_task.cancel()
     gamma_task.cancel()
+    scouting_task.cancel()
     logger.info("HUGINN shutdown complete.")
 
 

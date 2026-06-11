@@ -12,12 +12,19 @@ import { SoulGenesisView } from './components/SoulGenesisView';
 import AccountsManager from './components/AccountsManager';
 import SandboxConsole from './components/SandboxConsole';
 import MissionDeck from './components/MissionDeck';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target } from 'lucide-react';
+import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
+  const [missionPrefill, setMissionPrefill] = useState<MissionPrefill | null>(null);
+
+  const handleConverted = (prefill: MissionPrefill) => {
+    setMissionPrefill(prefill);
+    setActiveView('missions');
+  };
 
   const handleLogin = (jwt: string) => {
     localStorage.setItem('daedalus_token', jwt);
@@ -90,6 +97,12 @@ function App() {
           
           <div className="sidebar-group-label">EXECUTION</div>
           <button
+            className={`nav-item ${activeView === 'scouting' ? 'active' : ''}`}
+            onClick={() => setActiveView('scouting')}
+          >
+            <Radar size={18} /> Scouting Radar
+          </button>
+          <button
             className={`nav-item ${activeView === 'missions' ? 'active' : ''}`}
             onClick={() => setActiveView('missions')}
           >
@@ -138,7 +151,8 @@ function App() {
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
-        <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionDeck token={token} /></div>
+        <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingRadar token={token} onConverted={handleConverted} /></div>
+        <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionDeck token={token} prefill={missionPrefill} onPrefillConsumed={() => setMissionPrefill(null)} /></div>
         <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityStream token={token} /></div>
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
