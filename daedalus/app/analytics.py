@@ -15,8 +15,18 @@ import redis
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
+from datetime import datetime, timedelta, timezone
+
 from app.database import get_db
-from app.models import AdminUser, SoulAccount, AgentActivityLog
+from app.models import (
+    AdminUser,
+    SoulAccount,
+    AgentActivityLog,
+    Mission,
+    ScoutedTarget,
+    CapturedEvent,
+    VirtualDevice,
+)
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
@@ -76,6 +86,102 @@ def get_metrics(
             "banned_or_disabled": banned_accounts,
             "total": active_accounts + banned_accounts
         }
+    }
+
+
+@router.get("/overlord")
+def swarm_overlord(
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("monitoring:view")),
+) -> Dict[str, Any]:
+    """
+    Stage 19 — Aggregated Swarm Health for the Overlord dashboard widget.
+    One call yields an immediate Go/No-Go readiness assessment of the whole
+    infrastructure: missions, emulator fleet, database/pruning state, and
+    HUGINN scouting velocity.
+    """
+    now = datetime.now(timezone.utc)
+    one_hour_ago = now - timedelta(hours=1)
+
+    # ── Missions ──
+    active_missions = db.query(Mission).filter(
+        Mission.status.in_(["running", "amplifying"])
+    ).count()
+    total_missions = db.query(Mission).count()
+
+    # ── Fleet health (orchestrated emulators + registered devices) ──
+    emulators_total = 0
+    emulators_online = 0
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/orchestrator/list",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            emulators = resp.json().get("emulators", [])
+            emulators_total = len(emulators)
+            emulators_online = sum(
+                1 for e in emulators if "running" in str(e.get("status", "")).lower()
+                or "up" in str(e.get("status", "")).lower()
+            )
+    except Exception as exc:
+        logging.getLogger("daedalus.analytics").warning("Fleet probe failed: %s", exc)
+
+    devices_recovering = db.query(VirtualDevice).filter(
+        VirtualDevice.status.in_(["RECOVERING", "recovering"])
+    ).count()
+
+    # ── Accounts ──
+    active_accounts = db.query(SoulAccount).filter(SoulAccount.status == "active").count()
+
+    # ── Database volume + pruning ──
+    captured_total = db.query(CapturedEvent).count()
+    scouted_pending = db.query(ScoutedTarget).filter(ScoutedTarget.status == "pending").count()
+    activity_total = db.query(AgentActivityLog).count()
+
+    from app.retention_policy import get_retention_status
+    retention = get_retention_status()
+
+    # ── HUGINN velocity (scouted in the last hour) ──
+    scouted_last_hour = db.query(ScoutedTarget).filter(
+        ScoutedTarget.created_at >= one_hour_ago
+    ).count()
+    top_velocity = db.query(func.max(ScoutedTarget.velocity_score)).filter(
+        ScoutedTarget.created_at >= one_hour_ago
+    ).scalar() or 0.0
+
+    # ── Go / No-Go readiness ──
+    checks = {
+        "database": True,  # reaching here means queries succeeded
+        "fleet_online": emulators_online > 0,
+        "accounts_active": active_accounts > 0,
+        "no_recovering_devices": devices_recovering == 0,
+    }
+    blockers = [k for k, ok in checks.items() if not ok]
+    readiness = "GO" if not blockers else "NO-GO"
+
+    return {
+        "readiness": readiness,
+        "blockers": blockers,
+        "missions": {"active": active_missions, "total": total_missions},
+        "fleet": {
+            "online": emulators_online,
+            "total": emulators_total,
+            "recovering": devices_recovering,
+        },
+        "accounts": {"active": active_accounts},
+        "database": {
+            "captured_events": captured_total,
+            "scouted_pending": scouted_pending,
+            "activity_logs": activity_total,
+            "retention": retention,
+        },
+        "huginn": {
+            "scouted_last_hour": scouted_last_hour,
+            "top_velocity": round(float(top_velocity), 1),
+        },
+        "timestamp": now.isoformat(),
     }
 
 

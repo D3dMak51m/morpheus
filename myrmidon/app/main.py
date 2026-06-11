@@ -448,6 +448,13 @@ def main() -> None:
     except Exception as e:
         logger.warning("Device API server failed to start: %s (non-fatal)", e)
 
+    # Stage 19: start the AVD self-healing monitor (background daemon thread)
+    try:
+        from app.avd_orchestrator import start_health_monitor
+        start_health_monitor()
+    except Exception as e:
+        logger.warning("AVD self-healing monitor failed to start: %s (non-fatal)", e)
+
     db_session_factory = connect_postgres()
 
     # Verify execution queue

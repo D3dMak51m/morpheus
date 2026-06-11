@@ -69,8 +69,15 @@ async def lifespan(application: FastAPI):
     from app.mission_control import start_reconciler, stop_reconciler
     start_reconciler()
 
+    # Stage 19: launch the data-retention pruning scheduler (non-blocking asyncio task).
+    import asyncio
+    from app.retention_policy import retention_loop, stop_retention
+    retention_task = asyncio.create_task(retention_loop())
+
     logger.info("DAEDALUS ready.")
     yield
+    stop_retention()
+    retention_task.cancel()
     stop_reconciler()
     logger.info("DAEDALUS shutting down.")
 

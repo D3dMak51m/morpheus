@@ -460,3 +460,33 @@ def delete_device(
     db.delete(dev)
     db.commit()
     return {"status": "success"}
+
+
+class DeviceStatusUpdateRequest(BaseModel):
+    device_id: str
+    status: str
+
+
+@router.post("/internal/device-status")
+def internal_update_device_status(
+    request: DeviceStatusUpdateRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Stage 19 — Internal hook for MYRMIDON's self-healing daemon to update a
+    VirtualDevice lifecycle state (e.g. 'RECOVERING' → 'ONLINE'). Token-secured.
+    Auto-registers the device row if the orchestrator healed a device that was
+    never explicitly enrolled into the Daedalus fleet.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+
+    dev = db.query(VirtualDevice).filter(VirtualDevice.device_id == request.device_id).first()
+    if not dev:
+        dev = VirtualDevice(device_id=request.device_id, status=request.status)
+        db.add(dev)
+    else:
+        dev.status = request.status
+    db.commit()
+    return {"status": "success", "device_id": request.device_id, "new_status": request.status}
