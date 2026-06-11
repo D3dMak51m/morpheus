@@ -78,18 +78,23 @@ class BaseMobileDriver:
         agent_id: str,
         credentials: dict,
         platform_name: str = "Android",
+        device_id: Optional[str] = None,
     ) -> None:
         self.agent_id = agent_id
         self.credentials = credentials
         self.driver: Optional[webdriver.Remote] = None
         self.platform_name = platform_name
+        self.device_id = device_id
         self.options = self._build_options()
 
     def _build_options(self) -> AppiumOptions:
         options = AppiumOptions()
         options.set_capability("platformName", self.platform_name)
         options.set_capability("automationName", "UiAutomator2")
-        options.set_capability("deviceName", "emulator-5554")
+        # Target a specific AVD when supplied (sandbox runs); otherwise default.
+        options.set_capability("deviceName", self.device_id or "emulator-5554")
+        if self.device_id:
+            options.set_capability("udid", self.device_id)
         options.set_capability("noReset", True)
 
         try:
@@ -232,6 +237,57 @@ class BaseMobileDriver:
             pass
 
         logger.debug("MobileDriver [%s]: human_type complete", self.agent_id)
+
+    def sandbox_type(self, text: str) -> Dict[str, Any]:
+        """
+        Isolated manual typing run for the Sandbox Console (Stage 16).
+
+        Starts a session, focuses the first available text-entry element
+        (or the global search affordance if none is present), then performs
+        hardened W3C coordinate `human_type()`. Returns a structured log so the
+        operator's terminal gets a definitive success / failure verdict.
+        """
+        log: list[str] = []
+        try:
+            log.append(f"[{self.agent_id}] Starting isolated Appium session on '{self.device_id or 'default'}'...")
+            self.start_session()
+            log.append("[OK] Session established. Locating a focusable input element...")
+
+            from selenium.webdriver.common.by import By
+
+            element = None
+            # Prefer any visible EditText — covers comment boxes, search bars, DMs.
+            candidates = self.driver.find_elements(By.CLASS_NAME, "android.widget.EditText")
+            if candidates:
+                element = candidates[0]
+                log.append(f"[OK] Found {len(candidates)} EditText element(s); targeting the first.")
+            else:
+                # Fall back to a UiAutomator search for any clickable focusable node.
+                try:
+                    element = self.driver.find_element(
+                        By.ANDROID_UIAUTOMATOR,
+                        'new UiSelector().focusable(true).clickable(true)',
+                    )
+                    log.append("[OK] No EditText found; using first focusable clickable node.")
+                except Exception:
+                    element = None
+
+            if element is None:
+                log.append("[FAIL] No input element available on the current screen.")
+                return {"status": "error", "success": False, "log": log}
+
+            log.append(f"[..] Typing {len(text)} characters via W3C coordinate tapping (OpSec hardened)...")
+            self.human_type(element, text)
+            log.append("[OK] human_type() sequence completed cleanly.")
+            return {"status": "success", "success": True, "log": log}
+
+        except Exception as e:
+            log.append(f"[FAIL] Sandbox typing run aborted: {e}")
+            logger.error("MobileDriver [%s]: sandbox_type failed: %s", self.agent_id, e)
+            return {"status": "error", "success": False, "log": log}
+        finally:
+            self.close_session()
+            log.append("[OK] Appium session closed.")
 
     def execute_comment(self, target_url: str, text: str) -> bool:
         """To be implemented by specific platform drivers."""

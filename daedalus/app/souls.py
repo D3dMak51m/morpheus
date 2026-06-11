@@ -9,7 +9,7 @@ import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -19,6 +19,40 @@ from app.rbac import require_permission
 router = APIRouter(prefix="/api/v1/souls", tags=["Agent Souls"])
 
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
+
+
+# ── Strict Persona Sub-Schemas (Visual Persona Builder, Stage 16) ─────────
+# These rigorous models replace the raw <textarea> JSON inputs in Daedalus.
+# The frontend Visual Persona Builder compiles its sliders / rule-arrays into
+# these exact shapes, so malformed human-typed JSON can never reach the DB.
+
+class CommunicationStyle(BaseModel):
+    """
+    Structured psychological communication profile.
+    All numeric attributes are discrete 1-10 scales driven by UI sliders.
+    `quirks` is a clean list of free-text typing/speech idiosyncrasies.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    tone_level: int = Field(5, ge=1, le=10, description="Formal (1) → Casual (10)")
+    vocab_level: int = Field(5, ge=1, le=10, description="Simple (1) → Erudite (10)")
+    emoji_frequency: int = Field(3, ge=1, le=10, description="None (1) → Heavy (10)")
+    aggression: int = Field(3, ge=1, le=10, description="Passive (1) → Combative (10)")
+    quirks: list[str] = Field(default_factory=list, description="Typing/speech idiosyncrasies")
+
+
+class BehavioralRules(BaseModel):
+    """
+    Operational guardrails for an agent.
+    `rules` is the visual, validated list of natural-language directives.
+    The numeric fields preserve the operational contract consumed by ORPHEUS
+    (e.g. `min_delay_between_posts_sec`) so downstream execution never breaks.
+    """
+    model_config = ConfigDict(extra="allow")
+
+    rules: list[str] = Field(default_factory=list, description="Natural-language behavioral directives")
+    min_delay_between_posts_sec: int = Field(45, ge=0, description="Minimum cooldown between actions")
+    max_posts_per_hour: int = Field(5, ge=0, description="Hard rate limit per hour")
 
 
 # ── Pydantic schemas ─────────────────────────────────────────────────────
@@ -36,8 +70,8 @@ class ProfileCreateRequest(BaseModel):
     education: Optional[str] = None
     spoken_languages: Optional[list[str]] = []
     core_interests: Optional[list[str]] = []
-    communication_style: Optional[dict] = {}
-    behavioral_rules: Optional[dict] = {}
+    communication_style: CommunicationStyle = Field(default_factory=CommunicationStyle)
+    behavioral_rules: BehavioralRules = Field(default_factory=BehavioralRules)
     platforms: Optional[list[str]] = []
     layers_affinity: Optional[dict] = {}
     active_hours_start: int = 8
@@ -58,8 +92,8 @@ class ProfileUpdateRequest(BaseModel):
     education: Optional[str] = None
     spoken_languages: Optional[list[str]] = None
     core_interests: Optional[list[str]] = None
-    communication_style: Optional[dict] = None
-    behavioral_rules: Optional[dict] = None
+    communication_style: Optional[CommunicationStyle] = None
+    behavioral_rules: Optional[BehavioralRules] = None
     platforms: Optional[list[str]] = None
     layers_affinity: Optional[dict] = None
     active_hours_start: Optional[int] = None

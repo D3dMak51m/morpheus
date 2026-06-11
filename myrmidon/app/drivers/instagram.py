@@ -12,8 +12,8 @@ from .pages.instagram_page import InstagramPostPage
 logger = logging.getLogger("myrmidon.drivers.instagram")
 
 class InstagramDriver(BaseMobileDriver):
-    def __init__(self, agent_id: str, credentials: dict):
-        super().__init__(agent_id, credentials)
+    def __init__(self, agent_id: str, credentials: dict, device_id: str = None):
+        super().__init__(agent_id, credentials, device_id=device_id)
         self.options.set_capability("appPackage", "com.instagram.android")
         self.options.set_capability("appActivity", "com.instagram.android.activity.MainTabActivity")
 

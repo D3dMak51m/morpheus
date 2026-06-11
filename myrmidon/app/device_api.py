@@ -14,6 +14,8 @@ import threading
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 import uvicorn
 
 from app.adb_supervisor import ADBSupervisor
@@ -205,6 +207,70 @@ def hard_reboot(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to hard reboot emulator")
     return {"status": "success"}
+
+
+# ── Sandbox Direct Execution Engine (Stage 16) ──────────────────────────────
+
+class SandboxExecuteRequest(BaseModel):
+    """Direct, queue-bypassing typing run targeting a single AVD."""
+    agent_id: str = Field(..., description="Persona instantiating the driver")
+    target_app: str = Field("base", description="instagram | telegram | base")
+    text_payload: str = Field(..., min_length=1, description="Text to physically type")
+
+
+def _run_sandbox_typing(device_id: str, body: "SandboxExecuteRequest") -> Dict[str, Any]:
+    """
+    Blocking worker: builds the correct driver and performs the W3C
+    coordinate typing sequence. Executed inside a threadpool so the FastAPI
+    event loop is never blocked by the long-running Appium session.
+    """
+    target = (body.target_app or "base").strip().lower()
+    credentials: Dict[str, Any] = {}
+
+    if target in ("instagram", "ig"):
+        from app.drivers.instagram import InstagramDriver
+        driver = InstagramDriver(body.agent_id, credentials, device_id=device_id)
+    else:
+        # Generic base driver — opens whatever is foregrounded and types into it.
+        from app.drivers.mobile_base import BaseMobileDriver
+        driver = BaseMobileDriver(body.agent_id, credentials, device_id=device_id)
+
+    return driver.sandbox_type(body.text_payload)
+
+
+@app.post("/api/v1/devices/{device_id}/sandbox-execute")
+async def sandbox_execute(
+    device_id: str,
+    body: SandboxExecuteRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Trigger an immediate, isolated typing sequence on a specific AVD.
+
+    Bypasses the Redis event queues entirely. Instantiates the appropriate
+    mobile driver, focuses an input element, and executes the hardened
+    coordinate-based `human_type()` engine with the supplied payload.
+    Returns a definitive success/failure log without crashing the API thread.
+    """
+    _verify_token(x_internal_token)
+    logger.info(
+        "Sandbox-execute on %s: agent=%s app=%s (%d chars)",
+        device_id, body.agent_id, body.target_app, len(body.text_payload),
+    )
+    try:
+        result = await run_in_threadpool(_run_sandbox_typing, device_id, body)
+    except Exception as e:
+        logger.error("Sandbox-execute crashed for %s: %s", device_id, e)
+        return {
+            "status": "error",
+            "success": False,
+            "device_id": device_id,
+            "log": [f"[FAIL] Driver dispatch crashed: {e}"],
+        }
+
+    result["device_id"] = device_id
+    result["agent_id"] = body.agent_id
+    return result
 
 
 from app.avd_orchestrator import get_orchestrator

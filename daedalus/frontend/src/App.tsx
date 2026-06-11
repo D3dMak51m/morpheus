@@ -10,11 +10,12 @@ import ActivityStream from './components/ActivityStream';
 import { AuthFactory } from './components/AuthFactory';
 import { SoulGenesisView } from './components/SoulGenesisView';
 import AccountsManager from './components/AccountsManager';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users } from 'lucide-react';
+import SandboxConsole from './components/SandboxConsole';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'sandbox' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
 
   const handleLogin = (jwt: string) => {
@@ -94,6 +95,12 @@ function App() {
             <HardDrive size={18} /> Devices
           </button>
           <button
+            className={`nav-item ${activeView === 'sandbox' ? 'active' : ''}`}
+            onClick={() => setActiveView('sandbox')}
+          >
+            <TerminalSquare size={18} /> Sandbox Console
+          </button>
+          <button
             className={`nav-item ${activeView === 'activity' ? 'active' : ''}`}
             onClick={() => setActiveView('activity')}
           >
@@ -123,6 +130,7 @@ function App() {
         <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeManager token={token} /></div>
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
+        <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
         <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityStream token={token} /></div>
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>

@@ -1,12 +1,19 @@
 import { useState, useEffect } from 'react';
 import './SoulsContext.css';
 
+// ── Strict client-side persona shapes (mirror Daedalus Pydantic schemas) ──
 interface CommunicationStyle {
   tone_level: number;
-  emoji_frequency: number;
   vocab_level: number;
+  emoji_frequency: number;
   aggression: number;
-  [key: string]: unknown;
+  quirks: string[];
+}
+
+interface BehavioralRules {
+  rules: string[];
+  min_delay_between_posts_sec: number;
+  max_posts_per_hour: number;
 }
 
 interface Profile {
@@ -20,10 +27,15 @@ interface Profile {
   platforms: string[];
   active_hours_start: number;
   active_hours_end: number;
-  communication_style: CommunicationStyle;
-  behavioral_rules: Record<string, any> | null;
+  communication_style: CommunicationStyle | null;
+  behavioral_rules: BehavioralRules | Record<string, any> | null;
   core_mission: string | null;
-  current_stance_modifiers: Record<string, any> | null;
+  current_stance_modifiers: Record<string, string> | null;
+}
+
+interface StancePair {
+  topic: string;
+  stance: string;
 }
 
 interface SoulsContextProps {
@@ -33,23 +45,33 @@ interface SoulsContextProps {
 const PLATFORMS = ['telegram', 'instagram', 'youtube', 'threads', 'web'];
 const CASTES = ['alpha', 'beta', 'gamma'];
 
+// Normalize whatever the backend returns into the strict visual shapes.
+const normalizeComm = (raw: any): CommunicationStyle => ({
+  tone_level: Number(raw?.tone_level ?? 5),
+  vocab_level: Number(raw?.vocab_level ?? 5),
+  emoji_frequency: Number(raw?.emoji_frequency ?? 3),
+  aggression: Number(raw?.aggression ?? 3),
+  quirks: Array.isArray(raw?.quirks) ? raw.quirks.map(String) : [],
+});
+
+const normalizeRules = (raw: any): BehavioralRules => ({
+  rules: Array.isArray(raw?.rules) ? raw.rules.map(String) : [],
+  min_delay_between_posts_sec: Number(raw?.min_delay_between_posts_sec ?? 45),
+  max_posts_per_hour: Number(raw?.max_posts_per_hour ?? 5),
+});
+
 const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  
-  // Tab State
+  const [saveError, setSaveError] = useState('');
+
   const [activeTab, setActiveTab] = useState<'identity' | 'psychology' | 'mission' | 'history'>('identity');
-  
-  // History State
   const [historyLogs, setHistoryLogs] = useState<any[]>([]);
-  
-  // JSON Edit State
-  const [commStyleJson, setCommStyleJson] = useState('');
-  const [behavioralRulesJson, setBehavioralRulesJson] = useState('');
-  const [stanceModifiersJson, setStanceModifiersJson] = useState('');
-  const [jsonError, setJsonError] = useState('');
+
+  // Stance modifiers are edited as visual topic/stance pairs, compiled to a dict on save.
+  const [stancePairs, setStancePairs] = useState<StancePair[]>([]);
 
   const headers = {
     'Content-Type': 'application/json',
@@ -59,17 +81,12 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
   useEffect(() => {
     fetchProfiles();
   }, []);
-  
+
   useEffect(() => {
     if (selectedProfile) {
-      // Sync JSON strings when modal opens
-      const { tone_level, emoji_frequency, vocab_level, aggression, ...baseComm } = selectedProfile.communication_style || {};
-      setCommStyleJson(JSON.stringify(baseComm, null, 2));
-      
-      setBehavioralRulesJson(JSON.stringify(selectedProfile.behavioral_rules || {}, null, 2));
-      setStanceModifiersJson(JSON.stringify(selectedProfile.current_stance_modifiers || {}, null, 2));
-      setJsonError('');
-      
+      const stance = selectedProfile.current_stance_modifiers || {};
+      setStancePairs(Object.entries(stance).map(([topic, s]) => ({ topic, stance: String(s) })));
+      setSaveError('');
       if (activeTab === 'history') {
         fetchHistory(selectedProfile.agent_id);
       }
@@ -91,7 +108,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
     try {
       const res = await fetch(`/api/v1/souls/profiles/${selectedProfile.agent_id}/rollback/${historyId}`, {
         method: 'POST',
-        headers
+        headers,
       });
       if (res.ok) {
         fetchProfiles();
@@ -117,33 +134,44 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
     setLoading(false);
   };
 
+  const openProfile = (p: Profile) => {
+    // Hydrate into strict visual shapes so the builder never touches raw JSON.
+    setSelectedProfile({
+      ...p,
+      communication_style: normalizeComm(p.communication_style),
+      behavioral_rules: normalizeRules(p.behavioral_rules),
+      current_stance_modifiers: p.current_stance_modifiers || {},
+    });
+    setActiveTab('identity');
+  };
+
   const handleSave = async () => {
     if (!selectedProfile) return;
-    
-    // Parse JSONs
-    let parsedCommExtra, parsedBehavioral, parsedStance;
-    try {
-      parsedCommExtra = JSON.parse(commStyleJson || '{}');
-      parsedBehavioral = JSON.parse(behavioralRulesJson || '{}');
-      parsedStance = JSON.parse(stanceModifiersJson || '{}');
-    } catch (e) {
-      setJsonError('Invalid JSON format. Please correct syntax errors before saving.');
-      return;
+    setSaveError('');
+
+    const comm = normalizeComm(selectedProfile.communication_style);
+    const rules = normalizeRules(selectedProfile.behavioral_rules);
+
+    // Compile visual stance pairs back into a clean dict (skip empty topics).
+    const stanceDict: Record<string, string> = {};
+    for (const pair of stancePairs) {
+      const t = pair.topic.trim();
+      if (t) stanceDict[t] = pair.stance;
     }
-    
-    const finalCommStyle = {
-      ...parsedCommExtra,
-      tone_level: selectedProfile.communication_style?.tone_level ?? 5,
-      emoji_frequency: selectedProfile.communication_style?.emoji_frequency ?? 3,
-      vocab_level: selectedProfile.communication_style?.vocab_level ?? 5,
-      aggression: selectedProfile.communication_style?.aggression ?? 3,
-    };
-    
+
     const payload = {
-      ...selectedProfile,
-      communication_style: finalCommStyle,
-      behavioral_rules: parsedBehavioral,
-      current_stance_modifiers: parsedStance
+      codename: selectedProfile.codename,
+      full_name: selectedProfile.full_name,
+      caste: selectedProfile.caste,
+      profession: selectedProfile.profession,
+      residence_city: selectedProfile.residence_city,
+      platforms: selectedProfile.platforms,
+      active_hours_start: selectedProfile.active_hours_start,
+      active_hours_end: selectedProfile.active_hours_end,
+      communication_style: comm,
+      behavioral_rules: rules,
+      core_mission: selectedProfile.core_mission,
+      current_stance_modifiers: stanceDict,
     };
 
     try {
@@ -152,11 +180,14 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
         headers,
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(typeof body.detail === 'string' ? body.detail : `Failed to save: ${res.status}`);
+      }
       fetchProfiles();
       setSelectedProfile(null);
     } catch (e) {
-      setJsonError(e instanceof Error ? e.message : 'Failed to save');
+      setSaveError(e instanceof Error ? e.message : 'Failed to save');
     }
   };
 
@@ -168,24 +199,71 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
     setSelectedProfile({ ...selectedProfile, platforms: Array.from(current) });
   };
 
-  const getCommStyle = (): CommunicationStyle => {
-    return selectedProfile?.communication_style || { tone_level: 5, emoji_frequency: 3, vocab_level: 5, aggression: 3 };
-  };
+  // ── Communication style helpers ──
+  const comm = (): CommunicationStyle => normalizeComm(selectedProfile?.communication_style);
 
-  const setCommStyle = (key: string, val: number) => {
+  const setComm = (key: keyof CommunicationStyle, val: any) => {
     if (!selectedProfile) return;
     setSelectedProfile({
       ...selectedProfile,
-      communication_style: { ...getCommStyle(), [key]: val },
+      communication_style: { ...comm(), [key]: val },
     });
   };
+
+  const updateQuirk = (idx: number, val: string) => {
+    const next = [...comm().quirks];
+    next[idx] = val;
+    setComm('quirks', next);
+  };
+  const addQuirk = () => setComm('quirks', [...comm().quirks, '']);
+  const removeQuirk = (idx: number) => setComm('quirks', comm().quirks.filter((_, i) => i !== idx));
+
+  // ── Behavioral rule helpers ──
+  const rules = (): BehavioralRules => normalizeRules(selectedProfile?.behavioral_rules);
+
+  const setRules = (key: keyof BehavioralRules, val: any) => {
+    if (!selectedProfile) return;
+    setSelectedProfile({
+      ...selectedProfile,
+      behavioral_rules: { ...rules(), [key]: val },
+    });
+  };
+
+  const updateRule = (idx: number, val: string) => {
+    const next = [...rules().rules];
+    next[idx] = val;
+    setRules('rules', next);
+  };
+  const addRule = () => setRules('rules', [...rules().rules, '']);
+  const removeRule = (idx: number) => setRules('rules', rules().rules.filter((_, i) => i !== idx));
+
+  // ── Stance pair helpers ──
+  const updateStance = (idx: number, field: keyof StancePair, val: string) => {
+    const next = [...stancePairs];
+    next[idx] = { ...next[idx], [field]: val };
+    setStancePairs(next);
+  };
+  const addStance = () => setStancePairs([...stancePairs, { topic: '', stance: 'support' }]);
+  const removeStance = (idx: number) => setStancePairs(stancePairs.filter((_, i) => i !== idx));
+
+  const sliderRow = (label: string, key: keyof CommunicationStyle, lo: string, hi: string) => (
+    <div className="slider-group">
+      <label>{label}: <strong>{comm()[key] as number}</strong></label>
+      <input
+        type="range" min="1" max="10"
+        value={comm()[key] as number}
+        onChange={e => setComm(key, parseInt(e.target.value))}
+      />
+      <div className="slider-ends"><span>{lo}</span><span>{hi}</span></div>
+    </div>
+  );
 
   return (
     <div className="souls-context view-container">
       <div className="header-row">
         <div>
           <h1>Agent Souls</h1>
-          <p className="subtitle">Manage psychological profiles and narrative stances.</p>
+          <p className="subtitle">Visual Persona Builder — no raw JSON, fully validated.</p>
         </div>
         <button className="btn-primary" onClick={fetchProfiles}>Refresh</button>
       </div>
@@ -194,7 +272,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
 
       <div className="grid">
         {loading ? <p>Loading profiles...</p> : profiles.map(p => (
-          <div key={p.agent_id} className="card" onClick={() => setSelectedProfile({...p})}>
+          <div key={p.agent_id} className="card" onClick={() => openProfile(p)}>
             <h3>{p.full_name} <span className={`badge caste-${p.caste}`}>{p.caste}</span></h3>
             <p className="text-muted">{p.agent_id} / {p.codename}</p>
             <div className="platforms">
@@ -210,67 +288,39 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
             <div className="modal-header">
               <h2>Edit Profile: {selectedProfile.full_name} ({selectedProfile.agent_id})</h2>
               <div className="tabs">
-                <button 
-                  className={`tab-btn ${activeTab === 'identity' ? 'active' : ''}`} 
-                  onClick={() => setActiveTab('identity')}
-                >Identity</button>
-                <button 
-                  className={`tab-btn ${activeTab === 'psychology' ? 'active' : ''}`} 
-                  onClick={() => setActiveTab('psychology')}
-                >Psychology & Style</button>
-                <button 
-                  className={`tab-btn ${activeTab === 'mission' ? 'active' : ''}`} 
-                  onClick={() => setActiveTab('mission')}
-                >Mission & Stance</button>
-                <button 
-                  className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`} 
-                  onClick={() => setActiveTab('history')}
-                >History & Rollback</button>
+                <button className={`tab-btn ${activeTab === 'identity' ? 'active' : ''}`} onClick={() => setActiveTab('identity')}>Identity</button>
+                <button className={`tab-btn ${activeTab === 'psychology' ? 'active' : ''}`} onClick={() => setActiveTab('psychology')}>Psychology & Style</button>
+                <button className={`tab-btn ${activeTab === 'mission' ? 'active' : ''}`} onClick={() => setActiveTab('mission')}>Mission & Stance</button>
+                <button className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>History & Rollback</button>
               </div>
             </div>
 
             <div className="modal-body">
-              {jsonError && <div className="error-banner">{jsonError}</div>}
-              
+              {saveError && <div className="error-banner">{saveError}</div>}
+
               {activeTab === 'identity' && (
                 <div className="form-grid">
                   <div className="form-group">
                     <label>Full Name</label>
-                    <input
-                      value={selectedProfile.full_name || ''}
-                      onChange={e => setSelectedProfile({...selectedProfile, full_name: e.target.value})}
-                    />
+                    <input value={selectedProfile.full_name || ''} onChange={e => setSelectedProfile({ ...selectedProfile, full_name: e.target.value })} />
                   </div>
                   <div className="form-group">
                     <label>Codename</label>
-                    <input
-                      value={selectedProfile.codename}
-                      onChange={e => setSelectedProfile({...selectedProfile, codename: e.target.value})}
-                    />
+                    <input value={selectedProfile.codename} onChange={e => setSelectedProfile({ ...selectedProfile, codename: e.target.value })} />
                   </div>
                   <div className="form-group">
                     <label>Residence City</label>
-                    <input
-                      value={selectedProfile.residence_city || ''}
-                      onChange={e => setSelectedProfile({...selectedProfile, residence_city: e.target.value})}
-                    />
+                    <input value={selectedProfile.residence_city || ''} onChange={e => setSelectedProfile({ ...selectedProfile, residence_city: e.target.value })} />
                   </div>
                   <div className="form-group">
                     <label>Profession</label>
-                    <input
-                      value={selectedProfile.profession || ''}
-                      onChange={e => setSelectedProfile({...selectedProfile, profession: e.target.value})}
-                    />
+                    <input value={selectedProfile.profession || ''} onChange={e => setSelectedProfile({ ...selectedProfile, profession: e.target.value })} />
                   </div>
                   <div className="form-group">
                     <label>Caste</label>
                     <div className="toggle-group">
                       {CASTES.map(c => (
-                        <button
-                          key={c}
-                          className={selectedProfile.caste === c ? `active ${c}` : ''}
-                          onClick={() => setSelectedProfile({...selectedProfile, caste: c})}
-                        >
+                        <button key={c} className={selectedProfile.caste === c ? `active ${c}` : ''} onClick={() => setSelectedProfile({ ...selectedProfile, caste: c })}>
                           {c.toUpperCase()}
                         </button>
                       ))}
@@ -280,11 +330,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                     <label>Platforms</label>
                     <div className="pill-group">
                       {PLATFORMS.map(pl => (
-                        <button
-                          key={pl}
-                          className={`pill ${(selectedProfile.platforms || []).includes(pl) ? 'selected' : ''}`}
-                          onClick={() => togglePlatform(pl)}
-                        >
+                        <button key={pl} className={`pill ${(selectedProfile.platforms || []).includes(pl) ? 'selected' : ''}`} onClick={() => togglePlatform(pl)}>
                           {pl}
                         </button>
                       ))}
@@ -293,19 +339,11 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                   <div className="form-group row-flex">
                     <div>
                       <label>Active Hours Start (0-23)</label>
-                      <input 
-                        type="number" min="0" max="23"
-                        value={selectedProfile.active_hours_start}
-                        onChange={e => setSelectedProfile({...selectedProfile, active_hours_start: parseInt(e.target.value)})}
-                      />
+                      <input type="number" min="0" max="23" value={selectedProfile.active_hours_start} onChange={e => setSelectedProfile({ ...selectedProfile, active_hours_start: parseInt(e.target.value) })} />
                     </div>
                     <div>
                       <label>Active Hours End (0-23)</label>
-                      <input 
-                        type="number" min="0" max="23"
-                        value={selectedProfile.active_hours_end}
-                        onChange={e => setSelectedProfile({...selectedProfile, active_hours_end: parseInt(e.target.value)})}
-                      />
+                      <input type="number" min="0" max="23" value={selectedProfile.active_hours_end} onChange={e => setSelectedProfile({ ...selectedProfile, active_hours_end: parseInt(e.target.value) })} />
                     </div>
                   </div>
                 </div>
@@ -314,55 +352,53 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
               {activeTab === 'psychology' && (
                 <div className="form-grid">
                   <div className="form-group full-width section">
-                    <h3>Base Sliders</h3>
+                    <h3>Communication Sliders (1–10)</h3>
                     <div className="slider-row">
-                      <div className="slider-group">
-                        <label>Tone (Formal ← → Casual): {getCommStyle().tone_level ?? 5}</label>
-                        <input type="range" min="1" max="10" value={getCommStyle().tone_level ?? 5}
-                          onChange={e => setCommStyle('tone_level', parseInt(e.target.value))}
-                        />
-                      </div>
-                      <div className="slider-group">
-                        <label>Emoji Frequency: {getCommStyle().emoji_frequency ?? 3}</label>
-                        <input type="range" min="1" max="10" value={getCommStyle().emoji_frequency ?? 3}
-                          onChange={e => setCommStyle('emoji_frequency', parseInt(e.target.value))}
-                        />
-                      </div>
+                      {sliderRow('Tone', 'tone_level', 'Formal', 'Casual')}
+                      {sliderRow('Emoji Frequency', 'emoji_frequency', 'None', 'Heavy')}
                     </div>
                     <div className="slider-row mt-2">
-                      <div className="slider-group">
-                        <label>Vocabulary Level: {getCommStyle().vocab_level ?? 5}</label>
-                        <input type="range" min="1" max="10" value={getCommStyle().vocab_level ?? 5}
-                          onChange={e => setCommStyle('vocab_level', parseInt(e.target.value))}
-                        />
-                      </div>
-                      <div className="slider-group">
-                        <label>Aggression: {getCommStyle().aggression ?? 3}</label>
-                        <input type="range" min="1" max="10" value={getCommStyle().aggression ?? 3}
-                          onChange={e => setCommStyle('aggression', parseInt(e.target.value))}
-                        />
-                      </div>
+                      {sliderRow('Vocabulary Level', 'vocab_level', 'Simple', 'Erudite')}
+                      {sliderRow('Aggression', 'aggression', 'Passive', 'Combative')}
                     </div>
                   </div>
-                  
-                  <div className="form-group full-width">
-                    <label>Additional Communication Style (JSON)</label>
-                    <textarea 
-                      className="json-textarea"
-                      rows={4}
-                      value={commStyleJson}
-                      onChange={e => setCommStyleJson(e.target.value)}
-                    />
+
+                  <div className="form-group full-width section">
+                    <div className="array-header">
+                      <h3>Typing / Speech Quirks</h3>
+                      <button className="btn-secondary btn-add" onClick={addQuirk}>+ Add Quirk</button>
+                    </div>
+                    {comm().quirks.length === 0 && <p className="text-muted">No quirks defined.</p>}
+                    {comm().quirks.map((q, i) => (
+                      <div key={i} className="array-row">
+                        <input value={q} placeholder="e.g. lowercase only, no periods" onChange={e => updateQuirk(i, e.target.value)} />
+                        <button className="btn-icon text-danger" onClick={() => removeQuirk(i)}>✕</button>
+                      </div>
+                    ))}
                   </div>
-                  
-                  <div className="form-group full-width">
-                    <label>Behavioral Rules (JSON)</label>
-                    <textarea 
-                      className="json-textarea"
-                      rows={6}
-                      value={behavioralRulesJson}
-                      onChange={e => setBehavioralRulesJson(e.target.value)}
-                    />
+
+                  <div className="form-group full-width section">
+                    <div className="array-header">
+                      <h3>Behavioral Rules</h3>
+                      <button className="btn-secondary btn-add" onClick={addRule}>+ Add Rule</button>
+                    </div>
+                    {rules().rules.length === 0 && <p className="text-muted">No behavioral rules defined.</p>}
+                    {rules().rules.map((r, i) => (
+                      <div key={i} className="array-row">
+                        <input value={r} placeholder="e.g. Never discuss politics directly" onChange={e => updateRule(i, e.target.value)} />
+                        <button className="btn-icon text-danger" onClick={() => removeRule(i)}>✕</button>
+                      </div>
+                    ))}
+                    <div className="row-flex mt-3">
+                      <div>
+                        <label>Min Delay Between Posts (sec)</label>
+                        <input type="number" min="0" value={rules().min_delay_between_posts_sec} onChange={e => setRules('min_delay_between_posts_sec', parseInt(e.target.value) || 0)} />
+                      </div>
+                      <div>
+                        <label>Max Posts Per Hour</label>
+                        <input type="number" min="0" value={rules().max_posts_per_hour} onChange={e => setRules('max_posts_per_hour', parseInt(e.target.value) || 0)} />
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -374,21 +410,32 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                     <textarea
                       rows={5}
                       value={selectedProfile.core_mission || ''}
-                      onChange={e => setSelectedProfile({...selectedProfile, core_mission: e.target.value})}
+                      onChange={e => setSelectedProfile({ ...selectedProfile, core_mission: e.target.value })}
                       placeholder="Define the primary objective and narrative stance for this persona."
                     />
+                    <p className="help-text">Free-text narrative directive (not JSON).</p>
                   </div>
-                  
-                  <div className="form-group full-width">
-                    <label>Current Stance Modifiers (JSON)</label>
-                    <textarea 
-                      className="json-textarea"
-                      rows={8}
-                      value={stanceModifiersJson}
-                      onChange={e => setStanceModifiersJson(e.target.value)}
-                      placeholder='{"topic_x": "support", "topic_y": "attack"}'
-                    />
-                    <p className="help-text">Dynamic modifiers applied to the Core Mission during runtime.</p>
+
+                  <div className="form-group full-width section">
+                    <div className="array-header">
+                      <h3>Stance Modifiers</h3>
+                      <button className="btn-secondary btn-add" onClick={addStance}>+ Add Stance</button>
+                    </div>
+                    <p className="help-text">Per-topic dynamic stance applied at runtime. Compiled into a validated object on save.</p>
+                    {stancePairs.length === 0 && <p className="text-muted">No stance modifiers defined.</p>}
+                    {stancePairs.map((pair, i) => (
+                      <div key={i} className="array-row stance-row">
+                        <input value={pair.topic} placeholder="Topic (e.g. local_elections)" onChange={e => updateStance(i, 'topic', e.target.value)} />
+                        <select value={pair.stance} onChange={e => updateStance(i, 'stance', e.target.value)}>
+                          <option value="support">support</option>
+                          <option value="attack">attack</option>
+                          <option value="neutral">neutral</option>
+                          <option value="amplify">amplify</option>
+                          <option value="undermine">undermine</option>
+                        </select>
+                        <button className="btn-icon text-danger" onClick={() => removeStance(i)}>✕</button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
