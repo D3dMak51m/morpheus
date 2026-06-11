@@ -317,3 +317,75 @@ class ProfileHistory(Base):
 
     def __repr__(self) -> str:
         return f"<ProfileHistory(id={self.id}, agent_id='{self.agent_id}')>"
+
+
+class Mission(Base):
+    """
+    Stage 17 — A coordinated, multi-agent narrative campaign executed as a DAG.
+
+    Lifecycle (status):
+        pending   → created, squad assembled, not yet launched.
+        running   → Alpha tasks dispatched to Redis; Beta/Gamma locked.
+        amplifying→ Alpha reported SUCCESS; Beta/Gamma unlocked & dispatched.
+        completed → every squad member reached a terminal state.
+        failed    → Alpha failed; downstream waves never released.
+    """
+    __tablename__ = "missions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    platform: Mapped[str] = mapped_column(String(30), default="web", nullable=False)
+    narrative_goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tactic: Mapped[str] = mapped_column(String(50), default="soft_support", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+
+    # Context produced by the Alpha wave (link/reference) used to seed amplification.
+    alpha_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    launched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    squad: Mapped[list["MissionSquad"]] = relationship(
+        "MissionSquad",
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Mission(id={self.id}, title='{self.title}', status='{self.status}')>"
+
+
+class MissionSquad(Base):
+    """
+    Stage 17 — A single agent's enlistment in a Mission, bound to a DAG role.
+
+    assigned_role: 'alpha' (seeds the narrative), 'beta' (amplifies/defends),
+                   'gamma' (creates supporting noise).
+    status: 'pending' → 'locked' (awaiting upstream) → 'dispatched' →
+            'success' | 'failed'.
+    """
+    __tablename__ = "mission_squads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mission_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    assigned_role: Mapped[str] = mapped_column(String(20), default="alpha", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    task_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    mission: Mapped["Mission"] = relationship("Mission", back_populates="squad")
+
+    def __repr__(self) -> str:
+        return (
+            f"<MissionSquad(mission_id={self.mission_id}, agent='{self.agent_id}', "
+            f"role='{self.assigned_role}', status='{self.status}')>"
+        )

@@ -34,6 +34,7 @@ from app.souls import router as souls_router
 from app.router_huginn_control import router as huginn_control_router
 from app.router_auth_factory import router as auth_factory_router
 from app.router_sandbox import router as sandbox_router
+from app.router_missions import router as missions_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -62,8 +63,14 @@ async def lifespan(application: FastAPI):
     logger.info("DAEDALUS starting — initializing database tables...")
     init_tables()
     _seed_superadmin()
+
+    # Stage 17: launch the Mission Control DAG reconciler background thread.
+    from app.mission_control import start_reconciler, stop_reconciler
+    start_reconciler()
+
     logger.info("DAEDALUS ready.")
     yield
+    stop_reconciler()
     logger.info("DAEDALUS shutting down.")
 
 
@@ -142,6 +149,7 @@ app.include_router(souls_router)
 app.include_router(huginn_control_router)
 app.include_router(auth_factory_router)
 app.include_router(sandbox_router)
+app.include_router(missions_router)
 
 # ── Static Frontend SPA ──────────────────────────────────────────────────
 
