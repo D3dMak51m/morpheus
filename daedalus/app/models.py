@@ -396,6 +396,29 @@ class ScoutedTarget(Base):
         )
 
 
+class Campaign(Base):
+    """
+    A persisted information campaign definition (target platforms, enlisted
+    agents, geographic layer filter). Created/listed via /api/v1/campaigns.
+    """
+    __tablename__ = "campaigns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    target_platforms: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    agent_ids: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    layers_filter: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="created", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    def __repr__(self) -> str:
+        return f"<Campaign(campaign_id='{self.campaign_id}', name='{self.name}', status='{self.status}')>"
+
+
 class MissionSquad(Base):
     """
     Stage 17 — A single agent's enlistment in a Mission, bound to a DAG role.

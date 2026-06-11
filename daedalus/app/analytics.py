@@ -5,6 +5,7 @@ Provides execution metrics, queue depths, memory auditing,
 and activity stream for the MORPHEUS dashboard.
 """
 
+import logging
 import os
 from typing import Any, Dict, Optional
 
@@ -28,6 +29,8 @@ from app.models import (
     VirtualDevice,
 )
 from app.rbac import require_permission
+
+logger = logging.getLogger("daedalus.analytics")
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
@@ -126,7 +129,7 @@ def swarm_overlord(
                 or "up" in str(e.get("status", "")).lower()
             )
     except Exception as exc:
-        logging.getLogger("daedalus.analytics").warning("Fleet probe failed: %s", exc)
+        logger.warning("Fleet probe failed (Myrmidon unreachable): %s", exc)
 
     devices_recovering = db.query(VirtualDevice).filter(
         VirtualDevice.status.in_(["RECOVERING", "recovering"])

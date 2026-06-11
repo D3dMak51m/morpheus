@@ -368,8 +368,10 @@ def _execute_appium(task: dict, credentials: dict) -> None:
     )
 
     simulate_read_delay()
-    
+
     success = False
+    adb_sup = None
+    device_id = None
 
     try:
         from app.adb_supervisor import ADBSupervisor
@@ -419,10 +421,13 @@ def _execute_appium(task: dict, credentials: dict) -> None:
         logger.error("Task %s crashed on %s: %s", task_id, platform, e)
         _log_activity_to_daedalus(task, "FAILED")
     finally:
-        # Stage 12 Cleanup: Save snapshot and shutdown
-        if device_id:
-            adb_sup.manage_device_snapshot(device_id, "save", "idle_snap")
-            adb_sup.shutdown_device(device_id)
+        # Stage 12 Cleanup: Save snapshot and shutdown (guard against early failures)
+        if adb_sup is not None and device_id:
+            try:
+                adb_sup.manage_device_snapshot(device_id, "save", "idle_snap")
+                adb_sup.shutdown_device(device_id)
+            except Exception as cleanup_exc:
+                logger.error("Task %s — cleanup failed for device %s: %s", task_id, device_id, cleanup_exc)
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────

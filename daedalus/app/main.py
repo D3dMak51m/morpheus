@@ -391,45 +391,81 @@ def deactivate_agent(
 @app.post("/api/v1/campaigns", response_model=CampaignResponse, tags=["Campaigns"])
 def create_campaign(
     request: CampaignCreateRequest,
+    db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:create")),
 ) -> CampaignResponse:
-    """
-    Create a new information campaign.
-    Stage 1: stores the campaign definition and returns a tracking ID.
-    Full campaign orchestration (HUGINN + ORPHEUS + MYRMIDON pipeline)
-    will be implemented in later stages.
-    """
+    """Create and persist a new information campaign definition."""
     import uuid
+    from app.models import Campaign
 
     campaign_id = str(uuid.uuid4())
+    campaign = Campaign(
+        campaign_id=campaign_id,
+        name=request.name,
+        description=request.description,
+        target_platforms=request.target_platforms,
+        agent_ids=request.agent_ids,
+        layers_filter=request.layers_filter or {},
+        status="created",
+    )
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+
     logger.info(
-        "Campaign created: id=%s, name='%s', platforms=%s, agents=%s",
-        campaign_id,
-        request.name,
-        request.target_platforms,
-        request.agent_ids,
+        "Campaign persisted: id=%s, name='%s', platforms=%s, agents=%s",
+        campaign_id, request.name, request.target_platforms, request.agent_ids,
     )
     return CampaignResponse(
         campaign_id=campaign_id,
-        name=request.name,
-        status="created",
-        message="Campaign registered. Orchestration pipeline activation pending Stage 5 implementation.",
+        name=campaign.name,
+        status=campaign.status,
+        message="Campaign registered and persisted.",
     )
 
 
 @app.get("/api/v1/campaigns", tags=["Campaigns"])
 def list_campaigns(
+    db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:view")),
 ) -> dict[str, Any]:
-    """
-    List active campaigns.
-    Full persistence layer for campaigns will be added in later stages.
-    """
+    """List all persisted campaigns (newest first)."""
+    from app.models import Campaign
+
+    campaigns = db.query(Campaign).order_by(Campaign.id.desc()).all()
     return {
-        "campaigns": [],
-        "total": 0,
-        "message": "Campaign persistence will be implemented in Stage 5.",
+        "campaigns": [
+            {
+                "campaign_id": c.campaign_id,
+                "name": c.name,
+                "description": c.description,
+                "target_platforms": c.target_platforms or [],
+                "agent_ids": c.agent_ids or [],
+                "layers_filter": c.layers_filter or {},
+                "status": c.status,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in campaigns
+        ],
+        "total": len(campaigns),
     }
+
+
+@app.delete("/api/v1/campaigns/{campaign_id}", tags=["Campaigns"])
+def delete_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:delete")),
+) -> dict[str, str]:
+    """Delete a persisted campaign by its tracking ID."""
+    from app.models import Campaign
+
+    campaign = db.query(Campaign).filter(Campaign.campaign_id == campaign_id).first()
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    db.delete(campaign)
+    db.commit()
+    return {"status": "success", "message": f"Campaign {campaign_id} deleted"}
 
 
 # ── Role Management (/api/v1/roles) ──────────────────────────────────────

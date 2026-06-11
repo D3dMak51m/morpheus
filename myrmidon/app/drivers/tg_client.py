@@ -6,6 +6,7 @@ Executes Telegram actions via Pyrogram MTProto protocol.
 
 import logging
 import asyncio
+import os
 from typing import Optional
 import time
 import random
@@ -27,12 +28,18 @@ class TelegramDriver:
     def __init__(self, agent_id: str, credentials: dict):
         self.agent_id = agent_id
         self.credentials = credentials
-        # Ideally, API ID and Hash should come from env or credentials.
-        # Using placeholder defaults for the assignment logic.
-        self.api_id = credentials.get("api_id", 12345)
-        self.api_hash = credentials.get("api_hash", "0123456789abcdef0123456789abcdef")
-        
-        self.session_string = credentials.get("auth_cookies") # Re-using auth_cookies to store session string for Pyrogram MVP
+        # Real Telegram API credentials: per-account override → shared env vars.
+        # No fake fallbacks — Pyrogram is rejected by Telegram with bogus api_id/hash.
+        self.api_id = int(credentials.get("api_id") or os.getenv("TG_API_ID", "0") or 0)
+        self.api_hash = credentials.get("api_hash") or os.getenv("TG_API_HASH", "")
+
+        # Pyrogram session string lives in auth_cookies. The Auth Factory stores
+        # it as a JSONB dict {"session_string": ...}; tolerate raw strings too.
+        raw_cookies = credentials.get("auth_cookies")
+        if isinstance(raw_cookies, dict):
+            self.session_string = raw_cookies.get("session_string")
+        else:
+            self.session_string = raw_cookies
         
         self.proxy_dict = None
         from app.proxy_manager import get_active_proxy
@@ -45,6 +52,13 @@ class TelegramDriver:
         
         if not self.session_string:
              logger.error("TelegramDriver: No session string provided in credentials for agent %s", self.agent_id)
+             return False
+
+        if not self.api_id or not self.api_hash:
+             logger.error(
+                 "TelegramDriver: Missing Telegram api_id/api_hash for agent %s "
+                 "(set TG_API_ID/TG_API_HASH or per-account credentials).", self.agent_id
+             )
              return False
 
         app = Client(
