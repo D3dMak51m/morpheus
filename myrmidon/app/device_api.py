@@ -140,6 +140,122 @@ def stop_app(
     return {"status": "success"}
 
 
+from pydantic import BaseModel
+
+class SnapshotRequest(BaseModel):
+    snapshot_name: str
+
+@app.post("/api/v1/devices/{device_id}/snapshot/load")
+def snapshot_load(
+    device_id: str,
+    body: SnapshotRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, str]:
+    """Load an emulator snapshot."""
+    _verify_token(x_internal_token)
+    supervisor = _get_supervisor()
+    success = supervisor.manage_device_snapshot(device_id, "load", body.snapshot_name)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to load snapshot")
+    return {"status": "success"}
+
+
+@app.post("/api/v1/devices/{device_id}/snapshot/save")
+def snapshot_save(
+    device_id: str,
+    body: SnapshotRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, str]:
+    """Save an emulator snapshot."""
+    _verify_token(x_internal_token)
+    supervisor = _get_supervisor()
+    success = supervisor.manage_device_snapshot(device_id, "save", body.snapshot_name)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save snapshot")
+    return {"status": "success"}
+
+
+class ClearCacheRequest(BaseModel):
+    package: str
+
+@app.post("/api/v1/devices/{device_id}/clear-cache")
+def clear_cache(
+    device_id: str,
+    body: ClearCacheRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, str]:
+    """Purge application cache."""
+    _verify_token(x_internal_token)
+    supervisor = _get_supervisor()
+    success = supervisor.purge_application_cache(device_id, body.package)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to clear app cache")
+    return {"status": "success"}
+
+
+@app.post("/api/v1/devices/{device_id}/reboot")
+def hard_reboot(
+    device_id: str,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, str]:
+    """Trigger a cold reboot of the emulator."""
+    _verify_token(x_internal_token)
+    supervisor = _get_supervisor()
+    success = supervisor.hard_reboot_emulator(device_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to hard reboot emulator")
+    return {"status": "success"}
+
+
+from app.avd_orchestrator import get_orchestrator
+
+@app.get("/api/v1/orchestrator/list")
+def list_orchestrated_emulators(
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    _verify_token(x_internal_token)
+    orch = get_orchestrator()
+    emulators = orch.list_emulators()
+    return {"emulators": emulators}
+
+class ProvisionRequest(BaseModel):
+    name: str
+
+@app.post("/api/v1/orchestrator/create")
+def create_orchestrated_emulator(
+    body: ProvisionRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    _verify_token(x_internal_token)
+    orch = get_orchestrator()
+    res = orch.create_emulator(body.name)
+    if "error" in res:
+        raise HTTPException(status_code=500, detail=res["error"])
+    return res
+
+@app.delete("/api/v1/orchestrator/{name}")
+def delete_orchestrated_emulator(
+    name: str,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, str]:
+    _verify_token(x_internal_token)
+    orch = get_orchestrator()
+    if not orch.delete_emulator(name):
+        raise HTTPException(status_code=500, detail="Failed to delete emulator")
+    return {"status": "success"}
+
+@app.post("/api/v1/orchestrator/{name}/stop")
+def stop_orchestrated_emulator(
+    name: str,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, str]:
+    _verify_token(x_internal_token)
+    orch = get_orchestrator()
+    if not orch.stop_emulator(name):
+        raise HTTPException(status_code=500, detail="Failed to stop emulator")
+    return {"status": "success"}
+
+
 def start_device_api_server() -> None:
     """
     Start the device API as a background thread.

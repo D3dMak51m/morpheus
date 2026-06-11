@@ -129,8 +129,8 @@ class ADBSupervisor:
             
             # Connect to emulator console
             # The host is where the emulator is running, usually the same as ADB_HOST for remote setups
-            # or 'host.docker.internal' in docker. We use ADB_HOST.
-            host = self._host
+            # or 'host.docker.internal' in docker. We use AVD_TELNET_HOST or default to host.docker.internal.
+            host = os.getenv("AVD_TELNET_HOST", "host.docker.internal")
             
             logger.info("ADBSupervisor [%s]: Connecting to emulator console at %s:%d", device_id, host, console_port)
             tn = telnetlib.Telnet(host, console_port, timeout=10)
@@ -601,3 +601,81 @@ class ADBSupervisor:
                 if match:
                     free = int(match.group(1)) // 1024
         return total, free
+
+    def purge_application_cache(self, device_id: str, package_name: str) -> bool:
+        """
+        Executes an atomic pm clear to purge application data and cache.
+        """
+        logger.info("ADBSupervisor [%s]: Purging cache for package %s", device_id, package_name)
+        try:
+            device = self._get_device(device_id)
+            device.shell(f"pm clear {package_name}")
+            return True
+        except Exception as e:
+            logger.error("ADBSupervisor [%s]: Failed to purge cache for %s — %s", device_id, package_name, e)
+            return False
+
+    def hard_reboot_emulator(self, device_id: str) -> bool:
+        """
+        Executes a cold reboot sequence safely with loop re-anchoring.
+        """
+        logger.info("ADBSupervisor [%s]: Initiating hard reboot sequence.", device_id)
+        try:
+            device = self._get_device(device_id)
+            device.reboot()
+            
+            # Immediately discard the dead reference to avoid ConnectionResetError
+            device = None
+            logger.info("ADBSupervisor [%s]: Device rebooted. Reference dropped. Waiting for reconnection...", device_id)
+            
+            time.sleep(10)
+            reconnected = False
+            
+            for _ in range(12):
+                try:
+                    devices = self._client.devices()
+                    for d in devices:
+                        if d.serial == device_id:
+                            device = d
+                            reconnected = True
+                            break
+                except Exception:
+                    pass
+                    
+                if reconnected:
+                    break
+                time.sleep(5)
+                
+            if not reconnected or device is None:
+                logger.error("ADBSupervisor [%s]: Device failed to reconnect to ADB server after reboot.", device_id)
+                return False
+                
+            logger.info("ADBSupervisor [%s]: Reacquired fresh device handle. Polling sys.boot_completed...", device_id)
+            
+            max_wait = 60
+            booted = False
+            start_time = time.time()
+            
+            while time.time() - start_time < max_wait:
+                status = self.check_device_status(device_id)
+                if status == "online":
+                    try:
+                        boot_anim = device.shell("getprop init.svc.bootanim").strip()
+                        sys_booted = device.shell("getprop sys.boot_completed").strip()
+                        
+                        if boot_anim == "stopped" and sys_booted == "1":
+                            booted = True
+                            break
+                    except Exception:
+                        pass
+                time.sleep(2)
+                
+            if not booted:
+                logger.error("ADBSupervisor [%s]: Device failed to boot within timeout after hard reboot.", device_id)
+                return False
+                
+            logger.info("ADBSupervisor [%s]: Hard reboot sequence completed successfully.", device_id)
+            return True
+        except Exception as e:
+            logger.error("ADBSupervisor [%s]: Hard reboot sequence failed — %s", device_id, e)
+            return False

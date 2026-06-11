@@ -110,6 +110,7 @@ services:
       - EMULATOR_CONSOLE_TOKEN=${EMULATOR_CONSOLE_TOKEN}
     volumes:
       - ./global_config:/app/global_config
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - morpheus_net
     env_file:

@@ -345,6 +345,140 @@ def proxy_launch_app(
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+@router.post("/devices/{device_id}/snapshot/load")
+def proxy_snapshot_load(
+    device_id: str,
+    body: Dict[str, Any],
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/snapshot/load",
+                json={"snapshot_name": body["snapshot_name"]},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.post("/devices/{device_id}/snapshot/save")
+def proxy_snapshot_save(
+    device_id: str,
+    body: Dict[str, Any],
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/snapshot/save",
+                json={"snapshot_name": body["snapshot_name"]},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.post("/devices/{device_id}/clear-cache")
+def proxy_clear_cache(
+    device_id: str,
+    body: Dict[str, Any],
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/clear-cache",
+                json={"package": body["package"]},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.post("/devices/{device_id}/reboot")
+def proxy_reboot(
+    device_id: str,
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/devices/{device_id}/reboot",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.get("/orchestrator/list")
+def proxy_orchestrator_list(
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> Dict[str, Any]:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/orchestrator/list",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.post("/orchestrator/create")
+def proxy_orchestrator_create(
+    body: Dict[str, Any],
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, Any]:
+    try:
+        with httpx.Client(timeout=120.0) as client: # Can take a while if pulling image
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/orchestrator/create",
+                json={"name": body["name"]},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.delete("/orchestrator/{name}")
+def proxy_orchestrator_delete(
+    name: str,
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.delete(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/orchestrator/{name}",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+@router.post("/orchestrator/{name}/stop")
+def proxy_orchestrator_stop(
+    name: str,
+    _user: AdminUser = Depends(require_permission("agents:edit")),
+) -> Dict[str, str]:
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/orchestrator/{name}/stop",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
 class ActivityLogRequest(BaseModel):
     agent_id: str
     platform: str

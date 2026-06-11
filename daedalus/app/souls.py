@@ -413,3 +413,16 @@ def assign_device(
     dev.assigned_agent_id = agent_id
     db.commit()
     return {"status": "success"}
+
+@router.delete("/devices/{id}")
+def delete_device(
+    id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage"))
+):
+    dev = db.query(VirtualDevice).filter(VirtualDevice.id == id).first()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Device not found")
+    db.delete(dev)
+    db.commit()
+    return {"status": "success"}
