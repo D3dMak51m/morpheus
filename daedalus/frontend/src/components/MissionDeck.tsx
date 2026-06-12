@@ -78,6 +78,7 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillCons
   const [title, setTitle] = useState('');
   const [targetUrl, setTargetUrl] = useState('');
   const [narrativeGoal, setNarrativeGoal] = useState('');
+  const [forcedContext, setForcedContext] = useState('');
   const [tactic, setTactic] = useState('soft_support');
   const [pendingSquad, setPendingSquad] = useState<PendingMember[]>([]);
   const [roleSelect, setRoleSelect] = useState<Record<string, string>>({ alpha: '', beta: '', gamma: '' });
@@ -146,6 +147,7 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillCons
     setTitle('');
     setTargetUrl('');
     setNarrativeGoal('');
+    setForcedContext('');
     setTactic('soft_support');
     setPendingSquad([]);
     setRoleSelect({ alpha: '', beta: '', gamma: '' });
@@ -169,6 +171,7 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillCons
           title,
           target_url: targetUrl,
           narrative_goal: narrativeGoal,
+          forced_context: forcedContext.trim() || null,
           tactic,
           squad: pendingSquad,
         }),
@@ -252,6 +255,11 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillCons
             <label>Narrative Goal</label>
             <textarea rows={4} value={narrativeGoal} onChange={e => setNarrativeGoal(e.target.value)}
               placeholder="The core message the Alpha will plant and the squad will reinforce." />
+          </div>
+          <div className="md-field">
+            <label>Forced Context <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional)</span></label>
+            <textarea rows={3} value={forcedContext} onChange={e => setForcedContext(e.target.value)}
+              placeholder="Pin an exact fact here. If set, ORPHEUS injects this verbatim and SKIPS the MUNINN vector search (RAG bypass)." />
           </div>
           <div className="md-field">
             <label>Tactic</label>

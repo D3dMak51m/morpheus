@@ -31,6 +31,7 @@ interface Profile {
   behavioral_rules: BehavioralRules | Record<string, any> | null;
   core_mission: string | null;
   current_stance_modifiers: Record<string, string> | null;
+  context_subscriptions: string[] | null;
 }
 
 interface StancePair {
@@ -44,6 +45,8 @@ interface SoulsContextProps {
 
 const PLATFORMS = ['telegram', 'instagram', 'youtube', 'threads', 'web'];
 const CASTES = ['alpha', 'beta', 'gamma'];
+// Stage 21 — cognitive RAG layer subscriptions.
+const SUBSCRIPTION_LAYERS = ['global', 'regional', 'state', 'city', 'personal'];
 
 // Normalize whatever the backend returns into the strict visual shapes.
 const normalizeComm = (raw: any): CommunicationStyle => ({
@@ -141,6 +144,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       communication_style: normalizeComm(p.communication_style),
       behavioral_rules: normalizeRules(p.behavioral_rules),
       current_stance_modifiers: p.current_stance_modifiers || {},
+      context_subscriptions: Array.isArray(p.context_subscriptions) ? p.context_subscriptions : ['global'],
     });
     setActiveTab('identity');
   };
@@ -172,6 +176,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       behavioral_rules: rules,
       core_mission: selectedProfile.core_mission,
       current_stance_modifiers: stanceDict,
+      context_subscriptions: selectedProfile.context_subscriptions || ['global'],
     };
 
     try {
@@ -197,6 +202,14 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
     if (current.has(platform)) current.delete(platform);
     else current.add(platform);
     setSelectedProfile({ ...selectedProfile, platforms: Array.from(current) });
+  };
+
+  const toggleSubscription = (layer: string) => {
+    if (!selectedProfile) return;
+    const current = new Set(selectedProfile.context_subscriptions || ['global']);
+    if (current.has(layer)) current.delete(layer);
+    else current.add(layer);
+    setSelectedProfile({ ...selectedProfile, context_subscriptions: Array.from(current) });
   };
 
   // ── Communication style helpers ──
@@ -405,6 +418,23 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
 
               {activeTab === 'mission' && (
                 <div className="form-grid">
+                  <div className="form-group full-width section">
+                    <h3>Context Subscriptions (RAG)</h3>
+                    <p className="help-text">Cognitive layers this agent may retrieve from MUNINN's memory when crafting replies. ORPHEUS injects only facts tagged with a subscribed layer.</p>
+                    <div className="pill-group">
+                      {SUBSCRIPTION_LAYERS.map(layer => (
+                        <button
+                          key={layer}
+                          type="button"
+                          className={`pill ${(selectedProfile.context_subscriptions || []).includes(layer) ? 'selected' : ''}`}
+                          onClick={() => toggleSubscription(layer)}
+                        >
+                          {layer}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="form-group full-width">
                     <label>Core Mission</label>
                     <textarea

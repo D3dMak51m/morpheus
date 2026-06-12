@@ -14,7 +14,7 @@ from typing import Dict, List, Any
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
-from app.router import classify_layers
+from app.knowledge_ingest import ingest_knowledge
 
 logger = logging.getLogger("huginn.scrapers.web_scraper")
 
@@ -33,8 +33,10 @@ async def run_web_scraper(redis_client, raw_events_queue, is_content_expired_fun
                     # Depending on how the target is passed from daedalus, handle dict or string
                     if isinstance(url_item, dict):
                         url = url_item.get("target_identifier")
+                        target_layers = url_item.get("default_layers", ["global"])
                     else:
                         url = url_item
+                        target_layers = ["global"]
 
                     if not url:
                         continue
@@ -92,24 +94,15 @@ async def run_web_scraper(redis_client, raw_events_queue, is_content_expired_fun
                             redis_client.setex(f"cache:web:{post_id}", 86400, "1")
                             
                             timestamp = int(time.time())
-                            
+
                             if is_content_expired_func("web", timestamp):
                                 continue
 
-                            layers = classify_layers(title)
-                            
-                            publish_func(
-                                redis_client=redis_client,
-                                event_id=str(uuid.uuid4()),
-                                source_platform="web",
-                                source_target=url,
-                                post_id=post_id,
-                                text_content=title + "\n" + link,
-                                media_type=None,
-                                media_path=None,
-                                layers=layers,
-                                timestamp=timestamp
-                            )
+                            # Stage 22 — STRICT PIPELINE ENFORCEMENT: generic web
+                            # news routes ONLY to MUNINN's knowledge base, never to
+                            # the execution queue / News Hub. DAEDALUS classifies,
+                            # embeds and clusters it server-side.
+                            ingest_knowledge(text=title, source_url=link, default_layers=target_layers)
                             count += 1
                             
                         if count > 0:

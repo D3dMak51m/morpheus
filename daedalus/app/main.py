@@ -36,6 +36,7 @@ from app.router_auth_factory import router as auth_factory_router
 from app.router_sandbox import router as sandbox_router
 from app.router_missions import router as missions_router
 from app.router_scouting import router as scouting_router
+from app.router_knowledge import router as knowledge_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -159,6 +160,7 @@ app.include_router(auth_factory_router)
 app.include_router(sandbox_router)
 app.include_router(missions_router)
 app.include_router(scouting_router)
+app.include_router(knowledge_router)
 
 # ── Static Frontend SPA ──────────────────────────────────────────────────
 

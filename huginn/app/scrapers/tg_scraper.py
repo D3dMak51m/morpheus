@@ -8,14 +8,13 @@ import asyncio
 import logging
 import os
 import time
-import uuid
 from typing import Dict, List, Any
 
 import redis
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SessionPasswordNeededError
 
-from app.router import classify_layers
+from app.knowledge_ingest import ingest_knowledge
 
 logger = logging.getLogger("huginn.scrapers.tg_scraper")
 
@@ -51,7 +50,12 @@ async def run_tg_scraper(redis_client: redis.Redis, raw_events_queue: str, is_co
         try:
             current_targets = active_targets.get("telegram", [])
             for channel_item in current_targets:
-                channel_name = channel_item.get("target_identifier") if isinstance(channel_item, dict) else channel_item
+                if isinstance(channel_item, dict):
+                    channel_name = channel_item.get("target_identifier")
+                    channel_layers = channel_item.get("default_layers", ["global"])
+                else:
+                    channel_name = channel_item
+                    channel_layers = ["global"]
                 if not channel_name:
                     continue
                     
@@ -66,42 +70,22 @@ async def run_tg_scraper(redis_client: redis.Redis, raw_events_queue: str, is_co
                         redis_client.setex(f"cache:tg:{channel_name}:{post_id}", 86400, "1") # cache for 1 day
                         
                         timestamp = int(message.date.timestamp())
-                        
+
                         if is_content_expired_func("telegram_channel", timestamp):
                             continue
-                            
+
                         text_content = message.message or ""
-                        if not text_content and not message.media:
+                        # Stage 22 — generic Telegram is a KNOWLEDGE source only.
+                        # Media-less text is all MUNINN needs; we no longer download
+                        # media or publish to the execution queue (pipeline leakage).
+                        if not text_content.strip():
                             continue
-                            
-                        media_path = None
-                        media_type = None
-                        
-                        if message.media:
-                            try:
-                                file_path = await message.download_media(file="/app/data_lake/raw_media/")
-                                if file_path:
-                                    media_path = file_path
-                                    if "video" in file_path or "mp4" in file_path:
-                                        media_type = "video"
-                                    else:
-                                        media_type = "image"
-                            except Exception as e:
-                                logger.error("Failed to download media for %s:%s: %s", channel_name, post_id, e)
-                        
-                        layers = classify_layers(text_content)
-                        
-                        publish_func(
-                            redis_client=redis_client,
-                            event_id=str(uuid.uuid4()),
-                            source_platform="telegram",
-                            source_target=channel_name,
-                            post_id=post_id,
-                            text_content=text_content,
-                            media_type=media_type,
-                            media_path=media_path,
-                            layers=layers,
-                            timestamp=timestamp
+
+                        # STRICT ENFORCEMENT: route ONLY to MUNINN's knowledge base.
+                        ingest_knowledge(
+                            text=text_content,
+                            source_url=f"https://t.me/{str(channel_name).lstrip('@')}/{post_id}",
+                            default_layers=channel_layers,
                         )
                         
                 except FloodWaitError as e:

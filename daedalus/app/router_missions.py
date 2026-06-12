@@ -40,6 +40,8 @@ class MissionCreateRequest(BaseModel):
     target_url: str = Field(..., min_length=1)
     narrative_goal: Optional[str] = None
     tactic: str = Field("soft_support", description="soft_support | aggressive_displacement")
+    # Stage 21 — optional operator-pinned fact; bypasses ORPHEUS vector search.
+    forced_context: Optional[str] = None
     squad: list[SquadMemberRequest] = Field(default_factory=list)
 
 
@@ -48,6 +50,7 @@ class MissionUpdateRequest(BaseModel):
     target_url: Optional[str] = None
     narrative_goal: Optional[str] = None
     tactic: Optional[str] = None
+    forced_context: Optional[str] = None
 
 
 class SquadMemberResponse(BaseModel):
@@ -69,6 +72,7 @@ class MissionResponse(BaseModel):
     tactic: str
     status: str
     alpha_context: Optional[str]
+    forced_context: Optional[str]
     launched_at: Optional[Any]
     created_at: Any
     squad: list[SquadMemberResponse]
@@ -133,6 +137,7 @@ def _serialize(mission: Mission) -> MissionResponse:
         tactic=mission.tactic,
         status=mission.status,
         alpha_context=mission.alpha_context,
+        forced_context=mission.forced_context,
         launched_at=mission.launched_at,
         created_at=mission.created_at,
         squad=[SquadMemberResponse.model_validate(s) for s in mission.squad],
@@ -181,6 +186,7 @@ def create_mission(
         platform=mission_control.infer_platform(request.target_url),
         narrative_goal=request.narrative_goal,
         tactic=request.tactic,
+        forced_context=request.forced_context,
         status="pending",
     )
     for member in request.squad:
@@ -216,6 +222,8 @@ def update_mission(
         mission.platform = mission_control.infer_platform(request.target_url)
     if request.narrative_goal is not None:
         mission.narrative_goal = request.narrative_goal
+    if request.forced_context is not None:
+        mission.forced_context = request.forced_context
 
     db.commit()
     db.refresh(mission)

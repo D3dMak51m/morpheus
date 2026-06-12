@@ -5,13 +5,16 @@ Provides the async-compatible SQLAlchemy engine, session factory,
 and a FastAPI dependency for injecting DB sessions into route handlers.
 """
 
+import logging
 import os
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base
+
+logger = logging.getLogger("daedalus.database")
 
 
 def _build_database_url() -> str:
@@ -50,5 +53,43 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_tables() -> None:
-    """Create all tables defined in the ORM metadata if they don't exist."""
+    """
+    Create all tables defined in the ORM metadata if they don't exist.
+
+    Stage 21 — the ``vector`` extension must exist *before* create_all runs, or
+    the KnowledgeFact.embedding column (Vector type) cannot be created. We also
+    build an IVFFlat cosine index for fast approximate nearest-neighbour search.
+    """
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        logger.info("pgvector extension ensured.")
+
     Base.metadata.create_all(bind=engine)
+
+    # Cosine ANN index on KnowledgeFact embeddings (idempotent).
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_knowledge_facts_embedding "
+                    "ON knowledge_facts USING ivfflat (embedding vector_cosine_ops) "
+                    "WITH (lists = 100)"
+                )
+            )
+        logger.info("KnowledgeFact IVFFlat cosine index ensured.")
+    except Exception as exc:  # pragma: no cover - index is an optimisation, not a hard dep
+        logger.warning("Could not create IVFFlat index (continuing without it): %s", exc)
+
+    # Stage 22 — GIN index on the JSONB landscape_layers array so the `?|`
+    # overlap filter used by RAG array-intersection search is fast.
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_knowledge_facts_layers "
+                    "ON knowledge_facts USING gin (landscape_layers)"
+                )
+            )
+        logger.info("KnowledgeFact landscape_layers GIN index ensured.")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Could not create landscape_layers GIN index: %s", exc)

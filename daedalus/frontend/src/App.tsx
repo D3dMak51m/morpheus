@@ -13,11 +13,12 @@ import AccountsManager from './components/AccountsManager';
 import SandboxConsole from './components/SandboxConsole';
 import MissionDeck from './components/MissionDeck';
 import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar } from 'lucide-react';
+import MuninnExplorer from './components/MuninnExplorer';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
   const [missionPrefill, setMissionPrefill] = useState<MissionPrefill | null>(null);
 
@@ -94,7 +95,13 @@ function App() {
           >
             <Radio size={18} /> News Hub
           </button>
-          
+          <button
+            className={`nav-item ${activeView === 'muninn' ? 'active' : ''}`}
+            onClick={() => setActiveView('muninn')}
+          >
+            <Brain size={18} /> Muninn Memory
+          </button>
+
           <div className="sidebar-group-label">EXECUTION</div>
           <button
             className={`nav-item ${activeView === 'scouting' ? 'active' : ''}`}
@@ -149,6 +156,7 @@ function App() {
         <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory /></div>
         <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeManager token={token} /></div>
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
+        <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><MuninnExplorer token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
         <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingRadar token={token} onConverted={handleConverted} /></div>

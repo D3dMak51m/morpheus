@@ -5,6 +5,7 @@ PostgreSQL schema for the MORPHEUS admin portal.
 Tables: admin_users, roles, role_permissions, souls_accounts.
 """
 
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -22,6 +23,16 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+
+# Stage 21 — pgvector native vector column type for cosine-similarity RAG.
+from pgvector.sqlalchemy import Vector
+
+# Embedding dimensionality (nomic-embed-text → 768). Kept in sync with EMBED_DIM.
+EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
+
+# Canonical landscape layers used across HUGINN ingestion, MUNINN storage,
+# AgentProfile subscriptions and ORPHEUS RAG filtering.
+LANDSCAPE_LAYERS = ("global", "regional", "state", "city", "personal")
 
 
 class Base(DeclarativeBase):
@@ -175,6 +186,13 @@ class AgentProfile(Base):
     # Geographic layer affinities (global, region, state, city, personal)
     layers_affinity: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=dict)
 
+    # Stage 21 — Cognitive RAG subscriptions. The set of landscape layers whose
+    # KnowledgeFacts ORPHEUS is allowed to retrieve and inject for this agent.
+    # Stored as a JSONB array of layer keys, e.g. ["global", "state", "city"].
+    context_subscriptions: Mapped[Optional[list]] = mapped_column(
+        JSONB, nullable=True, default=lambda: ["global"]
+    )
+
     # Activity window (0-23 hours)
     active_hours_start: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     active_hours_end: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
@@ -210,6 +228,9 @@ class ScrapingLandscape(Base):
     target_identifier: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     associated_tags: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    # Stage 22 — default landscape layers seeded onto every fact scraped from this
+    # source (JSONB array). The LLM auto-classifier may add more layers at ingest.
+    default_layers: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["global"])
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -344,6 +365,10 @@ class Mission(Base):
     # Context produced by the Alpha wave (link/reference) used to seed amplification.
     alpha_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Stage 21 — operator-supplied "Forced Context". When set, ORPHEUS injects
+    # this exact fact into the prompt instead of performing a MUNINN vector search.
+    forced_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     launched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -449,3 +474,76 @@ class MissionSquad(Base):
             f"<MissionSquad(mission_id={self.mission_id}, agent='{self.agent_id}', "
             f"role='{self.assigned_role}', status='{self.status}')>"
         )
+
+
+# ── Stage 21 — Cognitive RAG: Knowledge & Targets bifurcation ──────────────
+
+class KnowledgeFact(Base):
+    """
+    Stage 21 — A clustered, deduplicated unit of world knowledge (MUNINN's
+    semantic memory) extracted by HUGINN from the news landscape.
+
+    Each fact carries a native pgvector ``embedding`` (cosine space) so ORPHEUS
+    can retrieve the most relevant facts at prompt-assembly time. HUGINN merges
+    semantically-equivalent stories (cosine similarity > 0.85) into a single
+    fact rather than creating duplicates — ``sources`` accumulates every URL the
+    cluster has been observed at, and ``source_count`` tracks the cluster size.
+    """
+    __tablename__ = "knowledge_facts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+
+    # Stage 22 — multi-dimensional auto-classification (LLM-extracted).
+    # landscape_layers: JSONB array, subset of LANDSCAPE_LAYERS (a fact can span
+    #   several geographic scopes, e.g. ["state", "city"]).
+    # categories: thematic buckets (e.g. ["politics", "infrastructure"]).
+    # tags: free-form salient keywords/entities.
+    landscape_layers: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["global"])
+    categories: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    embedding: Mapped[list] = mapped_column(Vector(EMBED_DIM), nullable=False)
+
+    # Cluster bookkeeping — every distinct source URL merged into this fact.
+    sources: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    source_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    timestamp: Mapped[int] = mapped_column(Integer, nullable=False, default=lambda: int(datetime.now(timezone.utc).timestamp()))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<KnowledgeFact(id={self.id}, layers={self.landscape_layers}, "
+            f"sources={self.source_count})>"
+        )
+
+
+class SocialPostTarget(Base):
+    """
+    Stage 21 — A concrete social post that the swarm acts *against* (tactics),
+    decoupled from world knowledge (epistemology). ORPHEUS reads the target's
+    text, RAG-queries KnowledgeFacts for fresh context, and crafts a response.
+    """
+    __tablename__ = "social_post_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    author: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    platform: Mapped[str] = mapped_column(String(30), default="web", nullable=False, index=True)
+    url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<SocialPostTarget(id={self.id}, platform='{self.platform}', author='{self.author}')>"

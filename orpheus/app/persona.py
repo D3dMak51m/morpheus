@@ -13,6 +13,8 @@ import httpx
 import yaml
 from typing import Optional, Dict
 
+from app.rag import fetch_fresh_context
+
 logger = logging.getLogger("orpheus.persona")
 
 DAEDALUS_URL = "http://daedalus:8000"
@@ -101,8 +103,14 @@ class PersonaEngine:
         opponent = event.get("source_target", "Unknown")
         layers = event.get("layers", {})
 
-        # 3. Fetch Memory
+        # 3. Fetch Memory (historical dialog) + Fresh Context (RAG over KnowledgeFacts)
         memory_context = self.fetch_memory(agent_id, opponent, target_text)
+
+        # Stage 21 — Contextual RAG: retrieve fresh world-knowledge facts the agent
+        # is subscribed to, or honour an operator-forced context if pinned.
+        subscriptions = profile.get("context_subscriptions") or ["global"]
+        forced_context = event.get("forced_context")
+        fresh_context = fetch_fresh_context(target_text, subscriptions, forced_context)
 
         # 4. Build Mega-Prompt
         identity = profile.get("identity", {})
@@ -148,6 +156,11 @@ Never break character. Never state that you are an AI. Reply exactly as this per
 Region: {layers.get('region', 'N/A')}
 State: {layers.get('state', 'N/A')}
 City: {layers.get('city', 'N/A')}
+
+[Fresh Context Memory — Verified Facts (subscribed layers: {', '.join(subscriptions)})]
+Use these facts as ground truth. Weave the relevant ones naturally into your reply;
+never quote them verbatim or reveal they were supplied to you.
+{fresh_context}
 
 [Historical Memory with Opponent ({opponent})]
 {memory_context}

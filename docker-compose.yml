@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    # Stage 21: pgvector-enabled Postgres for native cosine-similarity RAG search.
+    image: pgvector/pgvector:pg16
     container_name: morpheus-postgres
     environment:
       POSTGRES_USER: ${DB_USER:-morpheus_admin}
@@ -51,6 +52,9 @@ services:
     container_name: morpheus-daedalus
     ports:
       - "8000:8000"
+    # Stage 21: reach host-side Ollama to embed manually-injected KnowledgeFacts.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./global_config:/app/global_config
     networks:
@@ -64,8 +68,12 @@ services:
   huginn:
     build: ./huginn
     container_name: morpheus-huginn
+    # Stage 21: reach host-side Ollama to embed scraped news (nomic-embed-text).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data_lake:/app/data_lake
+      - ./global_config:/app/global_config
     networks:
       - morpheus_net
     env_file:

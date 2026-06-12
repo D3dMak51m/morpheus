@@ -9,11 +9,11 @@ import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory
+from app.models import AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory, LANDSCAPE_LAYERS
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/souls", tags=["Agent Souls"])
@@ -74,10 +74,23 @@ class ProfileCreateRequest(BaseModel):
     behavioral_rules: BehavioralRules = Field(default_factory=BehavioralRules)
     platforms: Optional[list[str]] = []
     layers_affinity: Optional[dict] = {}
+    # Stage 21 — RAG layer subscriptions (defaults to global-only).
+    context_subscriptions: Optional[list[str]] = Field(default_factory=lambda: ["global"])
     active_hours_start: int = 8
     active_hours_end: int = 22
     core_mission: Optional[str] = None
     current_stance_modifiers: Optional[dict] = {}
+
+    @field_validator("context_subscriptions")
+    @classmethod
+    def _valid_subscriptions(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        cleaned = [s.strip().lower() for s in v if s]
+        invalid = set(cleaned) - set(LANDSCAPE_LAYERS)
+        if invalid:
+            raise ValueError(f"Invalid context_subscriptions {sorted(invalid)}. Allowed: {list(LANDSCAPE_LAYERS)}")
+        return cleaned
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -96,10 +109,22 @@ class ProfileUpdateRequest(BaseModel):
     behavioral_rules: Optional[BehavioralRules] = None
     platforms: Optional[list[str]] = None
     layers_affinity: Optional[dict] = None
+    context_subscriptions: Optional[list[str]] = None
     active_hours_start: Optional[int] = None
     active_hours_end: Optional[int] = None
     core_mission: Optional[str] = None
     current_stance_modifiers: Optional[dict] = None
+
+    @field_validator("context_subscriptions")
+    @classmethod
+    def _valid_subscriptions(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        cleaned = [s.strip().lower() for s in v if s]
+        invalid = set(cleaned) - set(LANDSCAPE_LAYERS)
+        if invalid:
+            raise ValueError(f"Invalid context_subscriptions {sorted(invalid)}. Allowed: {list(LANDSCAPE_LAYERS)}")
+        return cleaned
 
 
 class ProfileResponse(BaseModel):
@@ -120,6 +145,7 @@ class ProfileResponse(BaseModel):
     behavioral_rules: Optional[dict]
     platforms: Optional[list]
     layers_affinity: Optional[dict]
+    context_subscriptions: Optional[list]
     active_hours_start: int
     active_hours_end: int
     core_mission: Optional[str]
@@ -307,6 +333,7 @@ def internal_list_profiles(
             "behavioral_rules": p.behavioral_rules or {},
             "platforms": p.platforms or [],
             "layers_affinity": p.layers_affinity or {},
+            "context_subscriptions": p.context_subscriptions or ["global"],
             "active_hours_start": p.active_hours_start,
             "active_hours_end": p.active_hours_end,
             "core_mission": p.core_mission,

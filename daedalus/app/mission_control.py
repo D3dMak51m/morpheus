@@ -96,8 +96,13 @@ def _compose_payload_text(mission: Mission, role: str) -> str:
     """
     goal = (mission.narrative_goal or mission.title or "").strip()
     aggressive = mission.tactic == "aggressive_displacement"
+    forced = (mission.forced_context or "").strip()
 
     if role == "alpha":
+        # Stage 21 — when the operator pins a Forced Context, ground the seed
+        # narrative in that exact fact instead of relying on retrieval.
+        if forced:
+            return f"{goal} — {forced}" if goal else forced
         return goal
 
     # Beta/Gamma reference the Alpha context to coordinate amplification.
@@ -127,6 +132,8 @@ def _build_task(mission: Mission, squad: MissionSquad) -> dict:
         "mission_id": mission.id,
         "role": squad.assigned_role,
         "alpha_context": mission.alpha_context,
+        # Stage 21 — operator-forced fact carried for any RAG-aware consumer.
+        "forced_context": mission.forced_context,
     }
 
 

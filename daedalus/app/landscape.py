@@ -10,11 +10,11 @@ import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, ScrapingLandscape
+from app.models import AdminUser, ScrapingLandscape, LANDSCAPE_LAYERS
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/landscape", tags=["Scraping Landscape"])
@@ -24,12 +24,36 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key
 
 # ── Pydantic schemas ─────────────────────────────────────────────────────
 
+def _clean_layers(values: list[str]) -> list[str]:
+    """Lowercase, validate against LANDSCAPE_LAYERS, dedupe (order-preserving)."""
+    cleaned: list[str] = []
+    for raw in values or []:
+        v = (raw or "").strip().lower()
+        if not v:
+            continue
+        if v not in LANDSCAPE_LAYERS:
+            raise ValueError(f"Invalid layer '{v}'. Allowed: {list(LANDSCAPE_LAYERS)}")
+        if v not in cleaned:
+            cleaned.append(v)
+    return cleaned
+
+
 class LandscapeCreateRequest(BaseModel):
     platform: str
     type: str = "channel"
     target_identifier: str
     is_active: bool = True
     associated_tags: Optional[list[str]] = []
+    # Stage 22 — mandatory default layers (≥1) seeded onto scraped facts.
+    default_layers: list[str]
+
+    @field_validator("default_layers")
+    @classmethod
+    def _valid_layers(cls, v: list[str]) -> list[str]:
+        cleaned = _clean_layers(v)
+        if not cleaned:
+            raise ValueError(f"default_layers must contain at least one of {list(LANDSCAPE_LAYERS)}")
+        return cleaned
 
 
 class LandscapeUpdateRequest(BaseModel):
@@ -38,6 +62,17 @@ class LandscapeUpdateRequest(BaseModel):
     target_identifier: Optional[str] = None
     is_active: Optional[bool] = None
     associated_tags: Optional[list[str]] = None
+    default_layers: Optional[list[str]] = None
+
+    @field_validator("default_layers")
+    @classmethod
+    def _valid_layers(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        cleaned = _clean_layers(v)
+        if not cleaned:
+            raise ValueError(f"default_layers must contain at least one of {list(LANDSCAPE_LAYERS)}")
+        return cleaned
 
 
 class LandscapeResponse(BaseModel):
@@ -47,6 +82,7 @@ class LandscapeResponse(BaseModel):
     target_identifier: str
     is_active: bool
     associated_tags: Optional[list[str]]
+    default_layers: list[str]
 
     class Config:
         from_attributes = True
@@ -89,6 +125,7 @@ def create_target(
         target_identifier=request.target_identifier,
         is_active=request.is_active,
         associated_tags=request.associated_tags,
+        default_layers=request.default_layers,
     )
     db.add(target)
     db.commit()
@@ -118,6 +155,8 @@ def update_target(
         target.is_active = request.is_active
     if request.associated_tags is not None:
         target.associated_tags = request.associated_tags
+    if request.default_layers is not None:
+        target.default_layers = request.default_layers
 
     db.commit()
     db.refresh(target)
@@ -160,7 +199,8 @@ def sync_targets(
     for t in targets:
         grouped.setdefault(t.platform, []).append({
             "target_identifier": t.target_identifier,
-            "type": t.type
+            "type": t.type,
+            "default_layers": t.default_layers or ["global"],
         })
 
     return {"targets": grouped}

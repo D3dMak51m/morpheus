@@ -8,14 +8,17 @@ interface LandscapeTarget {
   target_identifier: string;
   is_active: boolean;
   associated_tags: string[] | null;
+  default_layers: string[];
 }
 
 interface LandscapeManagerProps {
   token: string;
 }
 
-const PLATFORMS = ['telegram', 'instagram', 'twitter', 'threads', 'facebook', 'web'];
+const PLATFORMS = ['telegram', 'instagram', 'twitter', 'threads', 'facebook', 'web', 'rss'];
 const TYPES = ['channel', 'feed', 'url'];
+// Stage 21 — mandatory landscape layer tagged on every source.
+const LAYERS = ['global', 'regional', 'state', 'city', 'personal'];
 
 const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
   const [targets, setTargets] = useState<LandscapeTarget[]>([]);
@@ -26,8 +29,13 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
   // Form State
   const [newPlatform, setNewPlatform] = useState(PLATFORMS[0]);
   const [newType, setNewType] = useState(TYPES[0]);
+  const [newLayers, setNewLayers] = useState<string[]>(['global']);
   const [newTargetIdentifier, setNewTargetIdentifier] = useState('');
   const [newTagsString, setNewTagsString] = useState('');
+
+  const toggleNewLayer = (layer: string) => {
+    setNewLayers(prev => (prev.includes(layer) ? prev.filter(l => l !== layer) : [...prev, layer]));
+  };
 
   const headers = {
     'Content-Type': 'application/json',
@@ -96,6 +104,10 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (newLayers.length === 0) {
+      setError('Select at least one default landscape layer.');
+      return;
+    }
     const tags = newTagsString.split(',').map(t => t.trim()).filter(t => t.length > 0);
     try {
       const res = await fetch('/api/v1/landscape/', {
@@ -104,6 +116,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
         body: JSON.stringify({
           platform: newPlatform,
           type: newType,
+          default_layers: newLayers,
           target_identifier: newTargetIdentifier,
           is_active: true,
           associated_tags: tags.length > 0 ? tags : null
@@ -116,6 +129,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
       setShowModal(false);
       setNewTargetIdentifier('');
       setNewTagsString('');
+      setNewLayers(['global']);
       fetchTargets();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to add target');
@@ -146,6 +160,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
                 <th>ID</th>
                 <th>Platform</th>
                 <th>Type</th>
+                <th>Default Layers</th>
                 <th>Target Identifier</th>
                 <th>Tags</th>
                 <th>Status</th>
@@ -154,12 +169,19 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
             </thead>
             <tbody>
               {targets.length === 0 ? (
-                <tr><td colSpan={7} className="empty-state">No scraping targets found.</td></tr>
+                <tr><td colSpan={8} className="empty-state">No scraping targets found.</td></tr>
               ) : targets.map(target => (
                 <tr key={target.id}>
                   <td>{target.id}</td>
                   <td><span className={`badge ${target.platform}`}>{target.platform}</span></td>
                   <td><span className={`badge-type`}>{target.type || 'channel'}</span></td>
+                  <td>
+                    <div className="tag-list">
+                      {(target.default_layers || ['global']).map(l => (
+                        <span key={l} className={`layer-pill layer-${l}`}>{l}</span>
+                      ))}
+                    </div>
+                  </td>
                   <td className="font-mono">{target.target_identifier}</td>
                   <td>
                     <div className="tag-list">
@@ -204,6 +226,24 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
                 <select value={newType} onChange={e => setNewType(e.target.value)}>
                   {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
+              </div>
+              <div className="form-group">
+                <label>Default Layers <span style={{ color: '#ef4444' }}>*</span> <span style={{ color: '#94a3b8', fontWeight: 400 }}>(select one or more)</span></label>
+                <div className="layer-checkbox-group">
+                  {LAYERS.map(l => (
+                    <button
+                      type="button"
+                      key={l}
+                      className={`layer-toggle ${newLayers.includes(l) ? `active layer-${l}` : ''}`}
+                      onClick={() => toggleNewLayer(l)}
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <p className="help-text" style={{ fontSize: '0.8em', color: '#888', marginTop: '4px' }}>
+                  Facts from this source are seeded with these layers; the LLM auto-classifier may add more.
+                </p>
               </div>
               <div className="form-group">
                 <label>Target Identifier</label>

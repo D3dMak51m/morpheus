@@ -29,6 +29,7 @@ from app.scrapers.web_scraper import run_web_scraper
 from app.scrapers.social_feed_scraper import run_social_feed_scraper
 from app.scrapers.gamma_noise import run_gamma_noise_scheduler
 from app.scrapers.scouting_engine import run_scouting_engine
+from test_rss import run_rss_scraper
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
@@ -67,6 +68,7 @@ ACTIVE_TARGETS: Dict[str, List[Dict[str, str]]] = {
     "twitter": [],
     "threads": [],
     "web": [],
+    "rss": [],
 }
 
 # ── Graceful shutdown ─────────────────────────────────────────────────────
@@ -238,15 +240,18 @@ async def individual_target_worker_pool(redis_client: redis.Redis) -> None:
     Spawns and manages dynamic tasks for explicitly targeted channels and websites.
     """
     logger.info("Starting individual_target_worker_pool...")
-    
+
     tg_task = asyncio.create_task(run_tg_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
     web_task = asyncio.create_task(run_web_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
-    
+    # Stage 22 — RSS scraper routes exclusively to MUNINN's knowledge base.
+    rss_task = asyncio.create_task(run_rss_scraper(redis_client, ACTIVE_TARGETS))
+
     while not _shutdown_requested:
         await asyncio.sleep(5)
-        
+
     tg_task.cancel()
     web_task.cancel()
+    rss_task.cancel()
 
 async def timeline_feed_worker_pool(redis_client: redis.Redis) -> None:
     """

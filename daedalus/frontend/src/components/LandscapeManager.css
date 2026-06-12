@@ -130,3 +130,31 @@
 .btn-danger-text:hover {
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* ── Stage 22: multi-select default layers ──────────────────────────── */
+.layer-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.layer-toggle {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle, #30363d);
+  background: var(--bg-card, #21262d);
+  color: var(--text-muted, #8b949e);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.layer-toggle.active { color: #fff; font-weight: 600; border-color: transparent; }
+.layer-toggle.active.layer-global { background: #3b82f6; }
+.layer-toggle.active.layer-regional { background: #8b5cf6; }
+.layer-toggle.active.layer-state { background: #ec4899; }
+.layer-toggle.active.layer-city { background: #f59e0b; }
+.layer-toggle.active.layer-personal { background: #10b981; }
