@@ -90,14 +90,20 @@ def init_tables() -> None:
         ("agent_channel_prefs", "chat_type", "VARCHAR(20)"),
         ("agent_channel_prefs", "members", "INTEGER"),
         ("agent_channel_prefs", "synced_at", "TIMESTAMPTZ"),
+        # Stage 34 — Mission redesign (permanent goal).
+        ("missions", "stance", "TEXT"),
+        ("missions", "agent_mode", "VARCHAR(20) NOT NULL DEFAULT 'manual'"),
+        ("missions", "dynamic_count", "INTEGER NOT NULL DEFAULT 3"),
     ]
     try:
         with engine.begin() as conn:
             for table, column, ddl in _STAGE23_COLUMNS:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}"))
-        logger.info("Stage 23 identity-status columns ensured.")
+            # Mission target_url is now optional (real targets live in mission_targets).
+            conn.execute(text("ALTER TABLE missions ALTER COLUMN target_url DROP NOT NULL"))
+        logger.info("Stage 23/34 column migrations ensured.")
     except Exception as exc:  # pragma: no cover
-        logger.warning("Could not ensure Stage 23 columns: %s", exc)
+        logger.warning("Could not ensure column migrations: %s", exc)
 
     # Stage 22 — GIN index on the JSONB landscape_layers array so the `?|`
     # overlap filter used by RAG array-intersection search is fast.

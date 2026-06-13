@@ -365,17 +365,22 @@ class Mission(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
-    target_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    platform: Mapped[str] = mapped_column(String(30), default="web", nullable=False)
-    narrative_goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Stage 34 — a Mission is now a PERMANENT goal, not a one-shot DAG campaign.
+    # target_url is legacy/optional (real targets live in mission_targets).
+    target_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    platform: Mapped[str] = mapped_column(String(30), default="telegram", nullable=False)
+    narrative_goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # what to advance
+    # The mission's worldview / "truth" / side — its stance the agents argue from.
+    stance: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Default/fallback tactic; per-post tactic is chosen dynamically at runtime.
     tactic: Mapped[str] = mapped_column(String(50), default="soft_support", nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    # Permanent lifecycle: 'active' (in-progress) | 'paused'. Never "completed".
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
+    # Roster mode: 'manual' (operator-picked squad) | 'dynamic' (auto-fill to count).
+    agent_mode: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
+    dynamic_count: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
 
-    # Context produced by the Alpha wave (link/reference) used to seed amplification.
     alpha_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    # Stage 21 — operator-supplied "Forced Context". When set, ORPHEUS injects
-    # this exact fact into the prompt instead of performing a MUNINN vector search.
     forced_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     launched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -389,9 +394,49 @@ class Mission(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    targets: Mapped[list["MissionTarget"]] = relationship(
+        "MissionTarget",
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     def __repr__(self) -> str:
         return f"<Mission(id={self.id}, title='{self.title}', status='{self.status}')>"
+
+
+class MissionTarget(Base):
+    """
+    Stage 34 — A channel or post a Mission operates on. Targets can be added by the
+    operator or PROPOSED by agents (who read their channels) for approval.
+
+    kind   : 'channel' (whole channel) | 'post' (a specific t.me post)
+    status : 'active' (agents work it) | 'suggested' (awaiting approval) | 'rejected'
+    source : 'operator' | 'agent'
+    """
+    __tablename__ = "mission_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mission_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), default="channel", nullable=False)
+    identifier: Mapped[str] = mapped_column(String(500), nullable=False)  # @username / t.me url / chat_id
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(20), default="operator", nullable=False)
+    proposed_by: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    mission: Mapped["Mission"] = relationship("Mission", back_populates="targets")
+
+    __table_args__ = (UniqueConstraint("mission_id", "identifier", name="uq_mission_target"),)
+
+    def __repr__(self) -> str:
+        return f"<MissionTarget(mission={self.mission_id}, id='{self.identifier}', status='{self.status}')>"
 
 
 class ScoutedTarget(Base):

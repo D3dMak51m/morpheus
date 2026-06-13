@@ -454,3 +454,50 @@
 .md-modal-foot .btn-primary { display: inline-flex; align-items: center; gap: 6px; }
 .md-foot-spacer { flex: 1; }
 .md-cap-note { font-size: 0.76em; }
+
+/* ── Stage 34 — permanent-goal missions ─────────────────────────── */
+.md-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; margin-top: 14px; }
+.md-card {
+  background: var(--bg-surface, #0d1017); border: 1px solid var(--border-subtle, rgba(255,255,255,0.08));
+  border-radius: 12px; padding: 14px; cursor: pointer; transition: border-color .15s, transform .1s;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.md-card:hover { border-color: var(--accent, #818cf8); transform: translateY(-2px); }
+.md-card.paused { opacity: 0.6; }
+.md-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.md-card-top strong { font-size: 0.95rem; }
+.md-goal { margin: 0; font-size: 0.82rem; }
+.md-stance { margin: 0; font-size: 0.78rem; color: var(--text-muted, #94a3b8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-card-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.74rem; color: var(--text-muted, #94a3b8); margin-top: 2px; }
+.md-sug-badge { color: #e0a23c; font-weight: 700; }
+
+.md-hdr-btn { margin-left: 12px; padding: 4px 12px; font-size: 0.78rem; border-radius: 6px; vertical-align: middle; }
+
+.md-target-list { display: flex; flex-direction: column; gap: 6px; }
+.md-target { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 12px; border-radius: 8px; background: var(--bg-card, rgba(255,255,255,0.03));
+  border-left: 3px solid var(--border-subtle, rgba(255,255,255,0.1)); }
+.md-target.st-active { border-left-color: #34c98b; }
+.md-target.st-suggested { border-left-color: #e0a23c; background: rgba(224,162,60,0.06); }
+.md-target.st-rejected { border-left-color: #64748b; opacity: 0.55; }
+.md-target-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.md-target-id { font-weight: 600; font-size: 0.85rem; }
+.md-target-meta { font-size: 0.72rem; color: var(--text-muted, #94a3b8); }
+.md-target-reason { font-size: 0.74rem; font-style: italic; color: var(--text-muted, #94a3b8); }
+.md-target-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.md-roster, .md-eligible { display: flex; flex-direction: column; gap: 5px; }
+.md-roster-row, .md-elig-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  background: var(--bg-card, rgba(255,255,255,0.03)); border-radius: 7px; }
+.md-elig-row { font-size: 0.84rem; }
+.md-elig-row .btn-secondary, .md-roster-row .btn-icon { margin-left: auto; }
+.sd-caste { font-weight: 700; }
+
+/* shared pause/resume buttons (also used in agents editor) */
+.sc-btn-pause { font-size: 0.78rem; padding: 5px 11px; border-radius: 6px; cursor: pointer;
+  background: rgba(224,162,60,0.12); color: #e0a23c; border: 1px solid rgba(224,162,60,0.3); }
+.sc-btn-resume { font-size: 0.78rem; padding: 5px 11px; border-radius: 6px; cursor: pointer;
+  background: rgba(52,201,139,0.12); color: #34c98b; border: 1px solid rgba(52,201,139,0.3); }
+.status-badge { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+.status-badge.active { color: #34c98b; background: rgba(52,201,139,0.14); }
+.status-badge.suspended { color: #e0a23c; background: rgba(224,162,60,0.14); }

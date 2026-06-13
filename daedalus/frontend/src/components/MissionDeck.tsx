@@ -1,9 +1,18 @@
-import { useEffect, useState } from 'react';
-import {
-  Target, Rocket, Trash2, Crosshair, Shield, Radio, Plus, X,
-  Sparkles, Save, Users, Gauge, Clock, Pencil,
-} from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
 import './MissionDeck.css';
+
+interface SquadMember { id: number; agent_id: string; assigned_role: string; status: string; codename?: string | null; }
+interface Target { id: number; kind: string; identifier: string; title: string | null; status: string; source: string; proposed_by: string | null; reason: string | null; }
+interface Mission {
+  id: number; title: string; platform: string; narrative_goal: string | null; stance: string | null;
+  tactic: string; status: string; agent_mode: string; dynamic_count: number; forced_context: string | null;
+  squad: SquadMember[]; targets: Target[];
+  summary: { status_label: string; agents: Record<string, number>; targets: Record<string, number> };
+}
+interface EligibleAgent {
+  agent_id: string; codename: string | null; caste: string; status: string; active_mission_load: number;
+  at_capacity: boolean; already_enlisted: boolean; match_score: number; match_reasons: string[];
+}
 
 interface MissionDeckProps {
   token: string;
@@ -11,727 +20,304 @@ interface MissionDeckProps {
   onPrefillConsumed?: () => void;
 }
 
-interface AgentProfile {
-  agent_id: string;
-  full_name: string;
-  codename: string;
-  caste: string;
-}
-
-interface SquadMember {
-  id: number;
-  agent_id: string;
-  assigned_role: 'alpha' | 'beta' | 'gamma';
-  status: string;
-  codename?: string | null;
-}
-
-interface Progress {
-  percent: number;
-  stage: string;
-  done: number;
-  total: number;
-  by_role: Record<string, { total: number; success: number; failed: number; active: number }>;
-}
-
-interface Mission {
-  id: number;
-  title: string;
-  target_url: string;
-  platform: string;
-  narrative_goal: string | null;
-  tactic: string;
-  status: string;
-  alpha_context: string | null;
-  forced_context: string | null;
-  launched_at: string | null;
-  created_at: string;
-  squad: SquadMember[];
-  progress: Progress;
-}
-
-interface EligibleAgent {
-  agent_id: string;
-  codename: string | null;
-  caste: string;
-  status: string;
-  platform: string;
-  active_mission_load: number;
-  at_capacity: boolean;
-  already_enlisted: boolean;
-  match_score: number;
-  match_reasons: string[];
-}
-
-interface PendingMember {
-  agent_id: string;
-  assigned_role: 'alpha' | 'beta' | 'gamma';
-}
-
 const TACTICS = [
-  { value: 'soft_support', label: 'Soft Support' },
-  { value: 'aggressive_displacement', label: 'Aggressive Displacement' },
+  { v: 'dynamic', l: 'Динамическая (по ситуации)' },
+  { v: 'soft_support', l: 'Мягкая поддержка' },
+  { v: 'aggressive_displacement', l: 'Жёсткое вытеснение' },
 ];
-
-const ROLES: { key: 'alpha' | 'beta' | 'gamma'; label: string; icon: any; hint: string }[] = [
-  { key: 'alpha', label: 'Alpha', icon: Crosshair, hint: 'Seeds the narrative first' },
-  { key: 'beta', label: 'Beta', icon: Shield, hint: 'Amplifies & defends' },
-  { key: 'gamma', label: 'Gamma', icon: Radio, hint: 'Creates supporting noise' },
-];
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: '#64748b',
-  running: '#3b82f6',
-  amplifying: '#a855f7',
-  completed: '#22c55e',
-  failed: '#ef4444',
-};
-
-const fmtTime = (iso: string | null): string => {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-};
-
-// ── Mission detail / management modal ───────────────────────────────────────
-
-const MissionDetailModal: React.FC<{
-  mission: Mission;
-  token: string;
-  onClose: () => void;
-  onChanged: () => void;
-  showToast: (text: string, type: 'success' | 'error') => void;
-}> = ({ mission, token, onClose, onChanged, showToast }) => {
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-  const editable = mission.status === 'pending' || mission.status === 'failed';
-
-  const [form, setForm] = useState({
-    title: mission.title,
-    target_url: mission.target_url,
-    narrative_goal: mission.narrative_goal || '',
-    tactic: mission.tactic,
-    forced_context: mission.forced_context || '',
-  });
-  const [eligible, setEligible] = useState<EligibleAgent[]>([]);
-  const [counts, setCounts] = useState({ alpha: 1, beta: 2, gamma: 2 });
-  const [saving, setSaving] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setForm({
-      title: mission.title,
-      target_url: mission.target_url,
-      narrative_goal: mission.narrative_goal || '',
-      tactic: mission.tactic,
-      forced_context: mission.forced_context || '',
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mission.id]);
-
-  const fetchEligible = async () => {
-    try {
-      const res = await fetch(`/api/v1/missions/${mission.id}/eligible-agents`, { headers });
-      if (res.ok) setEligible(await res.json());
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  useEffect(() => {
-    fetchEligible();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mission.id, mission.squad.length]);
-
-  const saveParams = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/v1/missions/${mission.id}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({
-          title: form.title,
-          target_url: form.target_url,
-          narrative_goal: form.narrative_goal,
-          tactic: form.tactic,
-          forced_context: form.forced_context.trim() || null,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast('Mission parameters saved.', 'success');
-        onChanged();
-      } else {
-        showToast(`Save failed: ${data.detail || res.status}`, 'error');
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const addMember = async (agentId: string, role: 'alpha' | 'beta' | 'gamma') => {
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/v1/missions/${mission.id}/squad`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ agent_id: agentId, assigned_role: role }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(`${agentId} enlisted as ${role}.`, 'success');
-        onChanged();
-        fetchEligible();
-      } else {
-        showToast(`${data.detail || res.status}`, 'error');
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeMember = async (squadId: number) => {
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/v1/missions/${mission.id}/squad/${squadId}`, { method: 'DELETE', headers });
-      if (res.ok) {
-        onChanged();
-        fetchEligible();
-      } else {
-        const data = await res.json();
-        showToast(`${data.detail || res.status}`, 'error');
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const autoAssign = async () => {
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/v1/missions/${mission.id}/auto-assign`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(counts),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const added = (data.squad?.length ?? 0);
-        showToast(`Auto-assign complete — squad now ${added} bot(s).`, 'success');
-        onChanged();
-        fetchEligible();
-      } else {
-        showToast(`Auto-assign failed: ${data.detail || res.status}`, 'error');
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const launch = async () => {
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/v1/missions/${mission.id}/launch`, { method: 'POST', headers });
-      const data = await res.json();
-      if (res.ok) {
-        showToast('DAG launched — Alpha wave dispatched.', 'success');
-        onChanged();
-      } else {
-        showToast(`Launch failed: ${data.detail || res.status}`, 'error');
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const p = mission.progress;
-
-  return (
-    <div className="md-modal-overlay" onClick={onClose}>
-      <div className="md-modal" onClick={e => e.stopPropagation()}>
-        <div className="md-modal-head">
-          <div>
-            <h2>{mission.title}</h2>
-            <p className="text-muted md-mission-url">{mission.platform} · {mission.target_url}</p>
-          </div>
-          <div className="md-modal-head-right">
-            <span className="md-status-badge" style={{ background: STATUS_COLORS[mission.status] || '#475569' }}>
-              {mission.status}
-            </span>
-            <button className="btn-icon" onClick={onClose} title="Close"><X size={18} /></button>
-          </div>
-        </div>
-
-        <div className="md-modal-body">
-          {/* ── Live metrics ── */}
-          <section className="md-section">
-            <h4><Gauge size={15} /> Metrics</h4>
-            <div className="md-progress-wrap">
-              <div className="md-progress-bar">
-                <div className="md-progress-fill"
-                  style={{ width: `${p.percent}%`, background: STATUS_COLORS[mission.status] || '#3b82f6' }} />
-              </div>
-              <span className="md-progress-stage">{p.stage} · {p.done}/{p.total} ({p.percent}%)</span>
-            </div>
-            <div className="md-metrics-grid">
-              {ROLES.map(role => {
-                const s = p.by_role[role.key] || { total: 0, success: 0, failed: 0, active: 0 };
-                return (
-                  <div key={role.key} className={`md-metric role-${role.key}`}>
-                    <div className="md-metric-title"><role.icon size={13} /> {role.label}</div>
-                    <div className="md-metric-nums">
-                      <span title="success">{s.success}✓</span>
-                      <span title="failed">{s.failed}✗</span>
-                      <span title="in-flight">{s.active}⧖</span>
-                      <span className="md-metric-total">/ {s.total}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="md-meta-row">
-              <span><Clock size={12} /> Created {fmtTime(mission.created_at)}</span>
-              <span><Rocket size={12} /> Launched {fmtTime(mission.launched_at)}</span>
-            </div>
-            {mission.alpha_context && (
-              <p className="md-alpha-context"><strong>Alpha context:</strong> {mission.alpha_context}</p>
-            )}
-          </section>
-
-          {/* ── Parameters (editable when pending/failed) ── */}
-          <section className="md-section">
-            <h4><Pencil size={15} /> Parameters {editable ? '' : '(read-only — mission in flight)'}</h4>
-            <div className="md-edit-grid">
-              <div className="md-field">
-                <label>Title</label>
-                <input value={form.title} disabled={!editable}
-                  onChange={e => setForm({ ...form, title: e.target.value })} />
-              </div>
-              <div className="md-field">
-                <label>Target URL</label>
-                <input value={form.target_url} disabled={!editable}
-                  onChange={e => setForm({ ...form, target_url: e.target.value })} />
-              </div>
-              <div className="md-field">
-                <label>Tactic</label>
-                <select value={form.tactic} disabled={!editable}
-                  onChange={e => setForm({ ...form, tactic: e.target.value })}>
-                  {TACTICS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-              </div>
-              <div className="md-field md-field-wide">
-                <label>Narrative Goal</label>
-                <textarea rows={3} value={form.narrative_goal} disabled={!editable}
-                  onChange={e => setForm({ ...form, narrative_goal: e.target.value })} />
-              </div>
-              <div className="md-field md-field-wide">
-                <label>Forced Context <span className="md-hint">(RAG bypass)</span></label>
-                <textarea rows={2} value={form.forced_context} disabled={!editable}
-                  onChange={e => setForm({ ...form, forced_context: e.target.value })} />
-              </div>
-            </div>
-            {editable && (
-              <button className="btn-primary" onClick={saveParams} disabled={saving}>
-                <Save size={14} /> {saving ? 'Saving…' : 'Save Parameters'}
-              </button>
-            )}
-          </section>
-
-          {/* ── Squad ── */}
-          <section className="md-section">
-            <h4><Users size={15} /> Squad ({mission.squad.length})</h4>
-            <div className="md-squad-list">
-              {mission.squad.length === 0 && <p className="text-muted">No bots enlisted yet.</p>}
-              {mission.squad.map(s => (
-                <div key={s.id} className={`md-squad-row role-${s.assigned_role} status-${s.status}`}>
-                  <span className="md-squad-role">{s.assigned_role}</span>
-                  <span className="md-squad-name">{s.codename || s.agent_id}</span>
-                  <span className="md-squad-status">{s.status}</span>
-                  {editable && (
-                    <button className="btn-icon text-danger" title="Remove" onClick={() => removeMember(s.id)}>
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {editable && (
-              <div className="md-assign-box">
-                <div className="md-assign-row">
-                  <Sparkles size={14} />
-                  <span>Auto-assign matching bots:</span>
-                  {ROLES.map(r => (
-                    <label key={r.key} className="md-count-input">
-                      {r.label[0]}
-                      <input type="number" min={0} max={20} value={(counts as any)[r.key]}
-                        onChange={e => setCounts({ ...counts, [r.key]: Math.max(0, parseInt(e.target.value) || 0) })} />
-                    </label>
-                  ))}
-                  <button className="btn-primary" onClick={autoAssign} disabled={busy}>
-                    <Sparkles size={13} /> Auto-Assign
-                  </button>
-                </div>
-
-                <div className="md-eligible">
-                  <p className="md-eligible-title">Eligible bots (active account on {mission.platform}, &lt; cap):</p>
-                  {eligible.length === 0 && (
-                    <p className="text-muted">No eligible bots — none have an active {mission.platform} account.</p>
-                  )}
-                  {eligible.map(a => (
-                    <div key={a.agent_id} className={`md-eligible-row ${a.at_capacity ? 'at-cap' : ''}`}>
-                      <span className="md-elig-name">{a.codename || a.agent_id}</span>
-                      <span className={`md-elig-caste role-${a.caste}`}>{a.caste}</span>
-                      <span className="md-elig-score" title={a.match_reasons.join('; ')}>
-                        match {Math.round(a.match_score * 100)}%
-                      </span>
-                      <span className="md-elig-load" title="active missions / cap">
-                        {a.active_mission_load}/5
-                      </span>
-                      {a.already_enlisted ? (
-                        <span className="md-elig-tag">enlisted</span>
-                      ) : a.at_capacity ? (
-                        <span className="md-elig-tag cap">at cap</span>
-                      ) : (
-                        <div className="md-elig-add">
-                          {ROLES.map(r => (
-                            <button key={r.key} className={`md-elig-add-btn role-${r.key}`} disabled={busy}
-                              title={`Add as ${r.label}`} onClick={() => addMember(a.agent_id, r.key)}>
-                              +{r.label[0]}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
-
-        {/* ── Footer actions ── */}
-        <div className="md-modal-foot">
-          {editable && (
-            <button className="btn-primary" onClick={launch} disabled={busy}>
-              <Rocket size={14} /> {mission.status === 'failed' ? 'Relaunch DAG' : 'Launch DAG'}
-            </button>
-          )}
-          <span className="md-foot-spacer" />
-          <span className="text-muted md-cap-note">Per-bot cap: 5 active missions</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ── Mission Deck ─────────────────────────────────────────────────────────────
+const ROLE_COLOR: Record<string, string> = { alpha: '#ef4444', beta: '#3b82f6', gamma: '#22c55e' };
+const inferKind = (id: string) => (/\/\d+\/?$/.test(id) ? 'post' : 'channel');
 
 const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillConsumed }) => {
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [agents, setAgents] = useState<AgentProfile[]>([]);
-  const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState<Mission | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
-  // New-mission form state
-  const [title, setTitle] = useState('');
-  const [targetUrl, setTargetUrl] = useState('');
-  const [narrativeGoal, setNarrativeGoal] = useState('');
-  const [forcedContext, setForcedContext] = useState('');
-  const [tactic, setTactic] = useState('soft_support');
-  const [pendingSquad, setPendingSquad] = useState<PendingMember[]>([]);
-  const [roleSelect, setRoleSelect] = useState<Record<string, string>>({ alpha: '', beta: '', gamma: '' });
-  const [creating, setCreating] = useState(false);
+  const [cTitle, setCTitle] = useState('');
+  const [cGoal, setCGoal] = useState('');
+  const [cStance, setCStance] = useState('');
+  const [cTactic, setCTactic] = useState('dynamic');
+  const [cMode, setCMode] = useState('manual');
+  const [cCount, setCCount] = useState(3);
+  const [cTargets, setCTargets] = useState('');
 
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
-  const showToast = (text: string, type: 'success' | 'error') => {
-    setToast({ text, type });
-    setTimeout(() => setToast(null), 4000);
-  };
+  const fetchMissions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/missions', { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setMissions(await res.json());
+      setError('');
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Не удалось загрузить миссии'); }
+  }, [token]);
 
-  useEffect(() => {
-    fetchAgents();
-    fetchMissions();
-    const interval = setInterval(fetchMissions, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  useEffect(() => { fetchMissions(); }, [fetchMissions]);
 
-  // Pre-fill the builder when arriving from a Scouting Radar conversion.
   useEffect(() => {
     if (prefill) {
-      setTitle(prefill.title || '');
-      setTargetUrl(prefill.target_url || '');
-      setNarrativeGoal(prefill.narrative_goal || '');
-      fetchMissions();
+      setCTitle(prefill.title || '');
+      setCGoal(prefill.narrative_goal || '');
+      setCTargets(prefill.target_url || '');
+      setShowCreate(true);
       onPrefillConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill]);
 
-  const fetchAgents = async () => {
-    try {
-      const res = await fetch('/api/v1/souls/profiles', { headers });
-      if (res.ok) setAgents(await res.json());
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchMissions = async () => {
-    try {
-      const res = await fetch('/api/v1/missions', { headers });
-      if (res.ok) setMissions(await res.json());
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const assignToRole = (role: 'alpha' | 'beta' | 'gamma') => {
-    const agentId = roleSelect[role];
-    if (!agentId) return;
-    if (pendingSquad.some(m => m.agent_id === agentId)) {
-      showToast(`${agentId} is already assigned in this mission.`, 'error');
-      return;
-    }
-    setPendingSquad([...pendingSquad, { agent_id: agentId, assigned_role: role }]);
-    setRoleSelect({ ...roleSelect, [role]: '' });
-  };
-
-  const removePending = (agentId: string) => {
-    setPendingSquad(pendingSquad.filter(m => m.agent_id !== agentId));
-  };
-
-  const resetForm = () => {
-    setTitle('');
-    setTargetUrl('');
-    setNarrativeGoal('');
-    setForcedContext('');
-    setTactic('soft_support');
-    setPendingSquad([]);
-    setRoleSelect({ alpha: '', beta: '', gamma: '' });
-  };
-
-  const handleCreate = async () => {
-    if (!title.trim() || !targetUrl.trim()) {
-      showToast('Title and Target URL are required.', 'error');
-      return;
-    }
-    setCreating(true);
+  const createMission = async () => {
+    const targets = cTargets.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+      .map(id => ({ identifier: id, kind: inferKind(id) }));
     try {
       const res = await fetch('/api/v1/missions', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          title,
-          target_url: targetUrl,
-          narrative_goal: narrativeGoal,
-          forced_context: forcedContext.trim() || null,
-          tactic,
-          squad: pendingSquad,
-        }),
+        method: 'POST', headers,
+        body: JSON.stringify({ title: cTitle, narrative_goal: cGoal, stance: cStance, tactic: cTactic,
+          agent_mode: cMode, dynamic_count: cCount, targets }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(`Mission "${data.title}" created. Open it to auto-assign bots & launch.`, 'success');
-        resetForm();
-        fetchMissions();
-        setSelectedId(data.id);
-      } else {
-        showToast(`Failed: ${data.detail || res.status}`, 'error');
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    } finally {
-      setCreating(false);
-    }
+      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail || `HTTP ${res.status}`); }
+      setShowCreate(false);
+      setCTitle(''); setCGoal(''); setCStance(''); setCTactic('dynamic'); setCMode('manual'); setCCount(3); setCTargets('');
+      fetchMissions();
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Не удалось создать миссию'); }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this mission?')) return;
-    try {
-      const res = await fetch(`/api/v1/missions/${id}`, { method: 'DELETE', headers });
-      if (res.ok) {
-        showToast('Mission deleted.', 'success');
-        if (selectedId === id) setSelectedId(null);
-        fetchMissions();
-      }
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
-    }
+  const refreshSelected = (m: Mission) => { setSelected(m); setMissions(prev => prev.map(x => x.id === m.id ? m : x)); };
+
+  const setStatus = async (m: Mission, status: string) => {
+    const res = await fetch(`/api/v1/missions/${m.id}/status`, { method: 'POST', headers, body: JSON.stringify({ status }) });
+    if (res.ok) refreshSelected(await res.json());
   };
 
-  const agentLabel = (agentId: string) => {
-    const a = agents.find(x => x.agent_id === agentId);
-    return a ? `${a.full_name} (${agentId})` : agentId;
+  const removeMission = async (m: Mission) => {
+    if (!confirm(`Удалить миссию «${m.title}»?`)) return;
+    const res = await fetch(`/api/v1/missions/${m.id}`, { method: 'DELETE', headers });
+    if (res.ok) { setSelected(null); fetchMissions(); }
   };
-
-  const squadByRole = (role: string) => pendingSquad.filter(m => m.assigned_role === role);
-
-  const selected = missions.find(m => m.id === selectedId) || null;
 
   return (
     <div className="mission-deck view-container">
-      {toast && (
-        <div className={`md-toast ${toast.type}`}>{toast.text}</div>
-      )}
-
       <div className="header-row">
         <div>
-          <h1><Target size={22} style={{ verticalAlign: '-4px' }} /> Mission Deck</h1>
-          <p className="subtitle">Plan coordinated DAG campaigns: Alpha seeds → Betas amplify → Gammas swarm.</p>
+          <h1>Миссии</h1>
+          <p className="subtitle">Постоянные цели роя: своя «правда», цели и агенты. Миссия не завершается — только пауза.</p>
         </div>
+        <button className="btn-primary" onClick={() => setShowCreate(true)}>+ Новая миссия</button>
       </div>
 
-      {/* ── Mission Builder ── */}
-      <div className="md-builder">
-        <div className="md-builder-form">
-          <h3>New Mission</h3>
-          <div className="md-field">
-            <label>Title</label>
-            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Operation codename" />
-          </div>
-          <div className="md-field">
-            <label>Target URL</label>
-            <input value={targetUrl} onChange={e => setTargetUrl(e.target.value)} placeholder="https://t.me/channel/123" />
-          </div>
-          <div className="md-field">
-            <label>Narrative Goal</label>
-            <textarea rows={4} value={narrativeGoal} onChange={e => setNarrativeGoal(e.target.value)}
-              placeholder="The core message the Alpha will plant and the squad will reinforce." />
-          </div>
-          <div className="md-field">
-            <label>Forced Context <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional)</span></label>
-            <textarea rows={3} value={forcedContext} onChange={e => setForcedContext(e.target.value)}
-              placeholder="Pin an exact fact here. If set, ORPHEUS injects this verbatim and SKIPS the MUNINN vector search (RAG bypass)." />
-          </div>
-          <div className="md-field">
-            <label>Tactic</label>
-            <select value={tactic} onChange={e => setTactic(e.target.value)}>
-              {TACTICS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-          </div>
-        </div>
+      {error && <div className="error-banner">{error}</div>}
 
-        {/* ── Squad Assembly (optional — can also auto-assign after creating) ── */}
-        <div className="md-squad-assembly">
-          <h3>Squad Assembly <span className="md-hint">(optional — auto-assign available after create)</span></h3>
-          <div className="md-role-cols">
-            {ROLES.map(role => {
-              const Icon = role.icon;
-              return (
-                <div key={role.key} className={`md-role-col role-${role.key}`}>
-                  <div className="md-role-head">
-                    <Icon size={16} /> <strong>{role.label}</strong>
-                  </div>
-                  <p className="md-role-hint">{role.hint}</p>
-                  <div className="md-role-assign">
-                    <select value={roleSelect[role.key]} onChange={e => setRoleSelect({ ...roleSelect, [role.key]: e.target.value })}>
-                      <option value="">Select agent…</option>
-                      {agents
-                        .filter(a => !pendingSquad.some(m => m.agent_id === a.agent_id))
-                        .map(a => <option key={a.agent_id} value={a.agent_id}>{a.full_name} ({a.caste})</option>)}
-                    </select>
-                    <button className="btn-icon text-success" onClick={() => assignToRole(role.key)}><Plus size={14} /></button>
-                  </div>
-                  <div className="md-role-members">
-                    {squadByRole(role.key).map(m => (
-                      <div key={m.agent_id} className="md-member-chip">
-                        <span>{agentLabel(m.agent_id)}</span>
-                        <button onClick={() => removePending(m.agent_id)}><X size={12} /></button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <button className="btn-primary md-create-btn" onClick={handleCreate} disabled={creating}>
-            {creating ? 'Creating…' : 'Create Mission'}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Active Missions Dashboard ── */}
-      <div className="md-dashboard">
-        <h2>Active Missions</h2>
-        {missions.length === 0 && <p className="text-muted">No missions yet. Build one above.</p>}
-        <div className="md-mission-list">
-          {missions.map(m => (
-            <div key={m.id} className="md-mission-card md-mission-card-clickable" onClick={() => setSelectedId(m.id)}>
-              <div className="md-mission-head">
-                <div>
-                  <h3>{m.title}</h3>
-                  <p className="text-muted md-mission-url">{m.platform} · {m.target_url}</p>
-                </div>
-                <span className="md-status-badge" style={{ background: STATUS_COLORS[m.status] || '#475569' }}>
-                  {m.status}
-                </span>
+      <div className="md-grid">
+        {missions.length === 0 ? <p className="text-muted">Миссий пока нет.</p> : missions.map(m => {
+          const sug = m.summary.targets.suggested || 0;
+          return (
+            <div key={m.id} className={`md-card ${m.status === 'paused' ? 'paused' : ''}`} onClick={() => setSelected(m)}>
+              <div className="md-card-top">
+                <strong>{m.title}</strong>
+                <span className={`status-badge ${m.status === 'active' ? 'active' : 'suspended'}`}>{m.summary.status_label}</span>
               </div>
-
-              <div className="md-progress-wrap">
-                <div className="md-progress-bar">
-                  <div className="md-progress-fill"
-                    style={{ width: `${m.progress.percent}%`, background: STATUS_COLORS[m.status] || '#3b82f6' }} />
-                </div>
-                <span className="md-progress-stage">{m.progress.stage} · {m.progress.done}/{m.progress.total}</span>
-              </div>
-
-              <div className="md-wave-row">
-                {ROLES.map(role => {
-                  const stats = m.progress.by_role[role.key] || { total: 0, success: 0, failed: 0, active: 0 };
-                  if (stats.total === 0) return null;
-                  return (
-                    <div key={role.key} className={`md-wave-pill role-${role.key}`}>
-                      <strong>{role.label}</strong>
-                      <span>{stats.success}✓ {stats.failed}✗ {stats.active}⧖ / {stats.total}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="md-squad-line">
-                {m.squad.map(s => (
-                  <span key={s.id} className={`md-squad-tag role-${s.assigned_role} status-${s.status}`}>
-                    {s.codename || s.agent_id}:{s.assigned_role}
-                  </span>
-                ))}
-              </div>
-
-              <div className="md-mission-actions" onClick={e => e.stopPropagation()}>
-                <button className="btn-secondary" onClick={() => setSelectedId(m.id)}>
-                  <Pencil size={14} /> Manage
-                </button>
-                <button className="btn-icon text-danger" onClick={() => handleDelete(m.id)} title="Delete">
-                  <Trash2 size={16} />
-                </button>
+              {m.narrative_goal && <p className="md-goal">🎯 {m.narrative_goal}</p>}
+              {m.stance && <p className="md-stance">⚖ {m.stance}</p>}
+              <div className="md-card-meta">
+                <span>👥 {m.summary.agents.total} агент(ов)</span>
+                <span>🎯 {m.summary.targets.active || 0} цел.</span>
+                {sug > 0 && <span className="md-sug-badge">⏳ {sug} предложено</span>}
               </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
-      {selected && (
-        <MissionDetailModal
-          mission={selected}
-          token={token}
-          onClose={() => setSelectedId(null)}
-          onChanged={fetchMissions}
-          showToast={showToast}
-        />
+      {showCreate && (
+        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <h2>Новая миссия</h2>
+            <div className="form-group"><label>Название</label>
+              <input value={cTitle} onChange={e => setCTitle(e.target.value)} placeholder="напр. Поддержка общественного транспорта" /></div>
+            <div className="form-group"><label>Цель (что продвигать)</label>
+              <textarea rows={2} value={cGoal} onChange={e => setCGoal(e.target.value)} placeholder="Продвигать развитие и финансирование общественного транспорта." /></div>
+            <div className="form-group"><label>«Правда» / сторона / видение</label>
+              <textarea rows={3} value={cStance} onChange={e => setCStance(e.target.value)} placeholder="Мировоззрение миссии: за что стоим, как смотрим на тему — этим агенты руководствуются в спорах." /></div>
+            <div className="row-flex">
+              <div className="form-group" style={{ flex: 1 }}><label>Тактика по умолчанию</label>
+                <select value={cTactic} onChange={e => setCTactic(e.target.value)}>{TACTICS.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}</select></div>
+              <div className="form-group"><label>Набор агентов</label>
+                <select value={cMode} onChange={e => setCMode(e.target.value)}><option value="manual">вручную</option><option value="dynamic">динамически</option></select></div>
+              {cMode === 'dynamic' && <div className="form-group"><label>Сколько</label>
+                <input type="number" min={0} max={50} value={cCount} onChange={e => setCCount(parseInt(e.target.value) || 0)} style={{ width: 70 }} /></div>}
+            </div>
+            <div className="form-group"><label>Цели (каналы/посты, по одному в строке)</label>
+              <textarea rows={3} value={cTargets} onChange={e => setCTargets(e.target.value)} placeholder={"@tashkent_news333\nhttps://t.me/somechannel/123"} /></div>
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Отмена</button>
+              <button className="btn-primary" disabled={!cTitle.trim()} onClick={createMission}>Создать</button>
+            </div>
+          </div>
+        </div>
       )}
+
+      {selected && (
+        <MissionDetail token={token} mission={selected} onClose={() => setSelected(null)}
+          onChange={refreshSelected} setStatus={setStatus} removeMission={removeMission} />
+      )}
+    </div>
+  );
+};
+
+const MissionDetail: React.FC<{
+  token: string; mission: Mission; onClose: () => void; onChange: (m: Mission) => void;
+  setStatus: (m: Mission, s: string) => void; removeMission: (m: Mission) => void;
+}> = ({ token, mission, onClose, onChange, setStatus, removeMission }) => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const [tab, setTab] = useState<'overview' | 'targets' | 'agents'>('overview');
+  const [m, setM] = useState<Mission>(mission);
+  const [newTarget, setNewTarget] = useState('');
+  const [eligible, setEligible] = useState<EligibleAgent[]>([]);
+
+  const [title, setTitle] = useState(m.title);
+  const [goal, setGoal] = useState(m.narrative_goal || '');
+  const [stance, setStance] = useState(m.stance || '');
+  const [tactic, setTactic] = useState(m.tactic);
+
+  const apply = (u: Mission) => { setM(u); onChange(u); };
+
+  const save = async () => {
+    const res = await fetch(`/api/v1/missions/${m.id}`, { method: 'PUT', headers,
+      body: JSON.stringify({ title, narrative_goal: goal, stance, tactic }) });
+    if (res.ok) apply(await res.json());
+  };
+  const addTarget = async () => {
+    const id = newTarget.trim(); if (!id) return;
+    const res = await fetch(`/api/v1/missions/${m.id}/targets`, { method: 'POST', headers, body: JSON.stringify({ identifier: id, kind: inferKind(id) }) });
+    if (res.ok) { apply(await res.json()); setNewTarget(''); }
+  };
+  const decideTarget = async (tid: number, decision: string) => {
+    const res = await fetch(`/api/v1/missions/${m.id}/targets/${tid}/${decision}`, { method: 'POST', headers });
+    if (res.ok) apply(await res.json());
+  };
+  const deleteTarget = async (tid: number) => {
+    const res = await fetch(`/api/v1/missions/${m.id}/targets/${tid}`, { method: 'DELETE', headers });
+    if (res.ok) apply(await res.json());
+  };
+  const removeAgent = async (sid: number) => {
+    const res = await fetch(`/api/v1/missions/${m.id}/squad/${sid}`, { method: 'DELETE', headers });
+    if (res.ok) apply(await res.json());
+  };
+  const fetchEligible = useCallback(async () => {
+    const res = await fetch(`/api/v1/missions/${m.id}/eligible-agents`, { headers });
+    if (res.ok) setEligible(await res.json());
+  }, [m.id, token]);
+  const enlist = async (agent_id: string, role: string) => {
+    const res = await fetch(`/api/v1/missions/${m.id}/squad`, { method: 'POST', headers, body: JSON.stringify({ agent_id, assigned_role: role }) });
+    if (res.ok) { apply(await res.json()); fetchEligible(); }
+  };
+  const autoAssign = async () => {
+    const res = await fetch(`/api/v1/missions/${m.id}/auto-assign`, { method: 'POST', headers, body: JSON.stringify({ alpha: 1, beta: 2, gamma: 1 }) });
+    if (res.ok) apply(await res.json());
+  };
+
+  useEffect(() => { if (tab === 'agents') fetchEligible(); }, [tab, fetchEligible]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content large" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>{m.title}
+            {m.status === 'active'
+              ? <button className="sc-btn-pause md-hdr-btn" onClick={() => setStatus(m, 'paused')}>⏸ Пауза</button>
+              : <button className="sc-btn-resume md-hdr-btn" onClick={() => setStatus(m, 'active')}>▶ Возобновить</button>}
+          </h2>
+          <div className="tabs">
+            <button className={`tab-btn ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Обзор</button>
+            <button className={`tab-btn ${tab === 'targets' ? 'active' : ''}`} onClick={() => setTab('targets')}>
+              Цели ({m.summary.targets.active || 0}){(m.summary.targets.suggested || 0) > 0 ? ` · ⏳${m.summary.targets.suggested}` : ''}
+            </button>
+            <button className={`tab-btn ${tab === 'agents' ? 'active' : ''}`} onClick={() => setTab('agents')}>Агенты ({m.summary.agents.total})</button>
+          </div>
+        </div>
+        <div className="modal-body">
+          {tab === 'overview' && (
+            <div className="form-grid">
+              <div className="form-group full-width"><label>Название</label>
+                <input value={title} onChange={e => setTitle(e.target.value)} /></div>
+              <div className="form-group full-width"><label>Цель</label>
+                <textarea rows={2} value={goal} onChange={e => setGoal(e.target.value)} /></div>
+              <div className="form-group full-width"><label>«Правда» / сторона</label>
+                <textarea rows={3} value={stance} onChange={e => setStance(e.target.value)} /></div>
+              <div className="form-group"><label>Тактика по умолчанию</label>
+                <select value={tactic} onChange={e => setTactic(e.target.value)}>{TACTICS.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}</select></div>
+              <div className="form-group full-width">
+                <button className="btn-primary" onClick={save}>Сохранить</button>
+                <button className="btn-danger-text" style={{ marginLeft: 12 }} onClick={() => removeMission(m)}>Удалить миссию</button>
+              </div>
+            </div>
+          )}
+
+          {tab === 'targets' && (
+            <>
+              <div className="row-flex" style={{ alignItems: 'flex-end', marginBottom: 12 }}>
+                <div className="form-group" style={{ flex: 1 }}><label>Добавить цель (@канал или ссылка на пост)</label>
+                  <input value={newTarget} onChange={e => setNewTarget(e.target.value)} placeholder="@channel или https://t.me/.../123" /></div>
+                <button className="btn-primary" onClick={addTarget}>Добавить</button>
+              </div>
+              {m.targets.length === 0 ? <p className="text-muted">Целей нет.</p> : (
+                <div className="md-target-list">
+                  {m.targets.map(t => (
+                    <div key={t.id} className={`md-target st-${t.status}`}>
+                      <div className="md-target-info">
+                        <span className="md-target-id">{t.kind === 'post' ? '📄' : '📢'} {t.title || t.identifier}</span>
+                        <span className="md-target-meta">
+                          {t.identifier} · {t.source === 'agent' ? `предложил ${t.proposed_by || 'агент'}` : 'оператор'}
+                          {t.status === 'rejected' ? ' · отклонено' : ''}
+                        </span>
+                        {t.reason && <span className="md-target-reason">{t.reason}</span>}
+                      </div>
+                      <div className="md-target-actions">
+                        {t.status === 'suggested' && <>
+                          <button className="sc-btn-resume" onClick={() => decideTarget(t.id, 'approve')}>✓ Принять</button>
+                          <button className="sc-btn-pause" onClick={() => decideTarget(t.id, 'reject')}>✕ Отклонить</button>
+                        </>}
+                        <button className="btn-icon text-danger" onClick={() => deleteTarget(t.id)}>🗑</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {tab === 'agents' && (
+            <>
+              <div className="array-header"><h3>Ростер миссии</h3>
+                <button className="btn-secondary" onClick={autoAssign}>⚡ Авто-набор (1α/2β/1γ)</button></div>
+              {m.squad.length === 0 ? <p className="text-muted">Агенты не назначены.</p> : (
+                <div className="md-roster">
+                  {m.squad.map(s => (
+                    <div key={s.id} className="md-roster-row">
+                      <span className="sd-caste" style={{ color: ROLE_COLOR[s.assigned_role] }}>● {s.assigned_role}</span>
+                      <span className="font-mono">{s.codename || s.agent_id}</span>
+                      <button className="btn-icon text-danger" onClick={() => removeAgent(s.id)}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="array-header mt-3"><h3>Доступные агенты</h3></div>
+              <div className="md-eligible">
+                {eligible.filter(e => !e.already_enlisted).map(e => (
+                  <div key={e.agent_id} className="md-elig-row">
+                    <span className="sd-caste" style={{ color: ROLE_COLOR[e.caste] }}>● {e.caste}</span>
+                    <span className="font-mono">{e.codename || e.agent_id}</span>
+                    <span className="text-muted" style={{ fontSize: '0.72rem' }}>совпадение {Math.round(e.match_score * 100)}% · загрузка {e.active_mission_load}</span>
+                    {e.at_capacity ? <span className="text-muted">на пределе</span> :
+                      <button className="btn-secondary" onClick={() => enlist(e.agent_id, e.caste)}>+ в миссию</button>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="modal-actions"><button className="btn-secondary" onClick={onClose}>Закрыть</button></div>
+      </div>
     </div>
   );
 };

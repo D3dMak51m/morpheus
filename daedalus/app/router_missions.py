@@ -1,22 +1,22 @@
 """
-DAEDALUS — Mission Deck Router (Stage 17)
-==========================================
-Full CRUD for coordinated multi-agent Missions plus the DAG launch trigger.
-
-A Mission bundles a strategic narrative goal, a target, a tactic, and a Squad
-of agents bound to Alpha / Beta / Gamma roles. Launching a mission hands it to
-the Mission Control DAG engine, which sequences the waves through Redis.
+DAEDALUS — Mission Deck Router (Stage 34 — permanent-goal missions)
+====================================================================
+A Mission is a PERMANENT goal: it carries a stance ("truth"/side), a narrative
+goal, a roster of agents (manual or dynamic), and many targets (channels/posts).
+It is never "completed" — only ``active`` (in-progress) or ``paused``. Agents work
+its targets continuously and may PROPOSE new targets (status ``suggested``) for the
+operator to approve/reject. Per-post tactic is chosen dynamically at runtime.
 """
 
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, Mission, MissionSquad, AgentProfile
+from app.models import AdminUser, Mission, MissionSquad, MissionTarget, AgentProfile
 from app.rbac import require_permission
 from app import mission_control
 
@@ -25,7 +25,10 @@ logger = logging.getLogger("daedalus.router_missions")
 router = APIRouter(prefix="/api/v1/missions", tags=["Mission Deck"])
 
 VALID_ROLES = ("alpha", "beta", "gamma")
-VALID_TACTICS = ("soft_support", "aggressive_displacement")
+VALID_TACTICS = ("soft_support", "aggressive_displacement", "dynamic")
+VALID_STATUS = ("active", "paused")
+VALID_KIND = ("channel", "post")
+VALID_TARGET_STATUS = ("active", "suggested", "rejected")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────
@@ -35,22 +38,36 @@ class SquadMemberRequest(BaseModel):
     assigned_role: str = Field("alpha", description="alpha | beta | gamma")
 
 
+class TargetRequest(BaseModel):
+    identifier: str = Field(..., min_length=1, description="@username, t.me url, or chat_id")
+    kind: str = Field("channel", description="channel | post")
+    title: Optional[str] = None
+
+
 class MissionCreateRequest(BaseModel):
     title: str = Field(..., min_length=1)
-    target_url: str = Field(..., min_length=1)
     narrative_goal: Optional[str] = None
-    tactic: str = Field("soft_support", description="soft_support | aggressive_displacement")
-    # Stage 21 — optional operator-pinned fact; bypasses ORPHEUS vector search.
+    stance: Optional[str] = None
+    tactic: str = Field("dynamic", description="dynamic | soft_support | aggressive_displacement")
     forced_context: Optional[str] = None
+    agent_mode: str = Field("manual", description="manual | dynamic")
+    dynamic_count: int = Field(3, ge=0, le=50)
     squad: list[SquadMemberRequest] = Field(default_factory=list)
+    targets: list[TargetRequest] = Field(default_factory=list)
 
 
 class MissionUpdateRequest(BaseModel):
     title: Optional[str] = None
-    target_url: Optional[str] = None
     narrative_goal: Optional[str] = None
+    stance: Optional[str] = None
     tactic: Optional[str] = None
     forced_context: Optional[str] = None
+    agent_mode: Optional[str] = None
+    dynamic_count: Optional[int] = None
+
+
+class StatusRequest(BaseModel):
+    status: str = Field(..., description="active | paused")
 
 
 class SquadMemberResponse(BaseModel):
@@ -64,20 +81,36 @@ class SquadMemberResponse(BaseModel):
         from_attributes = True
 
 
+class TargetResponse(BaseModel):
+    id: int
+    kind: str
+    identifier: str
+    title: Optional[str]
+    status: str
+    source: str
+    proposed_by: Optional[str]
+    reason: Optional[str]
+    created_at: Any
+
+    class Config:
+        from_attributes = True
+
+
 class MissionResponse(BaseModel):
     id: int
     title: str
-    target_url: str
     platform: str
     narrative_goal: Optional[str]
+    stance: Optional[str]
     tactic: str
     status: str
-    alpha_context: Optional[str]
+    agent_mode: str
+    dynamic_count: int
     forced_context: Optional[str]
-    launched_at: Optional[Any]
     created_at: Any
     squad: list[SquadMemberResponse]
-    progress: dict[str, Any]
+    targets: list[TargetResponse]
+    summary: dict[str, Any]
 
     class Config:
         from_attributes = True
@@ -85,81 +118,52 @@ class MissionResponse(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _validate_tactic(tactic: str) -> None:
-    if tactic not in VALID_TACTICS:
-        raise HTTPException(status_code=400, detail=f"Invalid tactic. Allowed: {list(VALID_TACTICS)}")
+def _validate(value: str, allowed: tuple, what: str) -> None:
+    if value not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid {what}. Allowed: {list(allowed)}")
 
 
-def _validate_role(role: str) -> None:
-    if role not in VALID_ROLES:
-        raise HTTPException(status_code=400, detail=f"Invalid role. Allowed: {list(VALID_ROLES)}")
-
-
-def _compute_progress(mission: Mission) -> dict[str, Any]:
-    """Derive a DAG-state summary + human-readable stage label for the UI."""
-    by_role: dict[str, dict[str, int]] = {r: {"total": 0, "success": 0, "failed": 0, "active": 0} for r in VALID_ROLES}
+def _summary(mission: Mission) -> dict[str, Any]:
+    roles = {r: 0 for r in VALID_ROLES}
     for s in mission.squad:
-        bucket = by_role.setdefault(s.assigned_role, {"total": 0, "success": 0, "failed": 0, "active": 0})
-        bucket["total"] += 1
-        if s.status == "success":
-            bucket["success"] += 1
-        elif s.status == "failed":
-            bucket["failed"] += 1
-        elif s.status in ("dispatched", "locked", "pending"):
-            bucket["active"] += 1
-
-    total = len(mission.squad)
-    done = sum(1 for s in mission.squad if s.status in ("success", "failed"))
-    pct = round((done / total) * 100) if total else 0
-
-    if mission.status == "pending":
-        stage = "Awaiting Launch"
-    elif mission.status == "running":
-        stage = "Alpha Deployed → Awaiting Success"
-    elif mission.status == "amplifying":
-        stage = "Alpha Secured → Betas & Gammas Amplifying"
-    elif mission.status == "completed":
-        stage = "Mission Complete"
-    elif mission.status == "failed":
-        stage = "Alpha Failed → Mission Aborted"
-    else:
-        stage = mission.status
-
-    return {"percent": pct, "stage": stage, "done": done, "total": total, "by_role": by_role}
+        roles[s.assigned_role] = roles.get(s.assigned_role, 0) + 1
+    tstat = {"active": 0, "suggested": 0, "rejected": 0}
+    for t in mission.targets:
+        tstat[t.status] = tstat.get(t.status, 0) + 1
+    return {
+        "status_label": "В процессе" if mission.status == "active" else "На паузе",
+        "agents": {**roles, "total": len(mission.squad)},
+        "targets": tstat,
+    }
 
 
 def _serialize(mission: Mission, db: Optional[Session] = None) -> MissionResponse:
-    # Decorate squad members with their persona codename for the UI (one query).
     codenames: dict[str, str] = {}
     if db is not None and mission.squad:
         agent_ids = [s.agent_id for s in mission.squad]
         for agent_id, codename in (
             db.query(AgentProfile.agent_id, AgentProfile.codename)
-            .filter(AgentProfile.agent_id.in_(agent_ids))
-            .all()
+            .filter(AgentProfile.agent_id.in_(agent_ids)).all()
         ):
             codenames[agent_id] = codename
 
     squad = []
     for s in mission.squad:
-        member = SquadMemberResponse.model_validate(s)
-        member.codename = codenames.get(s.agent_id)
-        squad.append(member)
+        m = SquadMemberResponse.model_validate(s)
+        m.codename = codenames.get(s.agent_id)
+        squad.append(m)
 
+    targets = sorted(
+        (TargetResponse.model_validate(t) for t in mission.targets),
+        key=lambda t: (t.status != "suggested", t.id),  # suggested first
+    )
     return MissionResponse(
-        id=mission.id,
-        title=mission.title,
-        target_url=mission.target_url,
-        platform=mission.platform,
-        narrative_goal=mission.narrative_goal,
-        tactic=mission.tactic,
-        status=mission.status,
-        alpha_context=mission.alpha_context,
-        forced_context=mission.forced_context,
-        launched_at=mission.launched_at,
-        created_at=mission.created_at,
-        squad=squad,
-        progress=_compute_progress(mission),
+        id=mission.id, title=mission.title, platform=mission.platform,
+        narrative_goal=mission.narrative_goal, stance=mission.stance,
+        tactic=mission.tactic, status=mission.status, agent_mode=mission.agent_mode,
+        dynamic_count=mission.dynamic_count, forced_context=mission.forced_context,
+        created_at=mission.created_at, squad=squad, targets=targets,
+        summary=_summary(mission),
     )
 
 
@@ -170,7 +174,6 @@ def list_missions(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:view")),
 ) -> list[MissionResponse]:
-    """List all missions (newest first) with squad and live DAG progress."""
     missions = db.query(Mission).order_by(Mission.id.desc()).all()
     return [_serialize(m, db) for m in missions]
 
@@ -193,27 +196,36 @@ def create_mission(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:create")),
 ) -> MissionResponse:
-    """Create a mission and (optionally) assemble its initial squad."""
-    _validate_tactic(request.tactic)
-    for member in request.squad:
-        _validate_role(member.assigned_role)
+    _validate(request.tactic, VALID_TACTICS, "tactic")
+    _validate(request.agent_mode, ("manual", "dynamic"), "agent_mode")
+    for m in request.squad:
+        _validate(m.assigned_role, VALID_ROLES, "role")
+    for t in request.targets:
+        _validate(t.kind, VALID_KIND, "kind")
 
     mission = Mission(
         title=request.title,
-        target_url=request.target_url,
-        platform=mission_control.infer_platform(request.target_url),
+        platform="telegram",
         narrative_goal=request.narrative_goal,
+        stance=request.stance,
         tactic=request.tactic,
         forced_context=request.forced_context,
-        status="pending",
+        agent_mode=request.agent_mode,
+        dynamic_count=request.dynamic_count,
+        status="active",
     )
-    for member in request.squad:
-        mission.squad.append(MissionSquad(agent_id=member.agent_id, assigned_role=member.assigned_role))
+    for m in request.squad:
+        mission.squad.append(MissionSquad(agent_id=m.agent_id, assigned_role=m.assigned_role, status="active"))
+    for t in request.targets:
+        mission.targets.append(MissionTarget(
+            kind=t.kind, identifier=t.identifier.strip(), title=t.title,
+            status="active", source="operator"))
 
     db.add(mission)
     db.commit()
     db.refresh(mission)
-    logger.info("Mission %s created: '%s' (%d squad members).", mission.id, mission.title, len(mission.squad))
+    logger.info("Mission %s created: '%s' (%d agents, %d targets).",
+                mission.id, mission.title, len(mission.squad), len(mission.targets))
     return _serialize(mission, db)
 
 
@@ -227,22 +239,40 @@ def update_mission(
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    if mission.status not in ("pending", "failed"):
-        raise HTTPException(status_code=409, detail=f"Cannot edit a '{mission.status}' mission.")
-
     if request.tactic is not None:
-        _validate_tactic(request.tactic)
+        _validate(request.tactic, VALID_TACTICS, "tactic")
         mission.tactic = request.tactic
+    if request.agent_mode is not None:
+        _validate(request.agent_mode, ("manual", "dynamic"), "agent_mode")
+        mission.agent_mode = request.agent_mode
     if request.title is not None:
         mission.title = request.title
-    if request.target_url is not None:
-        mission.target_url = request.target_url
-        mission.platform = mission_control.infer_platform(request.target_url)
     if request.narrative_goal is not None:
         mission.narrative_goal = request.narrative_goal
+    if request.stance is not None:
+        mission.stance = request.stance
     if request.forced_context is not None:
         mission.forced_context = request.forced_context
+    if request.dynamic_count is not None:
+        mission.dynamic_count = max(0, min(50, request.dynamic_count))
+    db.commit()
+    db.refresh(mission)
+    return _serialize(mission, db)
 
+
+@router.post("/{mission_id}/status", response_model=MissionResponse)
+def set_status(
+    mission_id: int,
+    request: StatusRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:edit")),
+) -> MissionResponse:
+    """Pause or resume a permanent mission (active ↔ paused)."""
+    _validate(request.status, VALID_STATUS, "status")
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    mission.status = request.status
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
@@ -262,6 +292,72 @@ def delete_mission(
     return {"status": "success", "message": f"Mission {mission_id} deleted."}
 
 
+# ── Targets ──────────────────────────────────────────────────────────────────
+
+@router.post("/{mission_id}/targets", response_model=MissionResponse, status_code=201)
+def add_target(
+    mission_id: int,
+    request: TargetRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:edit")),
+) -> MissionResponse:
+    _validate(request.kind, VALID_KIND, "kind")
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    ident = request.identifier.strip()
+    if any(t.identifier == ident for t in mission.targets):
+        raise HTTPException(status_code=409, detail="Target already in this mission.")
+    db.add(MissionTarget(mission_id=mission_id, kind=request.kind, identifier=ident,
+                         title=request.title, status="active", source="operator"))
+    db.commit()
+    db.refresh(mission)
+    return _serialize(mission, db)
+
+
+@router.post("/{mission_id}/targets/{target_id}/{decision}", response_model=MissionResponse)
+def decide_target(
+    mission_id: int,
+    target_id: int,
+    decision: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:edit")),
+) -> MissionResponse:
+    """Approve or reject an agent-suggested target (decision = approve | reject)."""
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision must be approve | reject")
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    t = db.query(MissionTarget).filter(
+        MissionTarget.id == target_id, MissionTarget.mission_id == mission_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Target not found")
+    t.status = "active" if decision == "approve" else "rejected"
+    db.commit()
+    db.refresh(mission)
+    return _serialize(mission, db)
+
+
+@router.delete("/{mission_id}/targets/{target_id}", response_model=MissionResponse)
+def delete_target(
+    mission_id: int,
+    target_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:edit")),
+) -> MissionResponse:
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    t = db.query(MissionTarget).filter(
+        MissionTarget.id == target_id, MissionTarget.mission_id == mission_id).first()
+    if t:
+        db.delete(t)
+        db.commit()
+    db.refresh(mission)
+    return _serialize(mission, db)
+
+
 # ── Squad management ─────────────────────────────────────────────────────────
 
 @router.post("/{mission_id}/squad", response_model=MissionResponse, status_code=201)
@@ -271,32 +367,20 @@ def add_squad_member(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:edit")),
 ) -> MissionResponse:
-    """Assign an agent to an Alpha/Beta/Gamma slot on a pending mission."""
-    _validate_role(member.assigned_role)
+    _validate(member.assigned_role, VALID_ROLES, "role")
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    if mission.status not in ("pending", "failed"):
-        raise HTTPException(status_code=409, detail=f"Cannot modify squad of a '{mission.status}' mission.")
-
-    exists = (
-        db.query(MissionSquad)
-        .filter(MissionSquad.mission_id == mission_id, MissionSquad.agent_id == member.agent_id)
-        .first()
-    )
+    exists = db.query(MissionSquad).filter(
+        MissionSquad.mission_id == mission_id, MissionSquad.agent_id == member.agent_id).first()
     if exists:
-        raise HTTPException(status_code=409, detail=f"Agent '{member.agent_id}' already enlisted in this mission.")
-
-    # Enforce the per-bot active-mission cap (a bot may serve several missions).
+        raise HTTPException(status_code=409, detail=f"Agent '{member.agent_id}' already enlisted.")
     load = mission_control.agent_active_mission_count(db, member.agent_id, exclude_mission_id=mission_id)
     if load >= mission_control.MAX_MISSIONS_PER_BOT:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Agent '{member.agent_id}' already serves {load} active missions "
-                   f"(cap is {mission_control.MAX_MISSIONS_PER_BOT}).",
-        )
-
-    db.add(MissionSquad(mission_id=mission_id, agent_id=member.agent_id, assigned_role=member.assigned_role))
+        raise HTTPException(status_code=409,
+                            detail=f"Agent '{member.agent_id}' at mission cap ({mission_control.MAX_MISSIONS_PER_BOT}).")
+    db.add(MissionSquad(mission_id=mission_id, agent_id=member.agent_id,
+                        assigned_role=member.assigned_role, status="active"))
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
@@ -312,14 +396,8 @@ def remove_squad_member(
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    if mission.status not in ("pending", "failed"):
-        raise HTTPException(status_code=409, detail=f"Cannot modify squad of a '{mission.status}' mission.")
-
-    member = (
-        db.query(MissionSquad)
-        .filter(MissionSquad.id == squad_id, MissionSquad.mission_id == mission_id)
-        .first()
-    )
+    member = db.query(MissionSquad).filter(
+        MissionSquad.id == squad_id, MissionSquad.mission_id == mission_id).first()
     if not member:
         raise HTTPException(status_code=404, detail="Squad member not found")
     db.delete(member)
@@ -327,8 +405,6 @@ def remove_squad_member(
     db.refresh(mission)
     return _serialize(mission, db)
 
-
-# ── Dynamic squad assignment (Stage 25) ──────────────────────────────────────
 
 class EligibleAgentResponse(BaseModel):
     agent_id: str
@@ -356,20 +432,12 @@ def list_eligible_agents(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:view")),
 ) -> list[EligibleAgentResponse]:
-    """
-    Bots that can serve this mission, ranked by characteristic match.
-
-    Hard requirement: an ACTIVE account on the mission platform. Bots at the
-    per-bot mission cap are returned flagged ``at_capacity``.
-    """
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
     if role is not None:
-        _validate_role(role)
-    candidates = mission_control.eligible_agents_for_mission(
-        db, mission, role=role, include_enlisted=True
-    )
+        _validate(role, VALID_ROLES, "role")
+    candidates = mission_control.eligible_agents_for_mission(db, mission, role=role, include_enlisted=True)
     return [EligibleAgentResponse(**c) for c in candidates]
 
 
@@ -380,76 +448,12 @@ def auto_assign_squad(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:edit")),
 ) -> MissionResponse:
-    """
-    Auto-fill the squad with the best-matching available bots for each role,
-    respecting the per-bot active-mission cap. Idempotent — only the deficit
-    relative to the current squad is filled, so it can be re-run to rebalance.
-    """
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    if mission.status not in ("pending", "failed"):
-        raise HTTPException(status_code=409, detail=f"Cannot modify squad of a '{mission.status}' mission.")
-
     report = mission_control.auto_assign_squad(
-        db, mission, {"alpha": request.alpha, "beta": request.beta, "gamma": request.gamma}
-    )
+        db, mission, {"alpha": request.alpha, "beta": request.beta, "gamma": request.gamma})
     db.refresh(mission)
-    logger.info(
-        "Mission %s auto-assign: %d added, %d skipped (at cap).",
-        mission_id, report["assigned_count"], report["skipped_at_capacity"],
-    )
+    logger.info("Mission %s auto-assign: %d added, %d at cap.",
+                mission_id, report["assigned_count"], report["skipped_at_capacity"])
     return _serialize(mission, db)
-
-
-# ── DAG launch ───────────────────────────────────────────────────────────────
-
-@router.post("/{mission_id}/launch", response_model=MissionResponse)
-def launch_mission(
-    mission_id: int,
-    db: Session = Depends(get_db),
-    _user: AdminUser = Depends(require_permission("campaigns:create")),
-) -> MissionResponse:
-    """
-    Trigger the DAG: dispatch the Alpha wave to Redis and lock downstream
-    waves until Alpha reports SUCCESS (handled by the reconciler).
-    """
-    mission = db.query(Mission).filter(Mission.id == mission_id).first()
-    if not mission:
-        raise HTTPException(status_code=404, detail="Mission not found")
-    try:
-        mission_control.launch_mission(db, mission)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("Mission %s launch failed.", mission_id)
-        raise HTTPException(status_code=502, detail=f"Failed to dispatch mission to Redis: {e}")
-    db.refresh(mission)
-    return _serialize(mission, db)
-
-
-# ── Internal callback (optional fast-path for the DAG reconciler) ───────────
-
-class MissionCallbackRequest(BaseModel):
-    agent_id: str
-    target_url: str
-    status: str
-
-
-@router.post("/internal/callback")
-def mission_internal_callback(
-    request: MissionCallbackRequest,
-    x_internal_token: str = Header(None, alias="X-Internal-Token"),
-    db: Session = Depends(get_db),
-) -> dict[str, str]:
-    """
-    Optional low-latency hook: MYRMIDON (or any executor) may POST a wave
-    verdict here to advance the DAG immediately instead of waiting for the
-    polling reconciler. Idempotent — reconciliation is also done by polling.
-    """
-    import os
-    if x_internal_token != os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key"):
-        raise HTTPException(status_code=403, detail="Invalid internal token")
-
-    mission_control.reconcile_all(db)
-    return {"status": "reconciled"}
