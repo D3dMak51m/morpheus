@@ -187,6 +187,20 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
     )
 
     is_reply = (req.get("mode") == "reply")
+
+    # A paused agent stays silent even for operator-driven missions/replies.
+    prof = persona_engine.get_all_profiles().get(agent_id) or {}
+    if prof.get("status") == "suspended":
+        logger.info("Mission-gen %s — agent %s is suspended; skipping.", request_id, agent_id)
+        if reply_key:
+            try:
+                redis_client.lpush(reply_key, json.dumps(
+                    {"status": "error", "text": "", "reason": "agent_suspended"}, ensure_ascii=False))
+                redis_client.expire(reply_key, 300)
+            except Exception:
+                pass
+        return
+
     emit_event(
         agent_id, "thinking",
         ("сочиняет ответ человеку " + (req.get("author") or "")) if is_reply else "сочиняет комментарий",
@@ -315,7 +329,11 @@ def main() -> None:
 
             # Route to all applicable agents
             for agent_id, profile in persona_engine.get_all_profiles().items():
-                
+
+                # Paused agents do nothing autonomously.
+                if profile.get("status") == "suspended":
+                    continue
+
                 # Check if agent monitors this platform
                 if event.get("source_platform") not in profile.get("platforms", []):
                     continue

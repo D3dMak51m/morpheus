@@ -95,9 +95,29 @@ def generate_reply_via_orpheus(payload: dict) -> str:
         return ""
 
 
+def _agent_paused(db_session_factory, agent_id: str) -> bool:
+    """True if the agent's profile is suspended → skip all autonomous dialogue."""
+    from sqlalchemy import text
+    session = db_session_factory()
+    try:
+        row = session.execute(
+            text("SELECT status FROM agent_profiles WHERE agent_id = :aid LIMIT 1"),
+            {"aid": agent_id},
+        ).fetchone()
+        return bool(row and row[0] == "suspended")
+    except Exception:
+        return False
+    finally:
+        session.close()
+
+
 def _process_agent(agent_id: str, watches: list, db_session_factory) -> None:
     from app.main import get_agent_credentials  # late import to avoid a cycle
     from app.drivers.tg_client import TelegramDriver
+
+    # Paused agent: keep its watches but don't poll/answer until resumed.
+    if _agent_paused(db_session_factory, agent_id):
+        return
 
     credentials = get_agent_credentials(db_session_factory, agent_id, "telegram")
     if credentials is None:
@@ -106,8 +126,10 @@ def _process_agent(agent_id: str, watches: list, db_session_factory) -> None:
             dialogue_store.remove_watch(w["watch_id"])
         return
 
+    # Idle heartbeat (status=info, not "active") so the rail shows "ожидает" rather
+    # than a constant green "работает" pulse; the UI collapses repeats into one row.
     emit_event(agent_id, "poll", f"проверяет {len(watches)} диалог(ов) на новые ответы",
-               status="active", target="telegram")
+               status="info", target="telegram")
     driver = TelegramDriver(agent_id, credentials)
     results = driver.run_dialogue_cycle(watches, generate_reply_via_orpheus, DIALOGUE_MAX_DEPTH)
 

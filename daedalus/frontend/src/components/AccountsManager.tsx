@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Users, History, Link, Unlink } from 'lucide-react';
+import { Users, History, Link, Unlink, Radio } from 'lucide-react';
 import './AccountsManager.css';
+import ChannelManager from './ChannelManager';
 
 interface Account {
   id: number;
@@ -30,6 +31,7 @@ export default function AccountsManager({ token }: { token: string | null }) {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [bindAgentId, setBindAgentId] = useState('');
+  const [channelAgent, setChannelAgent] = useState<{ agentId: string; label: string } | null>(null);
 
   const fetchAccounts = async () => {
     if (!token) return;
@@ -171,9 +173,19 @@ export default function AccountsManager({ token }: { token: string | null }) {
                 {selectedAccount.agent_id ? (
                   <div className="assigned-view">
                     <p>Bound to soul <strong>{selectedAccount.agent_id}</strong></p>
-                    <button onClick={() => handleUnbind(selectedAccount.id)} className="btn-danger">
-                      <Unlink size={16} /> Unbind Soul
-                    </button>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button onClick={() => handleUnbind(selectedAccount.id)} className="btn-danger">
+                        <Unlink size={16} /> Unbind Soul
+                      </button>
+                      {selectedAccount.platform === 'telegram' && (
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setChannelAgent({ agentId: selectedAccount.agent_id!, label: selectedAccount.username })}
+                        >
+                          <Radio size={16} /> Каналы аккаунта
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="assign-form">
@@ -209,6 +221,10 @@ export default function AccountsManager({ token }: { token: string | null }) {
           </div>
         )}
       </div>
+
+      {channelAgent && token && (
+        <ChannelManager token={token} agentId={channelAgent.agentId} label={channelAgent.label} onClose={() => setChannelAgent(null)} />
+      )}
     </div>
   );
 }

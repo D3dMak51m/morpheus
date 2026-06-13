@@ -8,6 +8,7 @@ ORPHEUS fetches profiles from /api/v1/internal/profiles instead of YAML.
 import os
 from typing import Any, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
@@ -15,13 +16,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory,
-    LANDSCAPE_LAYERS, bind_account_to_soul, unbind_account,
+    AgentChannelPref, LANDSCAPE_LAYERS, bind_account_to_soul, unbind_account,
 )
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/souls", tags=["Agent Souls"])
 
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
+MYRMIDON_DEVICE_URL = os.getenv("MYRMIDON_DEVICE_URL", "http://myrmidon:8003")
 
 
 # ── Strict Persona Sub-Schemas (Visual Persona Builder, Stage 16) ─────────
@@ -234,6 +236,124 @@ def update_profile(
     db.refresh(profile)
     return ProfileResponse.model_validate(profile)
 
+class ProfileStatusRequest(BaseModel):
+    status: str  # "active" | "suspended"
+
+
+@router.post("/profiles/{agent_id}/status", response_model=ProfileResponse)
+def set_profile_status(
+    agent_id: str,
+    request: ProfileStatusRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> ProfileResponse:
+    """
+    Pause or resume an agent. ``suspended`` halts all autonomous behaviour
+    (dialogue polling, news fan-out, mission generation); ``active`` resumes it.
+    Lightweight on purpose — does not snapshot profile history like a full edit.
+    """
+    valid = {"active", "suspended"}
+    if request.status not in valid:
+        raise HTTPException(status_code=400, detail=f"status must be one of {sorted(valid)}")
+    profile = db.query(AgentProfile).filter(AgentProfile.agent_id == agent_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile for agent '{agent_id}' not found.")
+    profile.status = request.status
+    db.commit()
+    db.refresh(profile)
+    return ProfileResponse.model_validate(profile)
+
+
+VALID_CHANNEL_ROLES = {"target", "news", "ignored"}
+
+
+class ChannelPrefRequest(BaseModel):
+    role: Optional[str] = None
+    watching: Optional[bool] = None
+
+
+@router.get("/agents/{agent_id}/channels")
+def list_agent_channels(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> dict[str, Any]:
+    """
+    The agent's universe of Telegram channels: live-enumerated from its account's
+    subscriptions (via MYRMIDON) and merged with the operator's saved
+    classification (role + watching). New channels default to target/watching.
+    """
+    live: list[dict] = []
+    error = None
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.get(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{agent_id}/channels",
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            live = resp.json().get("channels", [])
+    except Exception as e:
+        error = str(e)
+
+    prefs = {
+        p.chat_id: p
+        for p in db.query(AgentChannelPref).filter(AgentChannelPref.agent_id == agent_id).all()
+    }
+
+    merged = []
+    for ch in live:
+        cid = str(ch.get("chat_id"))
+        pref = prefs.get(cid)
+        merged.append({
+            **ch,
+            "role": pref.role if pref else "target",
+            "watching": pref.watching if pref else True,
+        })
+
+    # Stored channels the account no longer surfaces (left/limited) — keep visible.
+    seen = {str(c.get("chat_id")) for c in live}
+    for cid, p in prefs.items():
+        if cid not in seen:
+            merged.append({
+                "chat_id": cid, "title": p.title, "username": p.username,
+                "type": "channel", "members": None, "unread": None,
+                "role": p.role, "watching": p.watching, "stale": True,
+            })
+
+    counts = {r: sum(1 for m in merged if m["role"] == r) for r in VALID_CHANNEL_ROLES}
+    return {"agent_id": agent_id, "channels": merged, "total": len(merged),
+            "counts": counts, "error": error}
+
+
+@router.post("/agents/{agent_id}/channels/{chat_id}")
+def set_agent_channel(
+    agent_id: str,
+    chat_id: str,
+    request: ChannelPrefRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """Upsert the operator's classification (role / watching) for one channel."""
+    if request.role is not None and request.role not in VALID_CHANNEL_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of {sorted(VALID_CHANNEL_ROLES)}")
+
+    pref = db.query(AgentChannelPref).filter(
+        AgentChannelPref.agent_id == agent_id, AgentChannelPref.chat_id == chat_id,
+    ).first()
+    if pref is None:
+        pref = AgentChannelPref(agent_id=agent_id, chat_id=chat_id)
+        db.add(pref)
+    # Optional title/username passthrough so a stale row keeps a label.
+    if request.role is not None:
+        pref.role = request.role
+    if request.watching is not None:
+        pref.watching = request.watching
+    db.commit()
+    db.refresh(pref)
+    return {"agent_id": agent_id, "chat_id": chat_id, "role": pref.role, "watching": pref.watching}
+
+
 @router.post("/profiles/{agent_id}/rollback/{history_id}")
 def rollback_profile(
     agent_id: str,
@@ -321,6 +441,7 @@ def internal_list_profiles(
             "agent_id": p.agent_id,
             "codename": p.codename,
             "caste": p.caste,
+            "status": p.status,
             "name": p.full_name,
             "identity": {
                 "full_name": p.full_name,

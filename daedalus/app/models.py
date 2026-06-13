@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -555,6 +556,35 @@ class SocialPostTarget(Base):
 
     def __repr__(self) -> str:
         return f"<SocialPostTarget(id={self.id}, platform='{self.platform}', author='{self.author}')>"
+
+
+class AgentChannelPref(Base):
+    """
+    Per-agent classification of a Telegram channel the bound account is subscribed
+    to. The account's subscriptions are the agent's universe of channels; this row
+    records how the operator wants each one treated:
+      role     — 'target' (engage there) | 'news' (gather from it) | 'ignored'
+      watching — whether the swarm should currently monitor/act on it
+    Enumerated live from the session; only the operator's choices are persisted.
+    """
+    __tablename__ = "agent_channel_prefs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    chat_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    role: Mapped[str] = mapped_column(String(20), default="target", nullable=False)
+    watching: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (UniqueConstraint("agent_id", "chat_id", name="uq_agent_channel"),)
+
+    def __repr__(self) -> str:
+        return f"<AgentChannelPref(agent='{self.agent_id}', chat='{self.chat_id}', role='{self.role}')>"
 
 
 # ── Stage 23 — Identity binding (decoupled accounts ⇄ souls) ───────────────

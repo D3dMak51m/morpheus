@@ -50,6 +50,39 @@ def ping(x_internal_token: str = Header(None, alias="X-Internal-Token")) -> Dict
     return {"status": "ok"}
 
 
+_session_factory = None
+
+
+def _get_session_factory():
+    global _session_factory
+    if _session_factory is None:
+        from app.main import connect_postgres
+        _session_factory = connect_postgres()
+    return _session_factory
+
+
+@app.get("/api/v1/telegram/{agent_id}/channels")
+def telegram_channels(
+    agent_id: str,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Live-enumerate the channels/groups the agent's Telegram account is subscribed
+    to (its universe of targets / news sources). Opens the Pyrogram session under
+    the per-agent lock; sync endpoint → FastAPI runs it in a threadpool.
+    """
+    _verify_token(x_internal_token)
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+
+    creds = get_agent_credentials(_get_session_factory(), agent_id, "telegram")
+    if creds is None:
+        raise HTTPException(status_code=404, detail="No active Telegram account for this agent.")
+    driver = TelegramDriver(agent_id, creds)
+    channels = driver.list_channels()
+    return {"agent_id": agent_id, "channels": channels, "total": len(channels)}
+
+
 @app.get("/api/v1/devices")
 def list_devices(
     x_internal_token: str = Header(None, alias="X-Internal-Token"),

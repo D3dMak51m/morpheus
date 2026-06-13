@@ -117,7 +117,19 @@ const LiveOps: React.FC<LiveOpsProps> = ({ token }) => {
     return () => clearInterval(iv);
   }, [poll]);
 
-  const shown = selected ? events.filter(e => e.agent_id === selected) : events;
+  const filtered = selected ? events.filter(e => e.agent_id === selected) : events;
+  // Collapse consecutive identical events (e.g. the idle poll heartbeat) into one
+  // row with a ×N counter, so quiet periods don't flood the feed.
+  type Group = AgentEvent & { count: number };
+  const shown: Group[] = [];
+  for (const e of filtered) {
+    const last = shown[shown.length - 1];
+    if (last && last.agent_id === e.agent_id && last.event === e.event && last.detail === e.detail) {
+      last.count += 1;
+    } else {
+      shown.push({ ...e, count: 1 });
+    }
+  }
   const sortedAgents = [...agents].sort((a, b) => {
     const order = { working: 0, idle: 1, asleep: 2 } as const;
     return order[liveness(a)] - order[liveness(b)] || a.agent_id.localeCompare(b.agent_id);
@@ -194,6 +206,7 @@ const LiveOps: React.FC<LiveOpsProps> = ({ token }) => {
                     {e.agent_id}
                   </span>
                   <span className="lo-detail">{e.detail || meta.label}</span>
+                  {e.count > 1 && <span className="lo-count">×{e.count}</span>}
                   {e.target && <span className="lo-target" title={e.target}>{e.target}</span>}
                 </div>
               );

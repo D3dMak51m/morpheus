@@ -413,6 +413,45 @@ class TelegramDriver:
         logger.warning("TelegramDriver [%s]: proceeding without session lock (held elsewhere).", self.agent_id)
         return None
 
+    # ── Channel enumeration (the agent's subscribed channels = its targets) ─
+
+    def list_channels(self) -> List[dict]:
+        """
+        List the channels/groups this account is subscribed to — the agent's whole
+        universe of potential targets / news sources. Acquires the session lock so
+        it never collides with the poller or a mission.
+        """
+        if not self._credentials_ok():
+            return []
+        token = self._await_session_lock()
+        loop = self._ensure_loop()
+        try:
+            return loop.run_until_complete(self._list_channels_async())
+        except Exception as e:
+            logger.error("TelegramDriver [%s]: list_channels failed: %s", self.agent_id, e)
+            return []
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
+    async def _list_channels_async(self) -> List[dict]:
+        app = self._build_client()
+        out: List[dict] = []
+        async with app:
+            async for d in app.get_dialogs():
+                chat = d.chat
+                tname = getattr(chat.type, "name", "") or ""
+                if tname not in ("CHANNEL", "SUPERGROUP", "GROUP"):
+                    continue
+                out.append({
+                    "chat_id": str(chat.id),
+                    "title": chat.title or getattr(chat, "first_name", "") or "",
+                    "username": chat.username,
+                    "type": tname.lower(),
+                    "members": getattr(chat, "members_count", None),
+                    "unread": getattr(d, "unread_messages_count", None),
+                })
+        return out
+
     # ── Autonomous dialogue cycle (polled by dialogue_engine) ──────────────
 
     def run_dialogue_cycle(self, watches: List[dict], generate_reply: Callable[[dict], str],
