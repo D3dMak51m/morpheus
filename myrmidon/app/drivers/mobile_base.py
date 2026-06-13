@@ -10,6 +10,7 @@ Key features:
   - Hardware-based typo injection engine with exact 0.35s recovery windows.
 """
 
+import json
 import logging
 import random
 import time
@@ -288,6 +289,103 @@ class BaseMobileDriver:
         finally:
             self.close_session()
             log.append("[OK] Appium session closed.")
+
+    # ── Autonomous Session-State Extraction (Stage 23) ────────────────────
+
+    def extract_session_state(self, package_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Autonomously dump the live session of the foregrounded app so DAEDALUS
+        can persist real credentials without any manual cookie entry.
+
+        Strategy:
+          • WEB / HYBRID apps — switch into the WEBVIEW context and pull cookies
+            (`get_cookies`) plus the full `window.localStorage` snapshot.
+          • NATIVE apps — read the `shared_prefs/*.xml` files from
+            `/data/data/<package>/shared_prefs/` over a rooted ADB shell
+            (via Appium `mobile: shell`).
+
+        Returns a structured payload; every section is best-effort so a partial
+        failure still yields whatever could be captured.
+        """
+        if not self.driver:
+            self.start_session()
+
+        result: Dict[str, Any] = {
+            "type": "unknown",
+            "package": package_name,
+            "cookies": {},
+            "local_storage": {},
+            "shared_prefs": {},
+            "errors": [],
+        }
+
+        # 1. WEB / HYBRID — capture cookies + localStorage from any webview.
+        try:
+            contexts = list(self.driver.contexts or [])
+            webviews = [c for c in contexts if "WEBVIEW" in c.upper() or "CHROMIUM" in c.upper()]
+            logger.info("extract_session_state: contexts=%s", contexts)
+            if webviews:
+                self.driver.switch_to.context(webviews[0])
+                try:
+                    raw_cookies = self.driver.get_cookies() or []
+                    result["cookies"] = {c.get("name"): c.get("value") for c in raw_cookies if c.get("name")}
+                except Exception as e:
+                    result["errors"].append(f"cookies: {e}")
+                try:
+                    ls_json = self.driver.execute_script(
+                        "var o={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);"
+                        "o[k]=localStorage.getItem(k);}return JSON.stringify(o);"
+                    )
+                    result["local_storage"] = json.loads(ls_json) if ls_json else {}
+                except Exception as e:
+                    result["errors"].append(f"local_storage: {e}")
+                finally:
+                    try:
+                        self.driver.switch_to.context("NATIVE_APP")
+                    except Exception:
+                        pass
+                result["type"] = "web"
+        except Exception as e:
+            result["errors"].append(f"webview: {e}")
+
+        # 2. NATIVE — dump shared_prefs XML over a rooted ADB shell.
+        if package_name:
+            try:
+                shell_cmd = (
+                    f"for f in /data/data/{package_name}/shared_prefs/*.xml; do "
+                    f"echo \"===FILE:$f===\"; cat \"$f\"; done"
+                )
+                dump = self.driver.execute_script(
+                    "mobile: shell", {"command": "su", "args": ["-c", shell_cmd]}
+                )
+                prefs = self._parse_shared_prefs_dump(dump if isinstance(dump, str) else str(dump))
+                if prefs:
+                    result["shared_prefs"] = prefs
+                    result["type"] = "hybrid" if result["type"] == "web" else "native"
+            except Exception as e:
+                result["errors"].append(f"shared_prefs: {e}")
+
+        return result
+
+    @staticmethod
+    def _parse_shared_prefs_dump(dump: str) -> Dict[str, str]:
+        """Split a multi-file `cat` dump into {filename: xml_content}."""
+        prefs: Dict[str, str] = {}
+        if not dump:
+            return prefs
+        current_file = None
+        buffer: list[str] = []
+        for line in dump.splitlines():
+            if line.startswith("===FILE:") and line.endswith("==="):
+                if current_file is not None:
+                    prefs[current_file] = "\n".join(buffer).strip()
+                current_file = line[len("===FILE:"):-3].strip().split("/")[-1]
+                buffer = []
+            elif current_file is not None:
+                buffer.append(line)
+        if current_file is not None:
+            prefs[current_file] = "\n".join(buffer).strip()
+        return prefs
 
     def execute_comment(self, target_url: str, text: str) -> bool:
         """To be implemented by specific platform drivers."""

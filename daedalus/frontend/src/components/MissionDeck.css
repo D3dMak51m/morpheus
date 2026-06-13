@@ -265,3 +265,192 @@
   align-items: center;
   gap: 6px;
 }
+
+/* ── Generic secondary button + hint ── */
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 8px 12px;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+}
+.btn-secondary:hover { background: rgba(255, 255, 255, 0.12); }
+.md-hint { color: #94a3b8; font-weight: 400; font-size: 0.85em; }
+
+/* ── Clickable mission cards ── */
+.md-mission-card-clickable { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+.md-mission-card-clickable:hover { border-color: rgba(255, 255, 255, 0.28); transform: translateY(-2px); }
+
+/* ── Mission detail modal ── */
+.md-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 100;
+  padding: 40px 16px;
+  overflow-y: auto;
+  backdrop-filter: blur(2px);
+}
+
+.md-modal {
+  background: var(--bg-card, #161a23);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  width: min(820px, 100%);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 80px);
+}
+
+.md-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.md-modal-head h2 { margin: 0; }
+.md-modal-head-right { display: flex; align-items: center; gap: 10px; }
+
+.md-modal-body {
+  padding: 18px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.md-section h4 {
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.92em;
+  color: #cbd5e1;
+}
+
+.md-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 10px 0;
+}
+.md-metric {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 10px 12px;
+  border-left: 3px solid #475569;
+}
+.md-metric.role-alpha { border-left-color: #ef4444; }
+.md-metric.role-beta { border-left-color: #3b82f6; }
+.md-metric.role-gamma { border-left-color: #a855f7; }
+.md-metric-title { display: flex; align-items: center; gap: 5px; font-size: 0.78em; color: #94a3b8; }
+.md-metric-nums { display: flex; gap: 8px; margin-top: 6px; font-size: 0.95em; }
+.md-metric-total { color: #94a3b8; }
+
+.md-meta-row { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.78em; color: #94a3b8; margin-top: 6px; }
+.md-meta-row span { display: inline-flex; align-items: center; gap: 5px; }
+.md-alpha-context { font-size: 0.82em; color: #cbd5e1; margin-top: 8px; }
+
+.md-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.md-field-wide { grid-column: 1 / -1; }
+.md-field input:disabled, .md-field textarea:disabled, .md-field select:disabled {
+  opacity: 0.65; cursor: not-allowed;
+}
+.md-section .btn-primary { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; }
+
+/* ── Squad list ── */
+.md-squad-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.md-squad-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 7px 10px;
+  border-left: 3px solid #475569;
+  font-size: 0.86em;
+}
+.md-squad-row.role-alpha { border-left-color: #ef4444; }
+.md-squad-row.role-beta { border-left-color: #3b82f6; }
+.md-squad-row.role-gamma { border-left-color: #a855f7; }
+.md-squad-role { text-transform: uppercase; font-size: 0.72em; color: #94a3b8; width: 48px; }
+.md-squad-name { font-weight: 600; flex: 1; }
+.md-squad-status { font-size: 0.78em; color: #94a3b8; }
+.md-squad-row.status-success .md-squad-status { color: #4ade80; }
+.md-squad-row.status-failed .md-squad-status { color: #f87171; }
+.md-squad-row.status-dispatched .md-squad-status { color: #93c5fd; }
+
+/* ── Auto-assign + eligible ── */
+.md-assign-box {
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.md-assign-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.md-assign-row > span { font-size: 0.85em; }
+.md-count-input { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8em; color: #94a3b8; }
+.md-count-input input { width: 48px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 5px; color: inherit; }
+.md-assign-row .btn-primary { display: inline-flex; align-items: center; gap: 5px; }
+
+.md-eligible-title { font-size: 0.78em; color: #94a3b8; margin: 0 0 8px; }
+.md-eligible-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 0.82em;
+}
+.md-eligible-row:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
+.md-eligible-row.at-cap { opacity: 0.55; }
+.md-elig-name { font-weight: 600; flex: 1; }
+.md-elig-caste { font-size: 0.72em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.08); }
+.md-elig-caste.role-alpha { color: #fca5a5; }
+.md-elig-caste.role-beta { color: #93c5fd; }
+.md-elig-caste.role-gamma { color: #d8b4fe; }
+.md-elig-score { color: #4ade80; font-size: 0.78em; }
+.md-elig-load { color: #94a3b8; font-size: 0.78em; }
+.md-elig-tag { font-size: 0.72em; color: #94a3b8; font-style: italic; }
+.md-elig-tag.cap { color: #fbbf24; }
+.md-elig-add { display: flex; gap: 4px; }
+.md-elig-add-btn {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 3px 7px;
+  cursor: pointer;
+  color: inherit;
+  font-size: 0.78em;
+  font-weight: 700;
+}
+.md-elig-add-btn.role-alpha:hover { background: #ef4444; }
+.md-elig-add-btn.role-beta:hover { background: #3b82f6; }
+.md-elig-add-btn.role-gamma:hover { background: #a855f7; }
+
+/* ── Modal footer ── */
+.md-modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.md-modal-foot .btn-primary { display: inline-flex; align-items: center; gap: 6px; }
+.md-foot-spacer { flex: 1; }
+.md-cap-note { font-size: 0.76em; }

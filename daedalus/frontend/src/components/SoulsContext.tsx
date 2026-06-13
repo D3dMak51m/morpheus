@@ -16,12 +16,22 @@ interface BehavioralRules {
   max_posts_per_hour: number;
 }
 
+interface Account {
+  id: number;
+  agent_id: string | null;
+  platform: string;
+  username: string;
+  status: string;
+  device_id: string | null;
+}
+
 interface Profile {
   id: number;
   agent_id: string;
   codename: string;
   full_name: string;
   caste: string;
+  status: string;
   profession: string | null;
   residence_city: string | null;
   platforms: string[];
@@ -70,8 +80,12 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'identity' | 'psychology' | 'mission' | 'history'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'psychology' | 'mission' | 'binding' | 'history'>('identity');
   const [historyLogs, setHistoryLogs] = useState<any[]>([]);
+
+  // Stage 23 — decoupled account binding.
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [bindAccountId, setBindAccountId] = useState('');
 
   // Stance modifiers are edited as visual topic/stance pairs, compiled to a dict on save.
   const [stancePairs, setStancePairs] = useState<StancePair[]>([]);
@@ -92,6 +106,10 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       setSaveError('');
       if (activeTab === 'history') {
         fetchHistory(selectedProfile.agent_id);
+      }
+      if (activeTab === 'binding') {
+        fetchAccounts();
+        setBindAccountId('');
       }
     }
   }, [selectedProfile?.agent_id, activeTab]);
@@ -135,6 +153,35 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       setProfiles([]);
     }
     setLoading(false);
+  };
+
+  const fetchAccounts = async () => {
+    try {
+      const res = await fetch('/api/v1/souls/accounts', { headers });
+      if (res.ok) setAccounts(await res.json());
+    } catch (e) {
+      console.error('Failed to fetch accounts', e);
+    }
+  };
+
+  const handleBindAccount = async (accountId: number, agentId: string) => {
+    try {
+      const res = await fetch(`/api/v1/souls/accounts/${accountId}/bind?agent_id=${encodeURIComponent(agentId)}`, {
+        method: 'PUT', headers,
+      });
+      if (res.ok) { await fetchAccounts(); fetchProfiles(); setBindAccountId(''); }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUnbindAccount = async (accountId: number) => {
+    try {
+      const res = await fetch(`/api/v1/souls/accounts/${accountId}/unbind`, { method: 'PUT', headers });
+      if (res.ok) { await fetchAccounts(); fetchProfiles(); }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const openProfile = (p: Profile) => {
@@ -286,7 +333,10 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       <div className="grid">
         {loading ? <p>Loading profiles...</p> : profiles.map(p => (
           <div key={p.agent_id} className="card" onClick={() => openProfile(p)}>
-            <h3>{p.full_name} <span className={`badge caste-${p.caste}`}>{p.caste}</span></h3>
+            <h3>
+              {p.full_name} <span className={`badge caste-${p.caste}`}>{p.caste}</span>
+              <span className={`status-badge ${p.status}`} style={{ marginLeft: 6 }}>{p.status}</span>
+            </h3>
             <p className="text-muted">{p.agent_id} / {p.codename}</p>
             <div className="platforms">
               {(p.platforms || []).map(pl => <span key={pl} className="tag">{pl}</span>)}
@@ -304,6 +354,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                 <button className={`tab-btn ${activeTab === 'identity' ? 'active' : ''}`} onClick={() => setActiveTab('identity')}>Identity</button>
                 <button className={`tab-btn ${activeTab === 'psychology' ? 'active' : ''}`} onClick={() => setActiveTab('psychology')}>Psychology & Style</button>
                 <button className={`tab-btn ${activeTab === 'mission' ? 'active' : ''}`} onClick={() => setActiveTab('mission')}>Mission & Stance</button>
+                <button className={`tab-btn ${activeTab === 'binding' ? 'active' : ''}`} onClick={() => setActiveTab('binding')}>Bound Accounts</button>
                 <button className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>History & Rollback</button>
               </div>
             </div>
@@ -466,6 +517,47 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                         <button className="btn-icon text-danger" onClick={() => removeStance(i)}>✕</button>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'binding' && (
+                <div className="form-grid">
+                  <div className="form-group full-width section">
+                    <h3>Bound Accounts (Access Keys / Hardware)</h3>
+                    <p className="help-text">Souls (psychology) and accounts (access) are decoupled. Bind floating accounts to this soul, or unbind them back to the pool.</p>
+
+                    <div className="history-list mt-3">
+                      {accounts.filter(a => a.agent_id === selectedProfile.agent_id).length === 0 ? (
+                        <p className="text-muted">No accounts bound to this soul.</p>
+                      ) : (
+                        accounts.filter(a => a.agent_id === selectedProfile.agent_id).map(a => (
+                          <div key={a.id} className="array-row" style={{ alignItems: 'center' }}>
+                            <span><span className="tag">{a.platform}</span> {a.username} <span className={`status-badge ${a.status}`}>{a.status}</span></span>
+                            <button className="btn-secondary" onClick={() => handleUnbindAccount(a.id)}>Unbind</button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="row-flex mt-3" style={{ alignItems: 'flex-end' }}>
+                      <div style={{ flex: 1 }}>
+                        <label>Bind a floating account</label>
+                        <select value={bindAccountId} onChange={e => setBindAccountId(e.target.value)}>
+                          <option value="">Select an unbound account…</option>
+                          {accounts.filter(a => !a.agent_id).map(a => (
+                            <option key={a.id} value={a.id}>{a.platform} · {a.username} ({a.status})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        className="btn-primary"
+                        disabled={!bindAccountId}
+                        onClick={() => handleBindAccount(parseInt(bindAccountId), selectedProfile.agent_id)}
+                      >
+                        Bind to this Soul
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

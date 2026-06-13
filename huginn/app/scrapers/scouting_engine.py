@@ -36,6 +36,23 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key
 VELOCITY_THRESHOLD = float(os.getenv("VELOCITY_THRESHOLD", "300"))
 SCOUTING_POLL_SEC = int(os.getenv("SCOUTING_POLL_SEC", "180"))
 
+# Telegram channel virality is measured in views/forwards/reactions, not
+# likes+comments, so it warrants a far lower floor than the social-API platforms.
+TG_VELOCITY_THRESHOLD = float(os.getenv("TG_VELOCITY_THRESHOLD", "1"))
+TG_SCOUT_DIALOG_LIMIT = int(os.getenv("TG_SCOUT_DIALOG_LIMIT", "30"))
+TG_SCOUT_POSTS_PER_CHANNEL = int(os.getenv("TG_SCOUT_POSTS_PER_CHANNEL", "15"))
+# Cap targets surfaced per cycle so the radar shows the hottest, not every post.
+TG_SCOUT_MAX_TARGETS = int(os.getenv("TG_SCOUT_MAX_TARGETS", "40"))
+
+# Per-platform viral floor (falls back to VELOCITY_THRESHOLD when unset).
+PLATFORM_VELOCITY_THRESHOLD: Dict[str, float] = {
+    "telegram": TG_VELOCITY_THRESHOLD,
+}
+
+# Telegram MTProto credentials (shared with the Auth Factory / mission driver).
+TG_API_ID = int(os.getenv("TG_API_ID", "0") or 0)
+TG_API_HASH = os.getenv("TG_API_HASH", "")
+
 # Public web bearer used by x.com's own client for authenticated GraphQL/v1.1 reads.
 X_PUBLIC_BEARER = (
     "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D"
@@ -239,10 +256,95 @@ def _parse_twitter_time(created_at: Optional[str]) -> Optional[int]:
         return None
 
 
+# ── Telegram (authenticated MTProto via the agent's own session) ──────────
+
+async def scout_telegram(session: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Scout the channels/supergroups the agent's Telegram account is subscribed to.
+
+    Uses the account's Pyrogram session string (same one MYRMIDON executes with)
+    to read recent posts and rank them by engagement velocity. This is what lets
+    the operator's *registered Telegram account* light up the Scouting Radar.
+
+    Concurrency note: this opens the account's session briefly. Mission execution
+    (MYRMIDON) uses the same session, so the engine keeps the connection
+    short-lived and fully fail-soft to avoid clashing with an in-flight mission.
+    """
+    if not TG_API_ID or not TG_API_HASH:
+        logger.warning("Telegram scouting skipped — TG_API_ID/TG_API_HASH not configured.")
+        return []
+
+    cookies = session.get("auth_cookies") or {}
+    session_string = cookies.get("session_string") if isinstance(cookies, dict) else cookies
+    if not session_string:
+        logger.warning("Telegram session for %s has no session_string — skipping.", session.get("username"))
+        return []
+
+    try:
+        from pyrogram import Client
+        from pyrogram.enums import ChatType
+    except Exception as exc:  # pragma: no cover - import guard
+        logger.error("Pyrogram unavailable in HUGINN — cannot scout Telegram: %s", exc)
+        return []
+
+    label = session.get("agent_id") or session.get("username") or "tg"
+    discoveries: List[Dict[str, Any]] = []
+    app = Client(
+        f"scout_{label}",
+        api_id=TG_API_ID,
+        api_hash=TG_API_HASH,
+        session_string=session_string,
+        in_memory=True,
+    )
+    try:
+        async with app:
+            async for dialog in app.get_dialogs(limit=TG_SCOUT_DIALOG_LIMIT):
+                chat = dialog.chat
+                if chat.type not in (ChatType.CHANNEL, ChatType.SUPERGROUP):
+                    continue
+                try:
+                    async for msg in app.get_chat_history(chat.id, limit=TG_SCOUT_POSTS_PER_CHANNEL):
+                        text = (msg.text or msg.caption or "").strip()
+                        if not text:
+                            continue
+                        views = int(getattr(msg, "views", 0) or 0)
+                        forwards = int(getattr(msg, "forwards", 0) or 0)
+                        reactions = 0
+                        if getattr(msg, "reactions", None) and msg.reactions.reactions:
+                            reactions = sum(int(r.count or 0) for r in msg.reactions.reactions)
+                        # Forwards and reactions are stronger virality signals than
+                        # passive views, so they are weighted higher.
+                        engagement = views + forwards * 5 + reactions * 3
+                        if engagement <= 0:
+                            continue
+                        if chat.username:
+                            url = f"https://t.me/{chat.username}/{msg.id}"
+                        else:
+                            internal = str(chat.id).replace("-100", "", 1).lstrip("-")
+                            url = f"https://t.me/c/{internal}/{msg.id}"
+                        discoveries.append({
+                            "platform": "telegram",
+                            "url": url,
+                            "author_name": chat.title or chat.username or str(chat.id),
+                            "content_summary": text[:500],
+                            "engagement": engagement,
+                            "posted_at": int(msg.date.timestamp()) if msg.date else None,
+                        })
+                except Exception as exc:
+                    logger.warning("Telegram scouting: failed to read %s: %s", chat.title or chat.id, exc)
+    except Exception as exc:
+        logger.error("Telegram scouting error for %s: %s", session.get("username"), exc)
+
+    # Surface only the hottest posts this cycle (the radar ranks by velocity too).
+    discoveries.sort(key=lambda d: d["engagement"], reverse=True)
+    return discoveries[:TG_SCOUT_MAX_TARGETS]
+
+
 PLATFORM_SCOUTS = {
     "instagram": scout_instagram,
     "twitter": scout_x,
     "x": scout_x,
+    "telegram": scout_telegram,
 }
 
 
@@ -273,10 +375,11 @@ async def run_scouting_engine() -> None:
                     if not scout:
                         continue
 
+                    threshold = PLATFORM_VELOCITY_THRESHOLD.get(platform, VELOCITY_THRESHOLD)
                     discoveries = await scout(session)
                     for d in discoveries:
                         velocity = compute_velocity(d["engagement"], d.get("posted_at"))
-                        if velocity < VELOCITY_THRESHOLD:
+                        if velocity < threshold:
                             continue
                         d["velocity_score"] = velocity
                         await _push_hot_target(daedalus, d)

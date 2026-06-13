@@ -7,6 +7,7 @@ import NewsHubInspector from './components/NewsHubInspector';
 import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
 import ActivityStream from './components/ActivityStream';
+import LiveOps from './components/LiveOps';
 import { AuthFactory } from './components/AuthFactory';
 import { SoulGenesisView } from './components/SoulGenesisView';
 import AccountsManager from './components/AccountsManager';
@@ -14,11 +15,12 @@ import SandboxConsole from './components/SandboxConsole';
 import MissionDeck from './components/MissionDeck';
 import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
 import MuninnExplorer from './components/MuninnExplorer';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain } from 'lucide-react';
+import CloneFactory from './components/CloneFactory';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'accounts' | 'souls' | 'genesis' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'live' | 'accounts' | 'souls' | 'genesis' | 'factory' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
   const [missionPrefill, setMissionPrefill] = useState<MissionPrefill | null>(null);
 
@@ -55,7 +57,13 @@ function App() {
           >
             <LayoutDashboard size={18} /> Dashboard
           </button>
-          
+          <button
+            className={`nav-item ${activeView === 'live' ? 'active' : ''}`}
+            onClick={() => setActiveView('live')}
+          >
+            <Activity size={18} /> Live Ops
+          </button>
+
           <div className="sidebar-group-label">PERSONAS</div>
           <button
             className={`nav-item ${activeView === 'accounts' ? 'active' : ''}`}
@@ -74,6 +82,12 @@ function App() {
             onClick={() => setActiveView('genesis')}
           >
             <Dna size={18} /> Soul Genesis
+          </button>
+          <button
+            className={`nav-item ${activeView === 'factory' ? 'active' : ''}`}
+            onClick={() => setActiveView('factory')}
+          >
+            <Factory size={18} /> Clone Factory
           </button>
           <button
             className={`nav-item ${activeView === 'auth' ? 'active' : ''}`}
@@ -131,7 +145,7 @@ function App() {
             className={`nav-item ${activeView === 'activity' ? 'active' : ''}`}
             onClick={() => setActiveView('activity')}
           >
-            <Activity size={18} /> Activity
+            <Activity size={18} /> Журнал (лог)
           </button>
           
           <div className="sidebar-group-label">SYSTEM</div>
@@ -153,7 +167,8 @@ function App() {
         <div style={{ display: activeView === 'accounts' ? 'block' : 'none', height: '100%' }}><AccountsManager token={token} /></div>
         <div style={{ display: activeView === 'souls' ? 'block' : 'none', height: '100%' }}><SoulsContext token={token} /></div>
         <div style={{ display: activeView === 'genesis' ? 'block' : 'none', height: '100%' }}><SoulGenesisView /></div>
-        <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory /></div>
+        <div style={{ display: activeView === 'factory' ? 'block' : 'none', height: '100%' }}><CloneFactory token={token} /></div>
+        <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory token={token} /></div>
         <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeManager token={token} /></div>
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
         <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><MuninnExplorer token={token} /></div>
@@ -164,6 +179,7 @@ function App() {
         <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityStream token={token} /></div>
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
+        <div style={{ display: activeView === 'live' ? 'block' : 'none', height: '100%' }}><LiveOps token={token} /></div>
       </main>
     </div>
   );

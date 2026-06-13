@@ -1,17 +1,14 @@
 import { useState } from 'react';
 
-interface AuthResponse {
-  status: string;
-  transaction_id?: string;
-  message: string;
-  account_id?: number;
-}
+// Backend /telegram/request-code returns `phone_code_hash` (Pyrogram), which
+// /telegram/verify-code requires. Earlier this was mis-named `transaction_id`,
+// so the hash was lost and verify failed with a 422 before Pyrogram ran.
 
-export function AuthFactory() {
+export function AuthFactory({ token }: { token: string | null }) {
   const [activeTab, setActiveTab] = useState<'telegram' | 'mobile'>('telegram');
   const [agentId, setAgentId] = useState('');
   const [deviceId, setDeviceId] = useState('');
-  
+
   // Telegram State
   const [phoneNumber, setPhoneNumber] = useState('');
   const [transactionId, setTransactionId] = useState('');
@@ -19,11 +16,10 @@ export function AuthFactory() {
   const [twoFaPassword, setTwoFaPassword] = useState('');
   const [tgStep, setTgStep] = useState<1 | 2 | 3>(1); // 1: Request, 2: OTP, 3: Success
   const [tgLoading, setTgLoading] = useState(false);
-  
-  // Mobile Session State
+
+  // Mobile Session State (Stage 23 — autonomous extraction)
   const [mobilePlatform, setMobilePlatform] = useState('instagram');
   const [mobileUsername, setMobileUsername] = useState('');
-  const [sessionPayload, setSessionPayload] = useState('');
   const [mobileLoading, setMobileLoading] = useState(false);
 
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -37,11 +33,11 @@ export function AuthFactory() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone_number: phoneNumber })
       });
-      const data: AuthResponse = await res.json();
-      
-      if (!res.ok) throw new Error(data.message || 'Request failed');
-      
-      setTransactionId(data.transaction_id || '');
+      const data: any = await res.json();
+
+      if (!res.ok) throw new Error(data.detail || data.message || 'Request failed');
+
+      setTransactionId(data.phone_code_hash || '');
       setTgStep(2);
       setMessage({ text: data.message, type: 'success' });
     } catch (err: any) {
@@ -60,7 +56,7 @@ export function AuthFactory() {
     setMessage(null);
     try {
       const payload: any = {
-        transaction_id: transactionId,
+        phone_code_hash: transactionId,
         phone_number: phoneNumber,
         code: otpCode,
         agent_id: agentId,
@@ -73,10 +69,10 @@ export function AuthFactory() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data: AuthResponse = await res.json();
-      
-      if (!res.ok) throw new Error(data.message || 'Verification failed');
-      
+      const data: any = await res.json();
+
+      if (!res.ok) throw new Error(data.detail || data.message || 'Verification failed');
+
       setTgStep(3);
       setMessage({ text: data.message, type: 'success' });
     } catch (err: any) {
@@ -86,38 +82,32 @@ export function AuthFactory() {
     }
   };
 
-  const handleMobileImport = async () => {
-    if (!agentId || !deviceId || !mobileUsername || !sessionPayload) {
-      setMessage({ text: "All fields are required.", type: 'error' });
+  const handleAutoExtract = async () => {
+    if (!deviceId || !mobileUsername) {
+      setMessage({ text: "Device ID and Username are required.", type: 'error' });
       return;
     }
     setMobileLoading(true);
     setMessage(null);
     try {
-      let parsedPayload;
-      try {
-        parsedPayload = JSON.parse(sessionPayload);
-      } catch (e) {
-        throw new Error("Session payload must be valid JSON.");
-      }
-
-      const res = await fetch('/api/v1/auth-factory/mobile/import-session', {
+      const res = await fetch('/api/v1/auth-factory/mobile/extract-session', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           platform: mobilePlatform,
-          agent_id: agentId,
           device_id: deviceId,
           username: mobileUsername,
-          session_payload: parsedPayload
-        })
+          // agent_id is optional — when supplied the account is bound immediately,
+          // otherwise it is stored floating ('unbound') for later binding.
+          agent_id: agentId || null,
+        }),
       });
-      const data: AuthResponse = await res.json();
-      
-      if (!res.ok) throw new Error(data.message || 'Import failed');
-      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || 'Extraction failed');
       setMessage({ text: data.message, type: 'success' });
-      setSessionPayload('');
     } catch (err: any) {
       setMessage({ text: err.message, type: 'error' });
     } finally {
@@ -282,25 +272,25 @@ export function AuthFactory() {
                </div>
             </div>
             
-            <div>
-              <label className="block text-xs text-gray-500 uppercase font-semibold mb-2">Raw Cookie/Header Payload (JSON)</label>
-              <textarea
-                value={sessionPayload}
-                onChange={(e) => setSessionPayload(e.target.value)}
-                className="w-full h-48 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 font-mono text-sm text-gray-300 focus:ring-2 focus:ring-indigo-500"
-                placeholder='{
-  "cookies": { "sessionid": "...", "ds_user_id": "..." },
-  "headers": { "user-agent": "..." }
-}'
-              />
+            <div className="p-4 rounded-lg border border-indigo-900/50 bg-indigo-950/20">
+              <h3 className="text-indigo-300 font-medium mb-1">Autonomous Session Extraction</h3>
+              <p className="text-gray-400 text-sm mb-1">
+                MYRMIDON drives the emulator (<span className="font-mono text-gray-300">{deviceId || 'device'}</span>) and
+                dumps the live session directly — WebView cookies &amp; localStorage for hybrid apps, or rooted
+                <span className="font-mono"> shared_prefs</span> XML for native apps.
+              </p>
+              <p className="text-gray-500 text-xs">
+                Make sure the {mobilePlatform} app is logged in and foregrounded on the device. Leave Agent ID blank to
+                store the account floating (unbound); fill it to bind immediately.
+              </p>
             </div>
 
             <button
-              onClick={handleMobileImport}
+              onClick={handleAutoExtract}
               disabled={mobileLoading}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {mobileLoading ? 'Importing...' : 'Validate & Import Session'}
+              {mobileLoading ? 'Extracting from emulator…' : '⚡ Auto-Extract Session from Emulator'}
             </button>
           </div>
         )}

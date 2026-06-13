@@ -129,6 +129,10 @@ class SoulAccount(Base):
     __tablename__ = "souls_accounts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Stage 23 — DECOUPLED IDENTITY: agent_id is a soft link (plain String, NOT a
+    # ForeignKey). A SoulAccount (access keys/hardware) can float unbound, and an
+    # AgentProfile (psychology) can exist with no account. Binding is an explicit
+    # operator action, not a schema constraint.
     agent_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(30), nullable=False)
     username: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -136,7 +140,8 @@ class SoulAccount(Base):
     auth_cookies: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     device_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     assigned_proxy: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    # Lifecycle: unbound (floating, no soul) | active (bound) | suspended.
+    status: Mapped[str] = mapped_column(String(20), default="unbound", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -160,6 +165,9 @@ class AgentProfile(Base):
     agent_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     codename: Mapped[str] = mapped_column(String(100), nullable=False)
     caste: Mapped[str] = mapped_column(String(20), default="alpha", nullable=False)
+    # Stage 23 — lifecycle of the psychological profile, decoupled from accounts:
+    # unbound (no account linked) | active (bound to ≥1 SoulAccount) | suspended.
+    status: Mapped[str] = mapped_column(String(20), default="unbound", nullable=False)
 
     # Identity
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -547,3 +555,70 @@ class SocialPostTarget(Base):
 
     def __repr__(self) -> str:
         return f"<SocialPostTarget(id={self.id}, platform='{self.platform}', author='{self.author}')>"
+
+
+# ── Stage 23 — Identity binding (decoupled accounts ⇄ souls) ───────────────
+
+def bind_account_to_soul(db: Session, account_id: int, agent_id: str) -> "SoulAccount":
+    """
+    Bind a floating SoulAccount (access keys/hardware) to an AgentProfile (soul).
+
+    Both entities are independent; this is the explicit linking operation. It
+    flips both sides to 'active', records the change in the audit log, and
+    returns the bound account. Raises ValueError if either side is missing.
+    """
+    account = db.query(SoulAccount).filter(SoulAccount.id == account_id).first()
+    if account is None:
+        raise ValueError(f"SoulAccount {account_id} not found.")
+
+    profile = db.query(AgentProfile).filter(AgentProfile.agent_id == agent_id).first()
+    if profile is None:
+        raise ValueError(f"AgentProfile '{agent_id}' not found.")
+
+    previous = account.agent_id
+    account.agent_id = agent_id
+    account.status = "active"
+    profile.status = "active"
+
+    db.add(AccountAuditLog(
+        account_id=account.id,
+        action=f"Bound to soul '{agent_id}'",
+        details=f"Previous binding: {previous or 'none'}",
+    ))
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def unbind_account(db: Session, account_id: int) -> "SoulAccount":
+    """
+    Detach a SoulAccount from its soul. The account becomes 'unbound'; the
+    formerly-linked profile reverts to 'unbound' only if it has no other
+    accounts still bound to it. Returns the now-floating account.
+    """
+    account = db.query(SoulAccount).filter(SoulAccount.id == account_id).first()
+    if account is None:
+        raise ValueError(f"SoulAccount {account_id} not found.")
+
+    previous = account.agent_id
+    account.agent_id = None
+    account.status = "unbound"
+    db.add(AccountAuditLog(
+        account_id=account.id,
+        action="Unbound from soul",
+        details=f"Previous binding: {previous or 'none'}",
+    ))
+    # autoflush is disabled on this session — flush so the count below sees the
+    # just-cleared agent_id (otherwise this account still appears bound).
+    db.flush()
+
+    if previous:
+        remaining = db.query(SoulAccount).filter(SoulAccount.agent_id == previous).count()
+        if remaining == 0:
+            profile = db.query(AgentProfile).filter(AgentProfile.agent_id == previous).first()
+            if profile is not None and profile.status != "suspended":
+                profile.status = "unbound"
+
+    db.commit()
+    db.refresh(account)
+    return account

@@ -13,7 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory, LANDSCAPE_LAYERS
+from app.models import (
+    AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory,
+    LANDSCAPE_LAYERS, bind_account_to_soul, unbind_account,
+)
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/souls", tags=["Agent Souls"])
@@ -132,6 +135,7 @@ class ProfileResponse(BaseModel):
     agent_id: str
     codename: str
     caste: str
+    status: str
     full_name: str
     birth_date: Optional[str]
     residence_city: Optional[str]
@@ -392,6 +396,41 @@ class AccountResponse(BaseModel):
 def get_accounts(db: Session = Depends(get_db)):
     accounts = db.query(SoulAccount).all()
     return accounts
+
+
+# ── Stage 23 — Decoupled Bind / Unbind ─────────────────────────────────────
+
+@router.put("/accounts/{account_id}/bind", response_model=AccountResponse)
+def bind_account(
+    account_id: int,
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> AccountResponse:
+    """
+    Bind a floating SoulAccount to an AgentProfile (soul). Both must already
+    exist independently — this is the explicit linking action that flips both
+    sides to 'active'.
+    """
+    try:
+        account = bind_account_to_soul(db, account_id, agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return account
+
+
+@router.put("/accounts/{account_id}/unbind", response_model=AccountResponse)
+def unbind_account_endpoint(
+    account_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> AccountResponse:
+    """Detach a SoulAccount from its soul; it returns to the floating pool."""
+    try:
+        account = unbind_account(db, account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return account
 
 @router.put("/accounts/{account_id}/assign")
 def assign_account(

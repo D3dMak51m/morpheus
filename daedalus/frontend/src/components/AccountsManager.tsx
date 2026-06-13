@@ -17,11 +17,19 @@ interface AuditLog {
   timestamp: string;
 }
 
+interface SoulProfile {
+  agent_id: string;
+  codename: string;
+  full_name: string;
+  status: string;
+}
+
 export default function AccountsManager({ token }: { token: string | null }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [profiles, setProfiles] = useState<SoulProfile[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [newAgentId, setNewAgentId] = useState('');
+  const [bindAgentId, setBindAgentId] = useState('');
 
   const fetchAccounts = async () => {
     if (!token) return;
@@ -30,6 +38,18 @@ export default function AccountsManager({ token }: { token: string | null }) {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) setAccounts(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchProfiles = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/v1/souls/profiles', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) setProfiles(await res.json());
     } catch (e) {
       console.error(e);
     }
@@ -49,24 +69,53 @@ export default function AccountsManager({ token }: { token: string | null }) {
 
   useEffect(() => {
     fetchAccounts();
+    fetchProfiles();
   }, [token]);
 
   useEffect(() => {
     if (selectedAccount) {
       fetchLogs(selectedAccount.id);
+      setBindAgentId('');
     }
   }, [selectedAccount]);
 
-  const handleAssign = async (accountId: number, agentId: string | null) => {
+  const refreshAfterMutation = async (accountId: number) => {
+    await fetchAccounts();
+    await fetchProfiles();
+    fetchLogs(accountId);
+    // Keep the detail pane in sync with the mutated row.
     try {
-      const res = await fetch(`/api/v1/souls/accounts/${accountId}/assign?agent_id=${agentId || ''}`, {
+      const res = await fetch('/api/v1/souls/accounts', { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const fresh: Account[] = await res.json();
+        const updated = fresh.find(a => a.id === accountId);
+        if (updated) setSelectedAccount(updated);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleBind = async (accountId: number, agentId: string) => {
+    if (!agentId) return;
+    try {
+      const res = await fetch(`/api/v1/souls/accounts/${accountId}/bind?agent_id=${encodeURIComponent(agentId)}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) {
-        fetchAccounts();
-        if (selectedAccount?.id === accountId) fetchLogs(accountId);
-      }
+      if (res.ok) refreshAfterMutation(accountId);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUnbind = async (accountId: number) => {
+    try {
+      const res = await fetch(`/api/v1/souls/accounts/${accountId}/unbind`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) refreshAfterMutation(accountId);
     } catch (e) {
       console.error(e);
     }
@@ -115,26 +164,29 @@ export default function AccountsManager({ token }: { token: string | null }) {
               <p><strong>Platform:</strong> {selectedAccount.platform}</p>
               <p><strong>Username:</strong> {selectedAccount.username}</p>
               <p><strong>Device:</strong> {selectedAccount.device_id || 'None'}</p>
-              
+              <p><strong>Status:</strong> <span className={`status-badge ${selectedAccount.status}`}>{selectedAccount.status}</span></p>
+
               <div className="assignment-control">
-                <h4>Agent Assignment</h4>
+                <h4>Soul Binding</h4>
                 {selectedAccount.agent_id ? (
                   <div className="assigned-view">
-                    <p>Currently assigned to <strong>{selectedAccount.agent_id}</strong></p>
-                    <button onClick={() => handleAssign(selectedAccount.id, null)} className="btn-danger">
-                      <Unlink size={16} /> Detach Profile
+                    <p>Bound to soul <strong>{selectedAccount.agent_id}</strong></p>
+                    <button onClick={() => handleUnbind(selectedAccount.id)} className="btn-danger">
+                      <Unlink size={16} /> Unbind Soul
                     </button>
                   </div>
                 ) : (
                   <div className="assign-form">
-                    <input 
-                      type="text" 
-                      placeholder="Agent ID..." 
-                      value={newAgentId}
-                      onChange={e => setNewAgentId(e.target.value)}
-                    />
-                    <button onClick={() => handleAssign(selectedAccount.id, newAgentId)} className="btn-primary">
-                      <Link size={16} /> Assign to Agent
+                    <select value={bindAgentId} onChange={e => setBindAgentId(e.target.value)}>
+                      <option value="">Select a floating soul…</option>
+                      {profiles.map(p => (
+                        <option key={p.agent_id} value={p.agent_id}>
+                          {p.full_name || p.codename} ({p.agent_id}) · {p.status}
+                        </option>
+                      ))}
+                    </select>
+                    <button onClick={() => handleBind(selectedAccount.id, bindAgentId)} className="btn-primary" disabled={!bindAgentId}>
+                      <Link size={16} /> Bind to Soul
                     </button>
                   </div>
                 )}

@@ -29,6 +29,7 @@ MYRMIDON executor, relying on the existing task-queue + activity-log contract.
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -40,13 +41,21 @@ from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import Mission, MissionSquad, AgentActivityLog
+from app.models import Mission, MissionSquad, AgentActivityLog, AgentProfile, SoulAccount
 
 logger = logging.getLogger("daedalus.mission_control")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
+
+# Stage 25 — dynamic squad assignment constraints.
+# A single bot may serve several missions concurrently (when its characteristics
+# fit), but never more than this many *active* missions at once.
+MAX_MISSIONS_PER_BOT = int(os.getenv("MAX_MISSIONS_PER_BOT", "5"))
+# Missions in these states count against a bot's load; completed/failed free it.
+ACTIVE_MISSION_STATES = ("pending", "running", "amplifying")
+VALID_ROLES = ("alpha", "beta", "gamma")
 
 # Per-wave execution delay (seconds) — staggers the swarm to look organic.
 ALPHA_DELAY_SEC = int(os.getenv("MISSION_ALPHA_DELAY_SEC", "10"))
@@ -84,6 +93,187 @@ def infer_platform(target_url: str) -> str:
     if "twitter.com" in u or "x.com" in u:
         return "twitter"
     return "web"
+
+
+# ── Dynamic squad assignment (Stage 25) ───────────────────────────────────
+
+def agent_active_mission_count(db: Session, agent_id: str, exclude_mission_id: Optional[int] = None) -> int:
+    """How many *active* missions a bot currently serves (its load vs the cap)."""
+    q = (
+        db.query(MissionSquad.mission_id)
+        .join(Mission, Mission.id == MissionSquad.mission_id)
+        .filter(MissionSquad.agent_id == agent_id, Mission.status.in_(ACTIVE_MISSION_STATES))
+    )
+    if exclude_mission_id is not None:
+        q = q.filter(MissionSquad.mission_id != exclude_mission_id)
+    return q.distinct().count()
+
+
+def _tokenize(*texts: Optional[str]) -> set:
+    """Lowercase word set (≥4 chars) used for cheap interest/goal overlap."""
+    words: set = set()
+    for t in texts:
+        if not t:
+            continue
+        for w in re.findall(r"[\w']+", str(t).lower()):
+            if len(w) >= 4:
+                words.add(w)
+    return words
+
+
+def score_agent_for_mission(profile: AgentProfile, mission: Mission, role: Optional[str]) -> tuple:
+    """
+    Rank how well a bot's characteristics fit a mission. Returns (score, reasons).
+
+    Signals: caste↔role affinity, interest/goal keyword overlap, and whether the
+    persona's aggression matches the mission tactic. Purely advisory — the hard
+    gate (an active account on the mission platform) is enforced by eligibility.
+    """
+    score = 0.0
+    reasons: list[str] = []
+
+    if role and profile.caste == role:
+        score += 0.4
+        reasons.append(f"caste '{profile.caste}' matches role '{role}'")
+    elif role:
+        score += 0.1
+    else:
+        score += 0.2
+
+    mwords = _tokenize(mission.title, mission.narrative_goal, mission.forced_context)
+    awords: set = set()
+    for interest in (profile.core_interests or []):
+        awords |= _tokenize(interest)
+    awords |= _tokenize(profile.core_mission, profile.codename, profile.profession)
+    overlap = mwords & awords
+    if overlap:
+        score += min(0.4, 0.1 * len(overlap))
+        reasons.append("topic overlap: " + ", ".join(sorted(overlap)[:4]))
+
+    aggression = (profile.communication_style or {}).get("aggression")
+    if isinstance(aggression, (int, float)):
+        if mission.tactic == "aggressive_displacement" and aggression >= 6:
+            score += 0.2
+            reasons.append(f"aggression {aggression} fits aggressive tactic")
+        elif mission.tactic == "soft_support" and aggression <= 5:
+            score += 0.15
+            reasons.append(f"measured tone ({aggression}) fits soft support")
+
+    return round(min(score, 1.0), 3), reasons
+
+
+def eligible_agents_for_mission(
+    db: Session,
+    mission: Mission,
+    role: Optional[str] = None,
+    include_enlisted: bool = False,
+) -> list[dict]:
+    """
+    Bots that *can* serve this mission, ranked by match.
+
+    Hard gate: the bot must own an ACTIVE account on the mission's platform — the
+    exact precondition whose absence makes a launch fail. Bots already at the
+    per-bot mission cap are returned flagged ``at_capacity`` (not silently hidden)
+    so the operator understands why they cannot be added.
+    """
+    platform = mission.platform or infer_platform(mission.target_url)
+    rows = (
+        db.query(SoulAccount.agent_id)
+        .filter(
+            SoulAccount.platform == platform,
+            SoulAccount.status == "active",
+            SoulAccount.agent_id.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    agent_ids = [r[0] for r in rows if r[0]]
+    if not agent_ids:
+        return []
+
+    profiles = db.query(AgentProfile).filter(AgentProfile.agent_id.in_(agent_ids)).all()
+    enlisted = {s.agent_id for s in mission.squad}
+
+    results: list[dict] = []
+    for p in profiles:
+        if p.status == "suspended":
+            continue
+        already = p.agent_id in enlisted
+        if already and not include_enlisted:
+            continue
+        load = agent_active_mission_count(db, p.agent_id, exclude_mission_id=mission.id)
+        score, reasons = score_agent_for_mission(p, mission, role)
+        results.append({
+            "agent_id": p.agent_id,
+            "codename": p.codename,
+            "caste": p.caste,
+            "status": p.status,
+            "platform": platform,
+            "active_mission_load": load,
+            "at_capacity": load >= MAX_MISSIONS_PER_BOT,
+            "already_enlisted": already,
+            "match_score": score,
+            "match_reasons": reasons,
+        })
+
+    # Assignable (under cap) first, then by match score desc.
+    results.sort(key=lambda r: (r["at_capacity"], -r["match_score"], -r["active_mission_load"]))
+    return results
+
+
+def auto_assign_squad(db: Session, mission: Mission, counts: dict[str, int]) -> dict:
+    """
+    Fill a mission's squad with the best-matching available bots.
+
+    ``counts`` is the *desired total* per role (e.g. {"alpha":1,"beta":2,"gamma":2}).
+    Only the deficit relative to the current squad is filled. Bots at the
+    per-bot cap are skipped. Returns an assignment report.
+    """
+    assigned: list[dict] = []
+    skipped_at_cap = 0
+    enlisted = {s.agent_id for s in mission.squad}
+
+    for role in VALID_ROLES:
+        want = int(counts.get(role, 0) or 0)
+        have = sum(1 for s in mission.squad if s.assigned_role == role)
+        need = max(0, want - have)
+        if need <= 0:
+            continue
+
+        for cand in eligible_agents_for_mission(db, mission, role=role):
+            if need <= 0:
+                break
+            if cand["agent_id"] in enlisted:
+                continue
+            if cand["at_capacity"]:
+                skipped_at_cap += 1
+                continue
+            db.add(MissionSquad(
+                mission_id=mission.id,
+                agent_id=cand["agent_id"],
+                assigned_role=role,
+            ))
+            enlisted.add(cand["agent_id"])
+            assigned.append({
+                "agent_id": cand["agent_id"],
+                "codename": cand["codename"],
+                "role": role,
+                "match_score": cand["match_score"],
+                "match_reasons": cand["match_reasons"],
+            })
+            need -= 1
+
+    if assigned:
+        db.commit()
+
+    requested = {r: int(counts.get(r, 0) or 0) for r in VALID_ROLES}
+    return {
+        "mission_id": mission.id,
+        "assigned": assigned,
+        "assigned_count": len(assigned),
+        "skipped_at_capacity": skipped_at_cap,
+        "requested": requested,
+    }
 
 
 # ── Narrative composition per role/tactic ────────────────────────────────
@@ -126,8 +316,13 @@ def _build_task(mission: Mission, squad: MissionSquad) -> dict:
         "target_platform": mission.platform or infer_platform(mission.target_url),
         "action_type": "comment",
         "target_url": mission.target_url,
+        # Deterministic fallback text — used only if ORPHEUS generation fails.
         "text_to_publish": _compose_payload_text(mission, squad.assigned_role),
         "execution_delay_sec": delay,
+        # Stage 25 — have MYRMIDON ask ORPHEUS to write a real, context-aware
+        # comment (persona + post context + RAG knowledge + memory + mission).
+        "generate": True,
+        "narrative_goal": mission.narrative_goal or mission.title,
         # Extra DAG context (ignored by the executor, used for traceability).
         "mission_id": mission.id,
         "role": squad.assigned_role,

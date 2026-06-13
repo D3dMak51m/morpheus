@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, Mission, MissionSquad
+from app.models import AdminUser, Mission, MissionSquad, AgentProfile
 from app.rbac import require_permission
 from app import mission_control
 
@@ -58,6 +58,7 @@ class SquadMemberResponse(BaseModel):
     agent_id: str
     assigned_role: str
     status: str
+    codename: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -127,7 +128,24 @@ def _compute_progress(mission: Mission) -> dict[str, Any]:
     return {"percent": pct, "stage": stage, "done": done, "total": total, "by_role": by_role}
 
 
-def _serialize(mission: Mission) -> MissionResponse:
+def _serialize(mission: Mission, db: Optional[Session] = None) -> MissionResponse:
+    # Decorate squad members with their persona codename for the UI (one query).
+    codenames: dict[str, str] = {}
+    if db is not None and mission.squad:
+        agent_ids = [s.agent_id for s in mission.squad]
+        for agent_id, codename in (
+            db.query(AgentProfile.agent_id, AgentProfile.codename)
+            .filter(AgentProfile.agent_id.in_(agent_ids))
+            .all()
+        ):
+            codenames[agent_id] = codename
+
+    squad = []
+    for s in mission.squad:
+        member = SquadMemberResponse.model_validate(s)
+        member.codename = codenames.get(s.agent_id)
+        squad.append(member)
+
     return MissionResponse(
         id=mission.id,
         title=mission.title,
@@ -140,7 +158,7 @@ def _serialize(mission: Mission) -> MissionResponse:
         forced_context=mission.forced_context,
         launched_at=mission.launched_at,
         created_at=mission.created_at,
-        squad=[SquadMemberResponse.model_validate(s) for s in mission.squad],
+        squad=squad,
         progress=_compute_progress(mission),
     )
 
@@ -154,7 +172,7 @@ def list_missions(
 ) -> list[MissionResponse]:
     """List all missions (newest first) with squad and live DAG progress."""
     missions = db.query(Mission).order_by(Mission.id.desc()).all()
-    return [_serialize(m) for m in missions]
+    return [_serialize(m, db) for m in missions]
 
 
 @router.get("/{mission_id}", response_model=MissionResponse)
@@ -166,7 +184,7 @@ def get_mission(
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    return _serialize(mission)
+    return _serialize(mission, db)
 
 
 @router.post("", response_model=MissionResponse, status_code=201)
@@ -196,7 +214,7 @@ def create_mission(
     db.commit()
     db.refresh(mission)
     logger.info("Mission %s created: '%s' (%d squad members).", mission.id, mission.title, len(mission.squad))
-    return _serialize(mission)
+    return _serialize(mission, db)
 
 
 @router.put("/{mission_id}", response_model=MissionResponse)
@@ -227,7 +245,7 @@ def update_mission(
 
     db.commit()
     db.refresh(mission)
-    return _serialize(mission)
+    return _serialize(mission, db)
 
 
 @router.delete("/{mission_id}")
@@ -269,10 +287,19 @@ def add_squad_member(
     if exists:
         raise HTTPException(status_code=409, detail=f"Agent '{member.agent_id}' already enlisted in this mission.")
 
+    # Enforce the per-bot active-mission cap (a bot may serve several missions).
+    load = mission_control.agent_active_mission_count(db, member.agent_id, exclude_mission_id=mission_id)
+    if load >= mission_control.MAX_MISSIONS_PER_BOT:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Agent '{member.agent_id}' already serves {load} active missions "
+                   f"(cap is {mission_control.MAX_MISSIONS_PER_BOT}).",
+        )
+
     db.add(MissionSquad(mission_id=mission_id, agent_id=member.agent_id, assigned_role=member.assigned_role))
     db.commit()
     db.refresh(mission)
-    return _serialize(mission)
+    return _serialize(mission, db)
 
 
 @router.delete("/{mission_id}/squad/{squad_id}", response_model=MissionResponse)
@@ -298,7 +325,81 @@ def remove_squad_member(
     db.delete(member)
     db.commit()
     db.refresh(mission)
-    return _serialize(mission)
+    return _serialize(mission, db)
+
+
+# ── Dynamic squad assignment (Stage 25) ──────────────────────────────────────
+
+class EligibleAgentResponse(BaseModel):
+    agent_id: str
+    codename: Optional[str]
+    caste: str
+    status: str
+    platform: str
+    active_mission_load: int
+    at_capacity: bool
+    already_enlisted: bool
+    match_score: float
+    match_reasons: list[str]
+
+
+class AutoAssignRequest(BaseModel):
+    alpha: int = Field(1, ge=0, le=20)
+    beta: int = Field(0, ge=0, le=20)
+    gamma: int = Field(0, ge=0, le=20)
+
+
+@router.get("/{mission_id}/eligible-agents", response_model=list[EligibleAgentResponse])
+def list_eligible_agents(
+    mission_id: int,
+    role: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:view")),
+) -> list[EligibleAgentResponse]:
+    """
+    Bots that can serve this mission, ranked by characteristic match.
+
+    Hard requirement: an ACTIVE account on the mission platform. Bots at the
+    per-bot mission cap are returned flagged ``at_capacity``.
+    """
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    if role is not None:
+        _validate_role(role)
+    candidates = mission_control.eligible_agents_for_mission(
+        db, mission, role=role, include_enlisted=True
+    )
+    return [EligibleAgentResponse(**c) for c in candidates]
+
+
+@router.post("/{mission_id}/auto-assign", response_model=MissionResponse)
+def auto_assign_squad(
+    mission_id: int,
+    request: AutoAssignRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("campaigns:edit")),
+) -> MissionResponse:
+    """
+    Auto-fill the squad with the best-matching available bots for each role,
+    respecting the per-bot active-mission cap. Idempotent — only the deficit
+    relative to the current squad is filled, so it can be re-run to rebalance.
+    """
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    if mission.status not in ("pending", "failed"):
+        raise HTTPException(status_code=409, detail=f"Cannot modify squad of a '{mission.status}' mission.")
+
+    report = mission_control.auto_assign_squad(
+        db, mission, {"alpha": request.alpha, "beta": request.beta, "gamma": request.gamma}
+    )
+    db.refresh(mission)
+    logger.info(
+        "Mission %s auto-assign: %d added, %d skipped (at cap).",
+        mission_id, report["assigned_count"], report["skipped_at_capacity"],
+    )
+    return _serialize(mission, db)
 
 
 # ── DAG launch ───────────────────────────────────────────────────────────────
@@ -324,7 +425,7 @@ def launch_mission(
         logger.exception("Mission %s launch failed.", mission_id)
         raise HTTPException(status_code=502, detail=f"Failed to dispatch mission to Redis: {e}")
     db.refresh(mission)
-    return _serialize(mission)
+    return _serialize(mission, db)
 
 
 # ── Internal callback (optional fast-path for the DAG reconciler) ───────────

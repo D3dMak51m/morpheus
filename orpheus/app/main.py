@@ -26,6 +26,7 @@ from app.media_enricher import MediaEnricher
 from app.persona import PersonaEngine, periodically_update_profiles_cache
 from app.guardrails import OutputGuardrails
 from app.coordination import generate_beta_subtasks
+from app.telemetry import emit as emit_event
 import threading
 import asyncio
 
@@ -47,9 +48,15 @@ TEXT_MODEL_NAME = os.getenv("TEXT_MODEL_NAME", "qwen2.5:3b")
 
 RAW_EVENTS_QUEUE = "queue:raw_events"
 EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
+# Stage 25 — targeted mission comment generation (request/reply over Redis).
+# MYRMIDON pushes a request (with the live post context) here; ORPHEUS generates
+# a persona/RAG/memory/mission-aware comment and LPUSHes it to req["reply_key"].
+MISSION_GEN_QUEUE = "queue:mission_gen"
 
 PROCESSING_TIMEOUT_SEC = 5
 MAX_REGENERATION_ATTEMPTS = 2
+# Mission/reply path retries more: a weak LLM needs several tries to stop echoing.
+MISSION_REGEN_ATTEMPTS = int(os.getenv("MISSION_REGEN_ATTEMPTS", "4"))
 
 # ── Graceful shutdown ─────────────────────────────────────────────────────
 
@@ -121,8 +128,11 @@ def generate_text(prompt: str) -> str:
             "stream": False,
             "keep_alive": 0,  # Unload immediately after inference
             "options": {
-                "temperature": 0.7,
+                "temperature": 0.8,
                 "top_p": 0.9,
+                # Discourage the model from parroting the prompt / its own tokens.
+                "repeat_penalty": 1.3,
+                "frequency_penalty": 0.5,
             }
         }
 
@@ -134,6 +144,102 @@ def generate_text(prompt: str) -> str:
     except Exception as e:
         logger.error("LLM text generation failed: %s", e)
         return ""
+
+
+# ── Mission comment generation (request/reply) ─────────────────────────────
+
+def _persist_dialog_memory(persona_engine, req: dict, final_text: str) -> None:
+    """
+    Close the memory loop: store a compact summary of *this* exchange in MUNINN,
+    scoped to the person/channel, so the agent remembers it next time. Without
+    this the long-term memory never fills and recall is always empty.
+    """
+    agent_id = req.get("agent_id")
+    author = req.get("author") or "the channel"
+    opponent_key = req.get("opponent_id") or author
+    mode = req.get("mode") or "comment"
+    post_text = (req.get("post_text") or "").strip()
+    incoming_text = (req.get("incoming_text") or "").strip()
+
+    if mode == "reply":
+        summary = f'{author} said: "{incoming_text[:240]}". I replied: "{final_text[:240]}".'
+    else:
+        ctx = post_text[:240] or "(a post)"
+        summary = f'Under {author}\'s post: "{ctx}". I commented: "{final_text[:240]}".'
+    try:
+        persona_engine.save_memory(agent_id, opponent_key, summary)
+    except Exception as exc:
+        logger.error("Failed to persist dialog memory: %s", exc)
+
+
+def handle_mission_generation(req: dict, redis_client, persona_engine, guardrails) -> None:
+    """
+    Generate a real, context-aware mission comment and return it to MYRMIDON via
+    the request's reply_key. Reuses persona + RAG + memory; framed by the mission
+    role/tactic/objective and the actual post text MYRMIDON read from the target.
+    """
+    reply_key = req.get("reply_key")
+    agent_id = req.get("agent_id")
+    request_id = req.get("request_id")
+    logger.info(
+        "Mission-gen %s — agent=%s role=%s tactic=%s.",
+        request_id, agent_id, req.get("role"), req.get("tactic"),
+    )
+
+    is_reply = (req.get("mode") == "reply")
+    emit_event(
+        agent_id, "thinking",
+        ("сочиняет ответ человеку " + (req.get("author") or "")) if is_reply else "сочиняет комментарий",
+        status="active", target=req.get("target_url") or req.get("author") or "",
+    )
+
+    result = {"status": "error", "text": "", "reason": ""}
+    try:
+        prompt = persona_engine.assemble_mission_prompt(agent_id, req)
+        if not prompt:
+            result["reason"] = "profile_not_found"
+        else:
+            # Echo references: reject replies that just parrot the human/post back.
+            echo_refs = [req.get("incoming_text") or "", req.get("post_text") or ""]
+            final_text = ""
+            for attempt in range(1, MISSION_REGEN_ATTEMPTS + 1):
+                generated = generate_text(prompt)
+                ok, reason = guardrails.validate_output(generated)
+                if ok and guardrails.is_echo(generated, echo_refs):
+                    ok, reason = False, "reply echoes/repeats the incoming message"
+                if ok:
+                    final_text = generated
+                    logger.info("Mission-gen %s — validated on attempt %d (%d chars).", request_id, attempt, len(final_text))
+                    break
+                logger.warning("Mission-gen %s — rejected (attempt %d): %s", request_id, attempt, reason)
+                emit_event(agent_id, "guardrail_reject",
+                           f"отклонил черновик ({reason[:40]}) — переписывает",
+                           status="warn")
+                redis_client.incr("metrics:guardrail_failures")
+                prompt += (
+                    f"\n\nSystem Note: your previous reply was rejected because: {reason}. "
+                    "Do NOT repeat or quote their words. Write a genuinely new sentence in your "
+                    "own voice that answers them. Try again, follow ALL rules."
+                )
+            if final_text:
+                redis_client.incr("metrics:comments_sent")
+                result = {"status": "ok", "text": final_text, "reason": ""}
+                emit_event(agent_id, "generated",
+                           ("готов ответ: " if is_reply else "готов комментарий: ") + final_text[:60],
+                           status="ok", target=req.get("author") or "")
+                _persist_dialog_memory(persona_engine, req, final_text)
+            else:
+                result["reason"] = "guardrails_failed"
+    except Exception as exc:
+        logger.exception("Mission-gen %s failed: %s", request_id, exc)
+        result["reason"] = str(exc)
+
+    if reply_key:
+        try:
+            redis_client.lpush(reply_key, json.dumps(result, ensure_ascii=False))
+            redis_client.expire(reply_key, 300)
+        except Exception as exc:
+            logger.error("Mission-gen %s — failed to push reply: %s", request_id, exc)
 
 
 # ── Main Event Loop ───────────────────────────────────────────────────────
@@ -165,12 +271,25 @@ def main() -> None:
 
     while not _shutdown_requested:
         try:
-            result = redis_client.brpop(RAW_EVENTS_QUEUE, timeout=PROCESSING_TIMEOUT_SEC)
+            # Listen on both the autonomous news queue and the targeted mission
+            # generation queue; whichever has work is served (sequential VRAM).
+            result = redis_client.brpop([RAW_EVENTS_QUEUE, MISSION_GEN_QUEUE], timeout=PROCESSING_TIMEOUT_SEC)
             if result is None:
                 continue
 
-            _, event_json = result
-            
+            queue_key, payload = result
+
+            if queue_key == MISSION_GEN_QUEUE:
+                try:
+                    gen_req = json.loads(payload)
+                except json.JSONDecodeError as exc:
+                    logger.error("Malformed mission-gen request: %s", exc)
+                    continue
+                handle_mission_generation(gen_req, redis_client, persona_engine, guardrails)
+                continue
+
+            event_json = payload
+
             try:
                 event = json.loads(event_json)
             except json.JSONDecodeError as exc:
@@ -202,6 +321,9 @@ def main() -> None:
                     continue
 
                 logger.info("Orchestrating response for agent %s...", agent_id)
+                emit_event(agent_id, "reading_news",
+                           "читает новость: " + (event.get("text_content", "") or "")[:50],
+                           status="active", target=event.get("source_target", ""))
 
                 # Step 2: Assemble Prompt (Uses MUNINN + Profile)
                 prompt = persona_engine.assemble_prompt(agent_id, event, enriched_media_text)
@@ -254,6 +376,8 @@ def main() -> None:
 
                 redis_client.lpush(EXECUTION_TASKS_QUEUE, json.dumps(task, ensure_ascii=False))
                 redis_client.incr("metrics:comments_sent")
+                emit_event(agent_id, "dispatched", "отправил коммент в очередь исполнения",
+                           status="ok", target=event.get("source_target", ""))
                 logger.info("Successfully pushed execution task for agent %s on %s.", agent_id, event.get("source_platform"))
                 
                 # Update Daedalus status to approved

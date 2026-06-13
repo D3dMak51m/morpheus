@@ -360,6 +360,68 @@ def activity_stream(
     }
 
 
+AGENT_EVENTS_STREAM = "stream:agent_events"
+
+
+@router.get("/live")
+def live_activity(
+    after: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    limit: int = 200,
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> Dict[str, Any]:
+    """
+    Live Ops feed. Tails the ``stream:agent_events`` Redis stream that MYRMIDON and
+    ORPHEUS emit fine-grained activity into (polling, reading a post, sensing mood,
+    thinking, updating memory, posting, conversing).
+
+    Cursor protocol: the client passes ``after=<last_id>`` to get only events newer
+    than what it already has (near-real-time when polled ~1s). With no cursor it
+    returns the most recent ~150 events as chronological backlog. ``agents`` always
+    carries each agent's latest event so the rail can show "what it's doing now".
+    """
+    r = get_redis()
+    limit = max(1, min(limit, 500))
+
+    try:
+        if after:
+            raw = r.xrange(AGENT_EVENTS_STREAM, min=f"({after}", max="+", count=limit)
+        else:
+            rev = r.xrevrange(AGENT_EVENTS_STREAM, max="+", min="-", count=150)
+            raw = list(reversed(rev))
+    except Exception as e:
+        return {"events": [], "last_id": after or "0", "agents": [], "error": str(e)}
+
+    events = []
+    last_id = after or "0"
+    for entry_id, fields in raw:
+        last_id = entry_id
+        if agent_id and fields.get("agent_id") != agent_id:
+            continue
+        events.append({"id": entry_id, **fields})
+
+    # Latest event per agent (across a recent window) → drives the agent rail.
+    agents: Dict[str, Any] = {}
+    try:
+        for entry_id, f in r.xrevrange(AGENT_EVENTS_STREAM, max="+", min="-", count=400):
+            a = f.get("agent_id", "unknown")
+            if a not in agents:
+                agents[a] = {
+                    "agent_id": a,
+                    "event": f.get("event"),
+                    "detail": f.get("detail"),
+                    "status": f.get("status"),
+                    "target": f.get("target"),
+                    "service": f.get("service"),
+                    "ts": f.get("ts"),
+                    "id": entry_id,
+                }
+    except Exception:
+        pass
+
+    return {"events": events, "last_id": last_id, "agents": list(agents.values())}
+
+
 # ── Device Proxy (forwards to MYRMIDON Device API) ───────────────────
 
 @router.get("/devices")

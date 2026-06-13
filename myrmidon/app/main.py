@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import time
+import uuid
 from typing import Optional
 
 import httpx
@@ -52,6 +53,9 @@ DAEDALUS_URL = "http://daedalus:8000"
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 
 EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
+# Stage 25 — ask ORPHEUS to write a real, context-aware mission comment.
+MISSION_GEN_QUEUE = "queue:mission_gen"
+ORPHEUS_GEN_TIMEOUT = int(os.getenv("ORPHEUS_GEN_TIMEOUT_SEC", "150"))
 PROCESSING_TIMEOUT_SEC = 5
 
 # Human emulation constants
@@ -71,8 +75,14 @@ def _handle_signal(signum: int, frame) -> None:
     _shutdown_requested = True
 
 
-signal.signal(signal.SIGTERM, _handle_signal)
-signal.signal(signal.SIGINT, _handle_signal)
+# Only the main thread may install signal handlers. The entrypoint runs this
+# module as ``__main__``, so a late ``from app.main import ...`` (e.g. from the
+# dialogue engine's daemon thread) re-imports it as ``app.main`` and would re-run
+# these lines off the main thread → "signal only works in main thread". Guard it.
+import threading as _threading
+if _threading.current_thread() is _threading.main_thread():
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
 
 
 # ── Redis connectivity ────────────────────────────────────────────────────
@@ -254,6 +264,71 @@ def _log_activity_to_daedalus(task: dict, status: str) -> None:
         logger.error("Failed to log activity to Daedalus: %s", exc)
 
 
+# ── Cognitive comment generation (ORPHEUS request/reply over Redis) ────────
+
+_gen_redis_client: Optional[redis.Redis] = None
+
+
+def _get_gen_redis() -> redis.Redis:
+    """Lazy Redis client for the ORPHEUS generation round-trip (long socket timeout)."""
+    global _gen_redis_client
+    if _gen_redis_client is None:
+        _gen_redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            db=0,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=ORPHEUS_GEN_TIMEOUT + 15,
+        )
+    return _gen_redis_client
+
+
+def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread_context: str = "") -> str:
+    """
+    Ask ORPHEUS to write a real comment from the post context, the *mood of the
+    discussion thread*, and the mission's persona/role/tactic/objective (+
+    ORPHEUS-side RAG knowledge & memory). Blocking request/reply over Redis.
+    Returns '' on timeout/failure so the caller can fall back to deterministic text.
+    """
+    request_id = str(uuid.uuid4())
+    reply_key = f"reply:missiongen:{request_id}"
+    req = {
+        "request_id": request_id,
+        "reply_key": reply_key,
+        "mode": "comment",
+        "agent_id": task.get("agent_id"),
+        "platform": task.get("target_platform"),
+        "target_url": task.get("target_url"),
+        "post_text": post_text or "",
+        "author": author or "",
+        "thread_context": thread_context or "",
+        "narrative_goal": task.get("narrative_goal") or "",
+        "tactic": task.get("tactic") or "soft_support",
+        "role": task.get("role") or "alpha",
+        "forced_context": task.get("forced_context"),
+        "alpha_context": task.get("alpha_context"),
+    }
+    try:
+        client = _get_gen_redis()
+        client.lpush(MISSION_GEN_QUEUE, json.dumps(req, ensure_ascii=False))
+        logger.info("Task %s — requested ORPHEUS comment (req=%s); awaiting reply…", task.get("task_id"), request_id)
+        res = client.brpop(reply_key, timeout=ORPHEUS_GEN_TIMEOUT)
+        if not res:
+            logger.warning("Task %s — ORPHEUS generation timed out (%ds); using fallback.", task.get("task_id"), ORPHEUS_GEN_TIMEOUT)
+            return ""
+        _, raw = res
+        data = json.loads(raw)
+        if data.get("status") == "ok" and data.get("text"):
+            logger.info("Task %s — ORPHEUS comment ready (%d chars).", task.get("task_id"), len(data["text"]))
+            return data["text"]
+        logger.warning("Task %s — ORPHEUS returned no text (%s); using fallback.", task.get("task_id"), data.get("reason"))
+        return ""
+    except Exception as exc:
+        logger.error("Task %s — ORPHEUS generation round-trip failed: %s", task.get("task_id"), exc)
+        return ""
+
+
 # ── Task execution (routing) ─────────────────────────────────────────────
 
 def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
@@ -336,8 +411,29 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
     try:
         from app.drivers.tg_client import TelegramDriver
         driver = TelegramDriver(agent_id, credentials)
-        success = driver.execute_comment(target_url, text_to_publish)
-        
+
+        # Mission tasks carry generate=True: the driver reads the post being
+        # replied to plus the mood of the discussion and ORPHEUS writes a real,
+        # context-aware comment. Falls back to the task's deterministic text if
+        # ORPHEUS is slow/unavailable.
+        text_provider = None
+        if task.get("generate"):
+            text_provider = lambda post_text, author, thread_context="": generate_comment_via_orpheus(
+                task, post_text, author, thread_context
+            )
+
+        # Carry the mission framing so a successful comment starts a dialogue watch
+        # (the bot then keeps conversing with anyone who replies to it).
+        watch_meta = {
+            "narrative_goal": task.get("narrative_goal") or "",
+            "tactic": task.get("tactic") or "soft_support",
+            "role": task.get("role") or "alpha",
+        }
+
+        success = driver.execute_comment(
+            target_url, text_to_publish, text_provider=text_provider, watch_meta=watch_meta
+        )
+
         if success:
              logger.info("Task %s completed successfully on Telegram.", task_id)
              _log_activity_to_daedalus(task, "SUCCESS")
@@ -461,6 +557,14 @@ def main() -> None:
         logger.warning("AVD self-healing monitor failed to start: %s (non-fatal)", e)
 
     db_session_factory = connect_postgres()
+
+    # Start the autonomous dialogue engine: polls for human replies to the bot's
+    # comments and answers them with memory + thread-mood context (human-like).
+    try:
+        from app.dialogue_engine import start_dialogue_engine
+        start_dialogue_engine(db_session_factory)
+    except Exception as e:
+        logger.warning("Dialogue engine failed to start: %s (non-fatal)", e)
 
     # Verify execution queue
     queue_depth = redis_client.llen(EXECUTION_TASKS_QUEUE)

@@ -80,6 +80,21 @@ def init_tables() -> None:
     except Exception as exc:  # pragma: no cover - index is an optimisation, not a hard dep
         logger.warning("Could not create IVFFlat index (continuing without it): %s", exc)
 
+    # Stage 23 — lightweight idempotent column migrations. create_all() never
+    # ALTERs existing tables, so new columns on already-created tables (e.g. the
+    # decoupled-identity `status`) must be added explicitly. Safe to re-run.
+    _STAGE23_COLUMNS = [
+        ("agent_profiles", "status", "VARCHAR(20) NOT NULL DEFAULT 'unbound'"),
+        ("souls_accounts", "status", "VARCHAR(20) NOT NULL DEFAULT 'unbound'"),
+    ]
+    try:
+        with engine.begin() as conn:
+            for table, column, ddl in _STAGE23_COLUMNS:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}"))
+        logger.info("Stage 23 identity-status columns ensured.")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Could not ensure Stage 23 columns: %s", exc)
+
     # Stage 22 — GIN index on the JSONB landscape_layers array so the `?|`
     # overlap filter used by RAG array-intersection search is fast.
     try:
