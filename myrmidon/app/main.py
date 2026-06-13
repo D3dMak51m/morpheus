@@ -566,6 +566,14 @@ def main() -> None:
     except Exception as e:
         logger.warning("Dialogue engine failed to start: %s (non-fatal)", e)
 
+    # Start the autonomous target-channel engine: polls target+watching channels,
+    # relevance-filters new posts, and enqueues comment tasks (P4).
+    try:
+        from app.target_engine import start_target_engine
+        start_target_engine(db_session_factory)
+    except Exception as e:
+        logger.warning("Target engine failed to start: %s (non-fatal)", e)
+
     # Verify execution queue
     queue_depth = redis_client.llen(EXECUTION_TASKS_QUEUE)
     logger.info(

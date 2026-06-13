@@ -452,6 +452,60 @@ class TelegramDriver:
                 })
         return out
 
+    # ── Target-channel post scanning (polled by target_engine) ─────────────
+
+    def fetch_new_posts(self, channels: List[dict], since_map: Dict[str, int],
+                        per_channel_limit: int = 5) -> List[dict]:
+        """
+        For each target channel, read its most recent posts and return the ones
+        newer than the last-seen id. Read-only; one session under the lock.
+        ``channels``: [{chat_id, username}]; ``since_map``: {chat_id: last_seen_id}.
+        Returns [{chat_id, username, newest, first_seen, posts:[{post_id,text}]}].
+        """
+        if not self._credentials_ok():
+            return []
+        token = dialogue_store.acquire_session_lock(self.agent_id)
+        if not token:
+            return []
+        loop = self._ensure_loop()
+        try:
+            return loop.run_until_complete(
+                self._fetch_new_posts_async(channels, since_map, per_channel_limit))
+        except Exception as e:
+            logger.error("TelegramDriver [%s]: fetch_new_posts crashed: %s", self.agent_id, e)
+            return []
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
+    async def _fetch_new_posts_async(self, channels, since_map, limit) -> List[dict]:
+        app = self._build_client()
+        out: List[dict] = []
+        async with app:
+            for ch in channels:
+                cid = str(ch.get("chat_id"))
+                username = ch.get("username")
+                ref = username or (int(cid) if cid.lstrip("-").isdigit() else cid)
+                since = int(since_map.get(cid, 0))
+                newest = since
+                posts = []
+                try:
+                    async for m in app.get_chat_history(ref, limit=limit):
+                        if m.id > newest:
+                            newest = m.id
+                        if since and m.id <= since:
+                            continue
+                        txt = (getattr(m, "text", None) or getattr(m, "caption", None) or "").strip()
+                        if txt:
+                            posts.append({"post_id": m.id, "text": txt})
+                except Exception as e:
+                    logger.debug("TelegramDriver [%s]: cannot read history of %s: %s", self.agent_id, ref, e)
+                    continue
+                out.append({
+                    "chat_id": cid, "username": username, "newest": newest,
+                    "first_seen": (since == 0), "posts": posts,
+                })
+        return out
+
     # ── Autonomous dialogue cycle (polled by dialogue_engine) ──────────────
 
     def run_dialogue_cycle(self, watches: List[dict], generate_reply: Callable[[dict], str],

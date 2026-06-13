@@ -30,6 +30,8 @@ interface LiveOpsProps {
 // Machine event key → emoji icon + human label. Anything unknown falls back.
 const EVENT_META: Record<string, { icon: string; label: string }> = {
   poll:             { icon: '🔄', label: 'Поллинг диалогов' },
+  target_scan:      { icon: '🎯', label: 'Сканирует целевые каналы' },
+  target_post:      { icon: '🎯', label: 'Релевантный пост в цели' },
   reply_detected:   { icon: '👋', label: 'Получен ответ человека' },
   reading_post:     { icon: '👁', label: 'Читает пост' },
   reading_thread:   { icon: '🌡', label: 'Оценивает настроение треда' },
