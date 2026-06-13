@@ -176,6 +176,47 @@ def _persist_dialog_memory(persona_engine, req: dict, final_text: str) -> None:
         logger.error("Failed to persist dialog memory: %s", exc)
 
 
+def handle_relevance(req: dict, redis_client, persona_engine) -> None:
+    """
+    Cheap LLM relevance gate for the target engine: given the agent's mission +
+    interests, decide whether a candidate post is worth commenting on. A tiny
+    YES/НЕТ generation (num_predict≈5) — much cheaper than a full comment. Returns
+    {status, relevant} on the request's reply_key.
+    """
+    reply_key = req.get("reply_key")
+    agent_id = req.get("agent_id")
+    post_text = (req.get("post_text") or "").strip()
+    result = {"status": "ok", "relevant": False}
+    try:
+        profile = persona_engine.get_all_profiles().get(agent_id) or {}
+        mission = profile.get("core_mission") or ""
+        interests = profile.get("interests") or []
+        interests_str = ", ".join(i for i in interests if isinstance(i, str))[:200]
+        occupation = (profile.get("identity", {}) or {}).get("occupation") or ""
+        prompt = (
+            f"Темы и интересы человека: {interests_str}.\n"
+            f"Профессия: {occupation}.\n"
+            f"Цель: {mission[:200]}\n\n"
+            f"Пост: \"{post_text[:400]}\"\n\n"
+            "Может ли этот человек ЕСТЕСТВЕННО вступить в обсуждение этого поста, "
+            "исходя из своих интересов или профессии? Даже косвенная связь считается «да». "
+            "Ответь СТРОГО одним словом: ДА или НЕТ."
+        )
+        answer = generate_text(prompt, max_tokens=5).strip().lower()
+        result["relevant"] = ("да" in answer) or ("yes" in answer) or answer.startswith("1")
+        logger.info("Relevance %s agent=%s → %s (%r)", req.get("request_id"), agent_id,
+                    result["relevant"], answer[:20])
+    except Exception as exc:
+        logger.warning("Relevance check failed: %s", exc)
+        result = {"status": "error", "relevant": False}
+    if reply_key:
+        try:
+            redis_client.lpush(reply_key, json.dumps(result, ensure_ascii=False))
+            redis_client.expire(reply_key, 120)
+        except Exception:
+            pass
+
+
 def handle_mission_generation(req: dict, redis_client, persona_engine, guardrails) -> None:
     """
     Generate a real, context-aware mission comment and return it to MYRMIDON via
@@ -307,7 +348,10 @@ def main() -> None:
                 except json.JSONDecodeError as exc:
                     logger.error("Malformed mission-gen request: %s", exc)
                     continue
-                handle_mission_generation(gen_req, redis_client, persona_engine, guardrails)
+                if gen_req.get("mode") == "relevance":
+                    handle_relevance(gen_req, redis_client, persona_engine)
+                else:
+                    handle_mission_generation(gen_req, redis_client, persona_engine, guardrails)
                 continue
 
             event_json = payload

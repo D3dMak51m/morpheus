@@ -42,6 +42,8 @@ logger = logging.getLogger("myrmidon.target_engine")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
+MISSION_GEN_QUEUE = "queue:mission_gen"
+RELEVANCE_TIMEOUT = int(os.getenv("TARGET_RELEVANCE_TIMEOUT_SEC", "60"))
 DAEDALUS_URL = os.getenv("DAEDALUS_URL", "http://daedalus:8000")
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 # Bound how many news posts we classify/ingest per cycle (shared GPU on DAEDALUS).
@@ -60,6 +62,7 @@ LASTSEEN_KEY = "morpheus:target:lastseen"     # hash field "<agent>:<chat>" -> p
 RATE_PREFIX = "morpheus:target:rate:"          # per agent:chat hourly counter
 
 _redis: Optional[redis.Redis] = None
+_gen_redis: Optional[redis.Redis] = None
 
 
 def _get_redis() -> redis.Redis:
@@ -68,6 +71,38 @@ def _get_redis() -> redis.Redis:
         _redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True,
                              socket_connect_timeout=5, socket_timeout=15, retry_on_timeout=True)
     return _redis
+
+
+def _get_gen_redis() -> redis.Redis:
+    """Separate client with a long socket timeout for the ORPHEUS relevance round-trip."""
+    global _gen_redis
+    if _gen_redis is None:
+        _gen_redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True,
+                                 socket_connect_timeout=5, socket_timeout=RELEVANCE_TIMEOUT + 15)
+    return _gen_redis
+
+
+def _relevance_via_orpheus(agent_id: str, post_text: str) -> Optional[bool]:
+    """
+    Ask ORPHEUS for a cheap LLM verdict on whether this post is worth commenting on
+    (mission/interests-aware). Returns True/False, or None on timeout/failure so the
+    caller can fall back to the keyword check.
+    """
+    rid = uuid.uuid4().hex
+    rk = f"reply:relevance:{rid}"
+    req = {"request_id": rid, "reply_key": rk, "mode": "relevance",
+           "agent_id": agent_id, "post_text": post_text}
+    try:
+        c = _get_gen_redis()
+        c.lpush(MISSION_GEN_QUEUE, json.dumps(req, ensure_ascii=False))
+        res = c.brpop(rk, timeout=RELEVANCE_TIMEOUT)
+        if not res:
+            return None
+        data = json.loads(res[1])
+        return bool(data.get("relevant")) if data.get("status") == "ok" else None
+    except Exception as exc:
+        logger.warning("target_engine: relevance round-trip failed: %s", exc)
+        return None
 
 
 def _agent_keywords(sf, agent_id: str) -> list[str]:
@@ -259,16 +294,23 @@ def _process_agent(agent_id: str, channels: list[dict], sf) -> None:
         role = channel.get("role", "target")
 
         if role == "target":
-            if not keywords:
-                continue  # no relevance basis → stay silent
-            # newest relevant post first; at most one comment per channel per cycle.
-            for post in sorted(res["posts"], key=lambda p: p["post_id"], reverse=True):
-                if not _relevant(post["text"], keywords):
-                    continue
-                if not _allow_rate(agent_id, cid):
-                    break
-                _enqueue_comment(agent_id, channel, post, mission)
-                break
+            # Evaluate only the newest new post (bounds LLM relevance to ≤1/channel/cycle).
+            posts = sorted(res["posts"], key=lambda p: p["post_id"], reverse=True)
+            if not posts:
+                continue
+            top = posts[0]
+            # Hybrid relevance: an operator-listed interest keyword is authoritative
+            # (engage, no LLM needed). Otherwise ask ORPHEUS for a smart verdict — this
+            # catches posts that match the persona/mission without an exact keyword.
+            if keywords and _relevant(top["text"], keywords):
+                verdict = True
+            else:
+                verdict = _relevance_via_orpheus(agent_id, top["text"]) or False
+            if not verdict:
+                continue
+            if not _allow_rate(agent_id, cid):
+                continue
+            _enqueue_comment(agent_id, channel, top, mission)
 
         elif role == "news":
             # Ingest new posts into the knowledge base (no relevance gate — it's
