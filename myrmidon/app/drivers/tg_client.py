@@ -379,13 +379,12 @@ class TelegramDriver:
 
     def execute_comment(self, target_url: str, text: str, text_provider=None,
                         watch_meta: Optional[dict] = None) -> bool:
-        loop = self._ensure_loop()
         # Serialize all use of this agent's Telegram session (mission posting,
         # dialogue polling, scouting) behind a per-agent advisory lock so two
         # operations never drive the same AUTH_KEY simultaneously.
         token = self._await_session_lock()
         try:
-            return loop.run_until_complete(
+            return self._run(
                 self._execute_comment_async(target_url, text, text_provider, watch_meta)
             )
         finally:
@@ -394,15 +393,32 @@ class TelegramDriver:
     # ── Session-loop / lock helpers ────────────────────────────────────────
 
     @staticmethod
-    def _ensure_loop():
+    def _run(coro):
+        """
+        Run a coroutine on a FRESH event loop and tear it down cleanly.
+
+        A fresh loop per call (instead of reusing one via get_event_loop) avoids
+        Pyrogram leaving background tasks (ping_worker / disconnect) bound to a
+        reused loop — which caused the transient "got Future attached to a
+        different loop" crash in the long-lived daemon threads (target/dialogue
+        engines) that drive many short-lived sessions.
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                raise RuntimeError("event loop closed")
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
+            return loop.run_until_complete(coro)
+        finally:
+            try:
+                pending = asyncio.all_tasks(loop)
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            asyncio.set_event_loop(None)
+            loop.close()
 
     def _await_session_lock(self, attempts: int = 12, delay: float = 5.0) -> Optional[str]:
         """
@@ -428,9 +444,8 @@ class TelegramDriver:
         if not self._credentials_ok():
             return False
         token = self._await_session_lock()
-        loop = self._ensure_loop()
         try:
-            return loop.run_until_complete(self._execute_reaction_async(target_url, react_msg_id, emoji))
+            return self._run(self._execute_reaction_async(target_url, react_msg_id, emoji))
         except Exception as e:
             logger.error("TelegramDriver [%s]: execute_reaction crashed: %s", self.agent_id, e)
             return False
@@ -482,9 +497,8 @@ class TelegramDriver:
         if not self._credentials_ok():
             return []
         token = self._await_session_lock()
-        loop = self._ensure_loop()
         try:
-            return loop.run_until_complete(self._list_channels_async())
+            return self._run(self._list_channels_async())
         except Exception as e:
             logger.error("TelegramDriver [%s]: list_channels failed: %s", self.agent_id, e)
             return []
@@ -525,9 +539,8 @@ class TelegramDriver:
         token = dialogue_store.acquire_session_lock(self.agent_id)
         if not token:
             return []
-        loop = self._ensure_loop()
         try:
-            return loop.run_until_complete(
+            return self._run(
                 self._fetch_new_posts_async(channels, since_map, per_channel_limit))
         except Exception as e:
             logger.error("TelegramDriver [%s]: fetch_new_posts crashed: %s", self.agent_id, e)
@@ -582,9 +595,8 @@ class TelegramDriver:
         if not token:
             logger.info("TelegramDriver [%s]: session busy — skipping dialogue cycle.", self.agent_id)
             return empty
-        loop = self._ensure_loop()
         try:
-            return loop.run_until_complete(
+            return self._run(
                 self._run_dialogue_cycle_async(watches, generate_reply, max_depth)
             )
         except Exception as e:
