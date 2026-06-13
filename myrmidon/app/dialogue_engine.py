@@ -31,6 +31,7 @@ import uuid
 from collections import defaultdict
 from typing import Optional
 
+import httpx
 import redis
 
 from app import dialogue_store
@@ -44,6 +45,8 @@ logger = logging.getLogger("myrmidon.dialogue_engine")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+DAEDALUS_URL = os.getenv("DAEDALUS_URL", "http://daedalus:8000")
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 MISSION_GEN_QUEUE = "queue:mission_gen"
 ORPHEUS_GEN_TIMEOUT = int(os.getenv("ORPHEUS_GEN_TIMEOUT_SEC", "150"))
 
@@ -143,8 +146,30 @@ def _process_agent(agent_id: str, watches: list, db_session_factory) -> None:
             dialogue_store.remove_watch(entry[1])
 
     # Register follow-up watches on the bot's own answers → multi-turn dialogue.
+    # Each new watch corresponds to one human reply we just answered → log it
+    # durably (action_type=reply) so the swarm dashboard can count conversations.
     for nw in results.get("new_watches", []):
         dialogue_store.register_watch(agent_id=agent_id, **nw)
+        _log_reply(agent_id, nw)
+
+
+def _log_reply(agent_id: str, watch: dict) -> None:
+    """Record an answered human reply in the durable activity log (best-effort)."""
+    try:
+        url = ""
+        ch, pid = watch.get("channel_ref"), watch.get("post_id")
+        if ch and pid:
+            ref = ch if str(ch).startswith("@") else f"@{ch}" if not str(ch).lstrip("-").isdigit() else ch
+            url = f"https://t.me/{str(ref).lstrip('@')}/{pid}"
+        payload = {
+            "agent_id": agent_id, "platform": "telegram", "action_type": "reply",
+            "target_url": url, "text_content": None, "status": "SUCCESS",
+        }
+        with httpx.Client(timeout=10.0) as client:
+            client.post(f"{DAEDALUS_URL}/api/v1/analytics/internal/activity",
+                        json=payload, headers={"X-Internal-Token": INTERNAL_API_TOKEN})
+    except Exception as exc:
+        logger.debug("reply activity log failed: %s", exc)
 
 
 def _poll_once(db_session_factory) -> None:

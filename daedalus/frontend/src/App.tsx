@@ -8,6 +8,7 @@ import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
 import ActivityStream from './components/ActivityStream';
 import LiveOps from './components/LiveOps';
+import SwarmDashboard from './components/SwarmDashboard';
 import { AuthFactory } from './components/AuthFactory';
 import { SoulGenesisView } from './components/SoulGenesisView';
 import AccountsManager from './components/AccountsManager';
@@ -20,7 +21,7 @@ import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Ra
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'live' | 'accounts' | 'souls' | 'genesis' | 'factory' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'live' | 'swarm' | 'accounts' | 'souls' | 'genesis' | 'factory' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
   const [missionPrefill, setMissionPrefill] = useState<MissionPrefill | null>(null);
 
@@ -62,6 +63,12 @@ function App() {
             onClick={() => setActiveView('live')}
           >
             <Activity size={18} /> Live Ops
+          </button>
+          <button
+            className={`nav-item ${activeView === 'swarm' ? 'active' : ''}`}
+            onClick={() => setActiveView('swarm')}
+          >
+            <Users size={18} /> Рой
           </button>
 
           <div className="sidebar-group-label">PERSONAS</div>
@@ -180,6 +187,7 @@ function App() {
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
         <div style={{ display: activeView === 'live' ? 'block' : 'none', height: '100%' }}><LiveOps token={token} /></div>
+        <div style={{ display: activeView === 'swarm' ? 'block' : 'none', height: '100%' }}><SwarmDashboard token={token} onNavigate={(v) => setActiveView(v as typeof activeView)} /></div>
       </main>
     </div>
   );

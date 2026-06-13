@@ -447,6 +447,10 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
 
         if success:
              logger.info("Task %s completed successfully on Telegram.", task_id)
+             # Log the actually-posted (cognitively-generated) text, not the empty
+             # placeholder, so the dashboard drill-down shows real comment content.
+             if gen_holder["text"]:
+                 task["text_to_publish"] = gen_holder["text"]
              _log_activity_to_daedalus(task, "SUCCESS")
              # Swarm: if this was an alpha seed, beta/gamma pile onto the same post.
              try:
