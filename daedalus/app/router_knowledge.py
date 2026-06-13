@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import Session
 
@@ -315,17 +316,23 @@ def rag_search(
 @router.get("/facts", response_model=dict[str, Any])
 def list_facts(
     layer: Optional[str] = None,
+    q: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("monitoring:view")),
 ) -> dict[str, Any]:
-    """Browse stored KnowledgeFact clusters, newest first, optional layer filter."""
+    """Browse stored KnowledgeFact clusters, newest first; filter by layer and/or
+    a free-text query (matches the fact content OR its source — e.g. a channel)."""
     query = db.query(KnowledgeFact)
     if layer:
         ln = layer.strip().lower()
         if ln in LANDSCAPE_LAYERS:
             query = query.filter(KnowledgeFact.landscape_layers.op("?|")(array([ln])))
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(KnowledgeFact.content.ilike(like),
+                                 KnowledgeFact.source_url.ilike(like)))
     total = query.count()
     facts = query.order_by(KnowledgeFact.updated_at.desc()).offset(skip).limit(limit).all()
     return {

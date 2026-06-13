@@ -113,7 +113,7 @@ function App() {
             className={`nav-item ${activeView === 'muninn' ? 'active' : ''}`}
             onClick={() => setActiveView('muninn')}
           >
-            <Brain size={18} /> Muninn Memory
+            <Brain size={18} /> Знания роя
           </button>
 
           <div className="sidebar-group-label">EXECUTION</div>

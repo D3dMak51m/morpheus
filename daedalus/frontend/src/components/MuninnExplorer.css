@@ -141,3 +141,16 @@
   color: #fff;
   font-weight: 600;
 }
+
+/* search + source + load-more */
+.mx-searchbar { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.mx-search {
+  flex: 1; min-width: 240px;
+  background: var(--bg-base, #07080f);
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.12));
+  color: var(--text-main, #e2e8f0);
+  border-radius: 8px; padding: 9px 12px; font-size: 0.85rem;
+}
+.mx-result-count { font-size: 0.76rem; color: var(--text-muted, #94a3b8); white-space: nowrap; }
+.mx-source { font-size: 0.78rem; white-space: nowrap; }
+.mx-loadmore { display: flex; justify-content: center; padding: 14px 0; }
