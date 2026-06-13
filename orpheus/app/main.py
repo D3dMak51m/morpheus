@@ -189,19 +189,32 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     result = {"status": "ok", "relevant": False}
     try:
         profile = persona_engine.get_all_profiles().get(agent_id) or {}
-        mission = profile.get("core_mission") or ""
-        interests = profile.get("interests") or []
-        interests_str = ", ".join(i for i in interests if isinstance(i, str))[:200]
-        occupation = (profile.get("identity", {}) or {}).get("occupation") or ""
-        prompt = (
-            f"Темы и интересы человека: {interests_str}.\n"
-            f"Профессия: {occupation}.\n"
-            f"Цель: {mission[:200]}\n\n"
-            f"Пост: \"{post_text[:400]}\"\n\n"
-            "Может ли этот человек ЕСТЕСТВЕННО вступить в обсуждение этого поста, "
-            "исходя из своих интересов или профессии? Даже косвенная связь считается «да». "
-            "Ответь СТРОГО одним словом: ДА или НЕТ."
-        )
+        # Mission-driven relevance (preferred): judge against the mission's goal/stance.
+        m_goal = (req.get("goal") or "").strip()
+        m_stance = (req.get("stance") or "").strip()
+        if m_goal or m_stance:
+            prompt = (
+                f"Миссия продвигает: {m_goal[:250]}\n"
+                f"Наша позиция: {m_stance[:250]}\n\n"
+                f"Пост в обсуждении: \"{post_text[:400]}\"\n\n"
+                "Касается ли пост темы миссии ИЛИ проблемы, которую миссия решает "
+                "(прямо или косвенно)? Если да и уместно высказаться в духе позиции — "
+                "ответь ДА. Если пост совсем о другом — НЕТ. Одно слово: ДА или НЕТ."
+            )
+        else:
+            mission = profile.get("core_mission") or ""
+            interests = profile.get("interests") or []
+            interests_str = ", ".join(i for i in interests if isinstance(i, str))[:200]
+            occupation = (profile.get("identity", {}) or {}).get("occupation") or ""
+            prompt = (
+                f"Темы и интересы человека: {interests_str}.\n"
+                f"Профессия: {occupation}.\n"
+                f"Цель: {mission[:200]}\n\n"
+                f"Пост: \"{post_text[:400]}\"\n\n"
+                "Может ли этот человек ЕСТЕСТВЕННО вступить в обсуждение этого поста, "
+                "исходя из своих интересов или профессии? Даже косвенная связь считается «да». "
+                "Ответь СТРОГО одним словом: ДА или НЕТ."
+            )
         answer = generate_text(prompt, max_tokens=5).strip().lower()
         result["relevant"] = ("да" in answer) or ("yes" in answer) or answer.startswith("1")
         logger.info("Relevance %s agent=%s → %s (%r)", req.get("request_id"), agent_id,

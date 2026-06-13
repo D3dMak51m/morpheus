@@ -304,6 +304,7 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "author": author or "",
         "thread_context": thread_context or "",
         "narrative_goal": task.get("narrative_goal") or "",
+        "stance": task.get("stance") or "",
         "tactic": task.get("tactic") or "soft_support",
         "role": task.get("role") or "alpha",
         "forced_context": task.get("forced_context"),

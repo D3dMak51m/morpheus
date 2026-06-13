@@ -232,6 +232,7 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         # otherwise per channel/topic — this is what makes recall feel personal.
         opponent_key = req.get("opponent_id") or author
         narrative_goal = (req.get("narrative_goal") or "").strip()
+        mission_stance = (req.get("stance") or "").strip()  # the mission's worldview/side
         tactic = req.get("tactic") or "soft_support"
         role = req.get("role") or "alpha"
         forced_context = req.get("forced_context")
@@ -249,9 +250,10 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
                 "Пиши как живой человек, НЕ как ИИ, без пояснений и кавычек. "
                 f"Тон: {personality.get('tone_level', 'Neutral')}.\n\n"
                 f"Пост: {post_text[:200] or '(тема обсуждения)'}\n"
-                f"Союзник уже написал: \"{(alpha_context or '')[:200]}\"\n\n"
-                "[Задача] Коротко поддержи и усиль мысль союзника — ОДНО короткое "
-                "предложение, своими словами, на языке поста. НЕ повторяй его дословно. "
+                + (f"Позиция, которую отстаиваем: {mission_stance[:200]}\n" if mission_stance else "")
+                + f"Союзник уже написал: \"{(alpha_context or '')[:200]}\"\n\n"
+                "[Задача] Коротко поддержи и усиль мысль союзника (в духе позиции) — ОДНО "
+                "короткое предложение, своими словами, на языке поста. НЕ повторяй его дословно. "
                 "Выдай только текст реплики."
             )
 
@@ -341,6 +343,11 @@ Your role: {role_line}
 Tactic: {tactic_line}
 Objective to advance: {narrative_goal or core_mission}
 """
+        if mission_stance:
+            prompt += (
+                f"Mission stance (the side/'truth' you argue from — make your comment "
+                f"consistent with it, never against it): {mission_stance}\n"
+            )
         if role in ("beta", "gamma") and alpha_context:
             prompt += f"Allied lead context: {alpha_context}\n"
 

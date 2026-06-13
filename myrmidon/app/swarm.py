@@ -70,16 +70,26 @@ def _caste(sf, agent_id: str) -> str:
         s.close()
 
 
-def _companions(sf):
-    """Active beta/gamma agents that have an active Telegram account."""
+def _companions(sf, mission_id=None):
+    """Active beta/gamma agents with an active TG account. Scoped to a mission's
+    roster when ``mission_id`` is given, else the whole swarm."""
     s = sf()
     try:
-        rows = s.execute(text(
-            "SELECT a.agent_id, a.caste FROM agent_profiles a "
-            "JOIN souls_accounts s ON s.agent_id = a.agent_id "
-            "WHERE a.caste IN ('beta','gamma') AND a.status='active' "
-            "AND s.platform='telegram' AND s.status='active'"
-        )).fetchall()
+        if mission_id:
+            rows = s.execute(text(
+                "SELECT a.agent_id, a.caste FROM mission_squads q "
+                "JOIN agent_profiles a ON a.agent_id = q.agent_id "
+                "JOIN souls_accounts so ON so.agent_id = a.agent_id "
+                "WHERE q.mission_id = :m AND a.caste IN ('beta','gamma') AND a.status='active' "
+                "AND so.platform='telegram' AND so.status='active'"
+            ), {"m": mission_id}).fetchall()
+        else:
+            rows = s.execute(text(
+                "SELECT a.agent_id, a.caste FROM agent_profiles a "
+                "JOIN souls_accounts so ON so.agent_id = a.agent_id "
+                "WHERE a.caste IN ('beta','gamma') AND a.status='active' "
+                "AND so.platform='telegram' AND so.status='active'"
+            )).fetchall()
     except Exception as exc:
         logger.error("swarm: companion query failed: %s", exc)
         return [], []
@@ -106,6 +116,8 @@ def _enqueue_beta(agent_id: str, seed_task: dict, alpha_text: str, delay: int) -
         "generate": True,
         "lite": True,            # cheaper generation (no RAG/memory/thread, short)
         "narrative_goal": seed_task.get("narrative_goal") or "",
+        "stance": seed_task.get("stance") or "",
+        "mission_id": seed_task.get("mission_id"),
         "tactic": seed_task.get("tactic") or "soft_support",
         "role": "beta",
         "alpha_context": (alpha_text or "")[:300],
@@ -151,7 +163,7 @@ def amplify_seed(seed_task: dict, alpha_text: str, alpha_ref: Optional[dict] = N
     if not r.set(f"morpheus:amplified:{target_url}", "1", nx=True, ex=86400):
         return  # amplify a given post at most once across the whole swarm
 
-    betas, gammas = _companions(sf)
+    betas, gammas = _companions(sf, seed_task.get("mission_id"))
     react_msg_id = (alpha_ref or {}).get("message_id")
     n = 0
 

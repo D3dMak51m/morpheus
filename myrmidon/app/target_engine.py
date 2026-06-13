@@ -48,6 +48,8 @@ DAEDALUS_URL = os.getenv("DAEDALUS_URL", "http://daedalus:8000")
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 # Bound how many news posts we classify/ingest per cycle (shared GPU on DAEDALUS).
 NEWS_MAX_PER_CYCLE = int(os.getenv("TARGET_NEWS_MAX_PER_CYCLE", "20"))
+# How many of the newest new posts per mission channel to LLM-relevance-check.
+MISSION_RELEVANCE_CHECK = int(os.getenv("MISSION_RELEVANCE_CHECK", "3"))
 
 TARGET_POLL_INTERVAL_SEC = int(os.getenv("TARGET_POLL_INTERVAL_SEC", "300"))
 MAX_PER_CHANNEL_PER_HOUR = int(os.getenv("TARGET_MAX_PER_CHANNEL_PER_HOUR", "1"))
@@ -82,16 +84,17 @@ def _get_gen_redis() -> redis.Redis:
     return _gen_redis
 
 
-def _relevance_via_orpheus(agent_id: str, post_text: str) -> Optional[bool]:
+def _relevance_via_orpheus(agent_id: str, post_text: str,
+                           goal: str = "", stance: str = "") -> Optional[bool]:
     """
-    Ask ORPHEUS for a cheap LLM verdict on whether this post is worth commenting on
-    (mission/interests-aware). Returns True/False, or None on timeout/failure so the
-    caller can fall back to the keyword check.
+    Ask ORPHEUS for a cheap LLM verdict on whether this post is worth commenting on.
+    If a mission goal/stance is given, relevance is judged against the MISSION;
+    otherwise against the agent's own profile. None on timeout → keyword fallback.
     """
     rid = uuid.uuid4().hex
     rk = f"reply:relevance:{rid}"
     req = {"request_id": rid, "reply_key": rk, "mode": "relevance",
-           "agent_id": agent_id, "post_text": post_text}
+           "agent_id": agent_id, "post_text": post_text, "goal": goal, "stance": stance}
     try:
         c = _get_gen_redis()
         c.lpush(MISSION_GEN_QUEUE, json.dumps(req, ensure_ascii=False))
@@ -132,24 +135,64 @@ def _agent_keywords(sf, agent_id: str) -> list[str]:
     return list(kws)
 
 
-def _channels_by_agent(sf) -> dict[str, list[dict]]:
-    """Active agents → their watching channels (role target OR news) to act on."""
+def _news_channels_by_agent(sf) -> dict[str, list[dict]]:
+    """Active agents → their watching NEWS channels (knowledge gathering)."""
     session = sf()
     try:
         rows = session.execute(text(
-            "SELECT p.agent_id, p.chat_id, p.username, p.title, p.role "
+            "SELECT p.agent_id, p.chat_id, p.username, p.title "
             "FROM agent_channel_prefs p JOIN agent_profiles a ON a.agent_id = p.agent_id "
-            "WHERE p.role IN ('target','news') AND p.watching = true AND a.status='active'"
+            "WHERE p.role = 'news' AND p.watching = true AND a.status='active'"
         )).fetchall()
     except Exception as exc:
-        logger.error("target_engine: query failed: %s", exc)
+        logger.error("target_engine: news query failed: %s", exc)
         return {}
     finally:
         session.close()
     out: dict[str, list[dict]] = defaultdict(list)
-    for agent_id, chat_id, username, title, role in rows:
-        out[agent_id].append({"chat_id": str(chat_id), "username": username, "title": title, "role": role})
+    for agent_id, chat_id, username, title in rows:
+        out[agent_id].append({"chat_id": str(chat_id), "username": username, "title": title})
     return out
+
+
+def _active_missions(sf) -> list[dict]:
+    """
+    Active missions with their active CHANNEL targets and roster. Missions are now
+    the primary driver: their assigned agents work the mission's targets using the
+    mission's goal + stance (instead of each agent's personal interests).
+    """
+    session = sf()
+    try:
+        mrows = session.execute(text(
+            "SELECT id, title, narrative_goal, stance, tactic FROM missions WHERE status='active'"
+        )).fetchall()
+        if not mrows:
+            return []
+        out = []
+        for mid, title, goal, stance, tactic in mrows:
+            tgts = session.execute(text(
+                "SELECT identifier, title FROM mission_targets "
+                "WHERE mission_id=:m AND status='active' AND kind='channel'"
+            ), {"m": mid}).fetchall()
+            squad = session.execute(text(
+                "SELECT s.agent_id, s.assigned_role FROM mission_squads s "
+                "JOIN agent_profiles a ON a.agent_id = s.agent_id "
+                "WHERE s.mission_id=:m AND a.status='active'"
+            ), {"m": mid}).fetchall()
+            if not tgts or not squad:
+                continue
+            out.append({
+                "id": mid, "title": title, "goal": goal or title, "stance": stance or "",
+                "tactic": tactic or "dynamic",
+                "channels": [{"identifier": i, "title": t} for i, t in tgts],
+                "agents": [{"agent_id": a, "role": r} for a, r in squad],
+            })
+        return out
+    except Exception as exc:
+        logger.error("target_engine: missions query failed: %s", exc)
+        return []
+    finally:
+        session.close()
 
 
 def _news_layers(sf, username: Optional[str], chat_id: str) -> list[str]:
@@ -221,8 +264,8 @@ def _post_url(username: Optional[str], chat_id: str, post_id: int) -> str:
     return f"https://t.me/c/{internal}/{post_id}"
 
 
-def _enqueue_comment(agent_id: str, channel: dict, post: dict, mission: str) -> None:
-    url = _post_url(channel.get("username"), channel["chat_id"], post["post_id"])
+def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
+                     stance: str, tactic: str, mission_id: int, channel_label: str) -> None:
     task = {
         "task_id": str(uuid.uuid4()),
         "agent_id": agent_id,
@@ -231,118 +274,148 @@ def _enqueue_comment(agent_id: str, channel: dict, post: dict, mission: str) -> 
         "target_url": url,
         "text_to_publish": "",          # cognitive only; no canned fallback for autonomous
         "generate": True,
-        "narrative_goal": mission or "",
-        "tactic": "soft_support",
+        "narrative_goal": goal or "",
+        "stance": stance or "",
+        "tactic": tactic or "soft_support",
         "role": "alpha",
+        "mission_id": mission_id,
         "execution_delay_sec": EXEC_DELAY_SEC,
-        "source": "target_engine",
-        "swarm_seed": True,   # alpha seed → swarm amplifies after it posts
+        "source": "mission_engine",
+        "swarm_seed": True,   # alpha seed → mission's beta/gamma amplify after it posts
     }
     _get_redis().lpush(EXECUTION_TASKS_QUEUE, json.dumps(task, ensure_ascii=False))
     emit_event(agent_id, "target_post",
-               f"релевантный пост в {channel.get('title') or channel['chat_id']}: " + post["text"][:40],
+               f"релевантный пост в {channel_label}: " + post_text[:40],
                status="active", target=url)
-    logger.info("target_engine: agent=%s enqueued comment on %s", agent_id, url)
+    logger.info("mission_engine: agent=%s enqueued comment on %s (mission %s)", agent_id, url, mission_id)
 
 
-def _process_agent(agent_id: str, channels: list[dict], sf) -> None:
+def _mission_post_url(identifier: str, post_id: int) -> str:
+    ident = identifier.strip()
+    if ident.startswith("@"):
+        return f"https://t.me/{ident[1:]}/{post_id}"
+    if ident.startswith("http"):
+        return f"{ident.rstrip('/')}/{post_id}"
+    if ident.lstrip("-").isdigit():
+        internal = ident[4:] if ident.startswith("-100") else ident.lstrip("-")
+        return f"https://t.me/c/{internal}/{post_id}"
+    return f"https://t.me/{ident}/{post_id}"
+
+
+def _process_mission(mission: dict, sf) -> None:
+    """A mission drives its alpha to seed on each target channel's newest relevant
+    new post; beta/gamma amplify (mission-scoped) after alpha posts."""
     from app.main import get_agent_credentials
     from app.drivers.tg_client import TelegramDriver
+    from app import account_health
 
+    mid = mission["id"]
+    # Pick the seeding alpha from the roster (fall back to any roster agent).
+    alphas = [a["agent_id"] for a in mission["agents"] if a["role"] == "alpha"]
+    seeder = (alphas or [a["agent_id"] for a in mission["agents"]])[0] if mission["agents"] else None
+    if not seeder or account_health.in_cooldown(seeder):
+        return
+    creds = get_agent_credentials(sf, seeder, "telegram")
+    if creds is None:
+        return
+
+    channels = mission["channels"][:PER_CYCLE_CHANNEL_CAP]
+    fetch_list, since_map = [], {}
+    r = _get_redis()
+    for ch in channels:
+        ident = ch["identifier"]
+        key = f"mission:{mid}:{ident}"
+        since_map[ident] = int(r.hget(LASTSEEN_KEY, key) or 0)
+        username = ident.lstrip("@") if ident.startswith("@") else None
+        fetch_list.append({"chat_id": ident, "username": username, "title": ch.get("title")})
+
+    emit_event(seeder, "target_scan",
+               f"миссия «{mission['title'][:30]}»: {len(channels)} цел. канал(ов)",
+               status="info", target="telegram")
+
+    driver = TelegramDriver(seeder, creds)
+    results = driver.fetch_new_posts(fetch_list, since_map, POSTS_PER_CHANNEL)
+    label_by_id = {c["identifier"]: (c.get("title") or c["identifier"]) for c in channels}
+
+    for res in results:
+        ident = res["chat_id"]
+        key = f"mission:{mid}:{ident}"
+        if res["newest"]:
+            r.hset(LASTSEEN_KEY, key, res["newest"])
+        if res["first_seen"]:
+            continue
+        posts = sorted(res["posts"], key=lambda p: p["post_id"], reverse=True)
+        # Check the few newest new posts (not just the latest) for one relevant to
+        # the mission — bounded so the LLM relevance load stays small.
+        chosen = None
+        for cand in posts[:MISSION_RELEVANCE_CHECK]:
+            v = _relevance_via_orpheus(seeder, cand["text"], goal=mission["goal"], stance=mission["stance"])
+            if v is None:
+                v = True  # mission target channel → engage if LLM unavailable
+            if v:
+                chosen = cand
+                break
+        if not chosen:
+            continue
+        if not _allow_rate(f"mission_{mid}", ident):
+            continue
+        _enqueue_comment(seeder, _mission_post_url(ident, chosen["post_id"]), chosen["text"],
+                         mission["goal"], mission["stance"], mission["tactic"], mid, label_by_id.get(ident, ident))
+
+
+def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:
+    """Ingest new posts from an agent's NEWS channels into the knowledge base."""
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
     from app import account_health
     if account_health.in_cooldown(agent_id):
-        return  # agent is backing off after a Telegram limit
-
+        return
     creds = get_agent_credentials(sf, agent_id, "telegram")
     if creds is None:
         return
-    keywords = _agent_keywords(sf, agent_id)  # relevance basis for 'target' channels
-
     channels = channels[:PER_CYCLE_CHANNEL_CAP]
     r = _get_redis()
-    since_map = {}
-    for ch in channels:
-        v = r.hget(LASTSEEN_KEY, f"{agent_id}:{ch['chat_id']}")
-        since_map[ch["chat_id"]] = int(v) if v else 0
-
-    n_target = sum(1 for c in channels if c.get("role") == "target")
-    emit_event(agent_id, "target_scan",
-               f"проверяет {n_target} цел. / {len(channels) - n_target} новост. канал(ов)",
-               status="info", target="telegram")
-
+    since_map = {ch["chat_id"]: int(r.hget(LASTSEEN_KEY, f"{agent_id}:{ch['chat_id']}") or 0) for ch in channels}
     driver = TelegramDriver(agent_id, creds)
     results = driver.fetch_new_posts(channels, since_map, POSTS_PER_CHANNEL)
     if not results:
         return
-
-    mission = ""
-    ks = sf()
-    try:
-        row = ks.execute(text("SELECT core_mission FROM agent_profiles WHERE agent_id=:a"), {"a": agent_id}).fetchone()
-        mission = (row[0] if row else "") or ""
-    except Exception:
-        pass
-    finally:
-        ks.close()
-
     by_id = {c["chat_id"]: c for c in channels}
     news_budget = NEWS_MAX_PER_CYCLE
     for res in results:
         cid = res["chat_id"]
-        # Advance last-seen regardless, so we never re-scan old posts.
         if res["newest"]:
             r.hset(LASTSEEN_KEY, f"{agent_id}:{cid}", res["newest"])
         if res["first_seen"]:
-            continue  # just learned this channel's position; don't blast its backlog
+            continue
         channel = by_id.get(cid, {"chat_id": cid})
-        role = channel.get("role", "target")
-
-        if role == "target":
-            # Evaluate only the newest new post (bounds LLM relevance to ≤1/channel/cycle).
-            posts = sorted(res["posts"], key=lambda p: p["post_id"], reverse=True)
-            if not posts:
-                continue
-            top = posts[0]
-            # Hybrid relevance: an operator-listed interest keyword is authoritative
-            # (engage, no LLM needed). Otherwise ask ORPHEUS for a smart verdict — this
-            # catches posts that match the persona/mission without an exact keyword.
-            if keywords and _relevant(top["text"], keywords):
-                verdict = True
-            else:
-                verdict = _relevance_via_orpheus(agent_id, top["text"]) or False
-            if not verdict:
-                continue
-            if not _allow_rate(agent_id, cid):
-                continue
-            _enqueue_comment(agent_id, channel, top, mission)
-
-        elif role == "news":
-            # Ingest new posts into the knowledge base (no relevance gate — it's
-            # world-knowledge gathering); bounded per cycle to spare the GPU.
-            layers = _news_layers(sf, channel.get("username"), cid)
-            ingested = 0
-            for post in res["posts"]:
-                if news_budget <= 0:
-                    break
-                if _ingest_news(post["text"], _post_url(channel.get("username"), cid, post["post_id"]), layers):
-                    ingested += 1
-                    news_budget -= 1
-            if ingested:
-                emit_event(agent_id, "news_ingest",
-                           f"загрузил {ingested} новост. из {channel.get('title') or cid}",
-                           status="ok", target=channel.get("username") or cid)
+        layers = _news_layers(sf, channel.get("username"), cid)
+        ingested = 0
+        for post in res["posts"]:
+            if news_budget <= 0:
+                break
+            if _ingest_news(post["text"], _post_url(channel.get("username"), cid, post["post_id"]), layers):
+                ingested += 1
+                news_budget -= 1
+        if ingested:
+            emit_event(agent_id, "news_ingest",
+                       f"загрузил {ingested} новост. из {channel.get('title') or cid}",
+                       status="ok", target=channel.get("username") or cid)
 
 
 def _poll_once(sf) -> None:
-    by_agent = _channels_by_agent(sf)
-    if not by_agent:
-        return
-    logger.debug("target_engine tick: %d agents with watched channels", len(by_agent))
-    for agent_id, channels in by_agent.items():
+    # 1) Mission-driven commenting (missions are the primary driver).
+    for mission in _active_missions(sf):
         try:
-            _process_agent(agent_id, channels, sf)
+            _process_mission(mission, sf)
         except Exception as exc:
-            logger.error("target_engine: agent %s failed: %s", agent_id, exc)
+            logger.error("mission_engine: mission %s failed: %s", mission.get("id"), exc)
+    # 2) News ingest (knowledge gathering, per agent).
+    for agent_id, channels in _news_channels_by_agent(sf).items():
+        try:
+            _process_news_agent(agent_id, channels, sf)
+        except Exception as exc:
+            logger.error("news_ingest: agent %s failed: %s", agent_id, exc)
 
 
 def _run_loop(sf) -> None:
