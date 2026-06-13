@@ -118,22 +118,26 @@ def connect_redis(max_retries: int = 10, retry_delay: float = 3.0) -> redis.Redi
 
 # ── Text Generation (LLM) ─────────────────────────────────────────────────
 
-def generate_text(prompt: str) -> str:
-    """Sends the assembled prompt to Ollama's Text LLM with keep_alive=0."""
+def generate_text(prompt: str, max_tokens: Optional[int] = None) -> str:
+    """Sends the assembled prompt to Ollama's Text LLM with keep_alive=0.
+    ``max_tokens`` caps output length (used by the cheap beta 'lite' path)."""
     logger.info("Querying Text LLM (%s)...", TEXT_MODEL_NAME)
     try:
+        options = {
+            "temperature": 0.8,
+            "top_p": 0.9,
+            # Discourage the model from parroting the prompt / its own tokens.
+            "repeat_penalty": 1.3,
+            "frequency_penalty": 0.5,
+        }
+        if max_tokens:
+            options["num_predict"] = max_tokens
         payload = {
             "model": TEXT_MODEL_NAME,
             "prompt": prompt,
             "stream": False,
             "keep_alive": 0,  # Unload immediately after inference
-            "options": {
-                "temperature": 0.8,
-                "top_p": 0.9,
-                # Discourage the model from parroting the prompt / its own tokens.
-                "repeat_penalty": 1.3,
-                "frequency_penalty": 0.5,
-            }
+            "options": options,
         }
 
         with httpx.Client(timeout=120.0) as client:
@@ -215,9 +219,13 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
         else:
             # Echo references: reject replies that just parrot the human/post back.
             echo_refs = [req.get("incoming_text") or "", req.get("post_text") or ""]
+            # Beta 'lite' = cheaper: shorter output, fewer retries.
+            lite = bool(req.get("lite"))
+            attempts_cap = 2 if lite else MISSION_REGEN_ATTEMPTS
+            gen_max_tokens = 90 if lite else None
             final_text = ""
-            for attempt in range(1, MISSION_REGEN_ATTEMPTS + 1):
-                generated = generate_text(prompt)
+            for attempt in range(1, attempts_cap + 1):
+                generated = generate_text(prompt, max_tokens=gen_max_tokens)
                 ok, reason = guardrails.validate_output(generated)
                 if ok and guardrails.is_echo(generated, echo_refs):
                     ok, reason = False, "reply echoes/repeats the incoming message"

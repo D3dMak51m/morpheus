@@ -237,6 +237,24 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         forced_context = req.get("forced_context")
         alpha_context = req.get("alpha_context")
 
+        # Beta "lite" support path — cheap by design (a beta agent is cheaper than an
+        # alpha). Persona + the ally's line + a short supporting reply; SKIPS the
+        # expensive RAG fetch, MUNINN memory and thread-mood reads entirely.
+        if req.get("lite"):
+            identity = profile.get("identity", {})
+            personality = profile.get("personality", {})
+            return (
+                f"Ты — {identity.get('full_name') or 'обычный человек'}, "
+                f"{identity.get('occupation') or ''} из {identity.get('city') or ''}. "
+                "Пиши как живой человек, НЕ как ИИ, без пояснений и кавычек. "
+                f"Тон: {personality.get('tone_level', 'Neutral')}.\n\n"
+                f"Пост: {post_text[:200] or '(тема обсуждения)'}\n"
+                f"Союзник уже написал: \"{(alpha_context or '')[:200]}\"\n\n"
+                "[Задача] Коротко поддержи и усиль мысль союзника — ОДНО короткое "
+                "предложение, своими словами, на языке поста. НЕ повторяй его дословно. "
+                "Выдай только текст реплики."
+            )
+
         # Ground retrieval + memory on the most relevant text we have.
         subscriptions = profile.get("context_subscriptions") or ["global"]
         rag_query = "\n".join(t for t in (incoming_text, post_text, narrative_goal) if t).strip()

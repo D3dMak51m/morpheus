@@ -201,6 +201,7 @@ def _enqueue_comment(agent_id: str, channel: dict, post: dict, mission: str) -> 
         "role": "alpha",
         "execution_delay_sec": EXEC_DELAY_SEC,
         "source": "target_engine",
+        "swarm_seed": True,   # alpha seed → swarm amplifies after it posts
     }
     _get_redis().lpush(EXECUTION_TASKS_QUEUE, json.dumps(task, ensure_ascii=False))
     emit_event(agent_id, "target_post",

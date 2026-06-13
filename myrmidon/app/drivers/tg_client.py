@@ -96,6 +96,10 @@ class TelegramDriver:
         if active_proxy:
             self.proxy_dict = active_proxy.to_pyrogram_proxy()
 
+        # Coordinates of the last comment this driver posted (disc chat + msg id),
+        # so the swarm can have gamma agents react to alpha's exact comment.
+        self.last_post_ref: Optional[dict] = None
+
     async def _simulate_typing(self, text: str) -> None:
         """Human-like pause before sending; capped so missions don't stall."""
         try:
@@ -323,6 +327,8 @@ class TelegramDriver:
                         return False
                     emit_event(self.agent_id, "commented", "опубликовал комментарий: " + final_text[:60],
                                status="ok", target=target_url)
+                    # Remember where we posted so the swarm can react to this comment.
+                    self.last_post_ref = {"disc_chat_id": disc_chat_id, "message_id": sent.id}
                     # Start listening for human replies to this comment so the bot
                     # can carry the conversation autonomously (see dialogue_engine).
                     self._register_dialogue_watch(
@@ -412,6 +418,58 @@ class TelegramDriver:
             _time.sleep(delay)
         logger.warning("TelegramDriver [%s]: proceeding without session lock (held elsewhere).", self.agent_id)
         return None
+
+    # ── Reactions (gamma "white noise": cheap promote of an ally's comment) ─
+
+    def execute_reaction(self, target_url: str, react_msg_id: int, emoji: str) -> bool:
+        """React (emoji) to an ally's comment under a channel post. Cheap, no LLM —
+        this is what gamma agents do. ``react_msg_id`` is the comment's id in the
+        linked discussion group."""
+        if not self._credentials_ok():
+            return False
+        token = self._await_session_lock()
+        loop = self._ensure_loop()
+        try:
+            return loop.run_until_complete(self._execute_reaction_async(target_url, react_msg_id, emoji))
+        except Exception as e:
+            logger.error("TelegramDriver [%s]: execute_reaction crashed: %s", self.agent_id, e)
+            return False
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
+    async def _execute_reaction_async(self, target_url: str, react_msg_id: int, emoji: str) -> bool:
+        chat_ref, post_id = parse_target(target_url)
+        if chat_ref is None or not post_id:
+            return False
+        app = self._build_client()
+        async with app:
+            try:
+                chat = await app.get_chat(chat_ref)
+                # Resolve/cache the linked discussion peer via the channel+post.
+                disc = await app.get_discussion_message(chat.id, post_id)
+                disc_chat_id = disc.chat.id
+            except Exception as e:
+                logger.warning("TelegramDriver [%s]: reaction target resolve failed: %s", self.agent_id, e)
+                return False
+            for attempt in (1, 2):
+                try:
+                    await app.send_reaction(disc_chat_id, react_msg_id, emoji)
+                    logger.info("TelegramDriver [%s]: reacted %s to msg %s.", self.agent_id, emoji, react_msg_id)
+                    emit_event(self.agent_id, "reacted", f"поставил реакцию {emoji} на коммент союзника",
+                               status="ok", target=target_url)
+                    return True
+                except (UserNotParticipant, ChatWriteForbidden):
+                    if attempt == 1:
+                        try:
+                            await app.join_chat(disc_chat_id)
+                        except Exception:
+                            return False
+                        continue
+                    return False
+                except Exception as e:
+                    logger.warning("TelegramDriver [%s]: send_reaction failed: %s", self.agent_id, e)
+                    return False
+        return False
 
     # ── Channel enumeration (the agent's subscribed channels = its targets) ─
 

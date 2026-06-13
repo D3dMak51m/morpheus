@@ -308,6 +308,7 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "role": task.get("role") or "alpha",
         "forced_context": task.get("forced_context"),
         "alpha_context": task.get("alpha_context"),
+        "lite": task.get("lite", False),
     }
     try:
         client = _get_gen_redis()
@@ -412,15 +413,25 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
         from app.drivers.tg_client import TelegramDriver
         driver = TelegramDriver(agent_id, credentials)
 
+        # Gamma "white noise": a cheap emoji reaction to an ally's comment (no LLM).
+        if task.get("action_type") == "react":
+            ok = driver.execute_reaction(target_url, task.get("react_msg_id"), task.get("emoji") or "👍")
+            _log_activity_to_daedalus(task, "SUCCESS" if ok else "FAILED")
+            return
+
         # Mission tasks carry generate=True: the driver reads the post being
         # replied to plus the mood of the discussion and ORPHEUS writes a real,
         # context-aware comment. Falls back to the task's deterministic text if
         # ORPHEUS is slow/unavailable.
+        # Capture the cognitively-generated text so swarm amplification can hand it
+        # to companions as alpha_context.
+        gen_holder = {"text": ""}
         text_provider = None
         if task.get("generate"):
-            text_provider = lambda post_text, author, thread_context="": generate_comment_via_orpheus(
-                task, post_text, author, thread_context
-            )
+            def text_provider(post_text, author, thread_context=""):
+                t = generate_comment_via_orpheus(task, post_text, author, thread_context)
+                gen_holder["text"] = t or ""
+                return t
 
         # Carry the mission framing so a successful comment starts a dialogue watch
         # (the bot then keeps conversing with anyone who replies to it).
@@ -437,6 +448,12 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
         if success:
              logger.info("Task %s completed successfully on Telegram.", task_id)
              _log_activity_to_daedalus(task, "SUCCESS")
+             # Swarm: if this was an alpha seed, beta/gamma pile onto the same post.
+             try:
+                 from app.swarm import amplify_seed
+                 amplify_seed(task, gen_holder["text"] or text_to_publish, driver.last_post_ref)
+             except Exception as e:
+                 logger.warning("Swarm amplification skipped: %s", e)
         else:
              logger.error("Task %s failed on Telegram.", task_id)
              _log_activity_to_daedalus(task, "FAILED")
