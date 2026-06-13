@@ -70,6 +70,8 @@ const STATUS_LABEL: Record<string, string> = {
   active: 'активен',
   suspended: 'на паузе',
   unbound: 'без аккаунта',
+  banned: 'забанен',
+  limited: 'ограничен',
 };
 
 const normalizeComm = (raw: any): CommunicationStyle => ({

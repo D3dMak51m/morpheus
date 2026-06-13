@@ -35,6 +35,8 @@ const EVENT_META: Record<string, { icon: string; label: string }> = {
   news_ingest:      { icon: '🗞', label: 'Загрузил новости в знания' },
   amplify:          { icon: '📣', label: 'Рой усиливает (alpha→beta/gamma)' },
   reacted:          { icon: '👍', label: 'Гамма поставил реакцию' },
+  cooldown:         { icon: '🧊', label: 'Пауза (лимит Telegram)' },
+  account_alert:    { icon: '🚫', label: 'Проблема с аккаунтом' },
   reply_detected:   { icon: '👋', label: 'Получен ответ человека' },
   reading_post:     { icon: '👁', label: 'Читает пост' },
   reading_thread:   { icon: '🌡', label: 'Оценивает настроение треда' },

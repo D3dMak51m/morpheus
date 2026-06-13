@@ -249,6 +249,10 @@ def _process_agent(agent_id: str, channels: list[dict], sf) -> None:
     from app.main import get_agent_credentials
     from app.drivers.tg_client import TelegramDriver
 
+    from app import account_health
+    if account_health.in_cooldown(agent_id):
+        return  # agent is backing off after a Telegram limit
+
     creds = get_agent_credentials(sf, agent_id, "telegram")
     if creds is None:
         return

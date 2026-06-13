@@ -61,3 +61,6 @@ tr.sd-clickable:hover { background: var(--bg-card, rgba(255,255,255,0.04)); }
 .sd-drill-act { font-weight: 700; font-size: 0.74rem; text-transform: uppercase; }
 .sd-drill-text { margin-top: 5px; font-size: 0.85rem; font-style: italic; }
 .sd-drill-url { display: inline-block; margin-top: 4px; font-size: 0.74rem; color: var(--accent, #818cf8); text-decoration: none; word-break: break-all; }
+
+.sd-status.banned { color: #ef4444; background: rgba(239,68,68,0.16); }
+.sd-status.limited { color: #e0a23c; background: rgba(224,162,60,0.16); }

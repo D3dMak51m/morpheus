@@ -385,6 +385,12 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
 
     # Step 3: Route to platform-specific driver
     if platform == "telegram":
+        from app import account_health
+        cd = account_health.in_cooldown(agent_id)
+        if cd:
+            logger.warning("Task %s — agent %s on Telegram cooldown (%ss left); skipping.", task_id, agent_id, cd)
+            _log_activity_to_daedalus(task, "FAILED")
+            return
         _execute_telegram(task, credentials)
     elif platform in ("instagram", "twitter", "threads", "facebook", "youtube"):
         _execute_appium(task, credentials)

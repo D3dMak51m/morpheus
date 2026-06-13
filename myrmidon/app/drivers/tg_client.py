@@ -17,7 +17,12 @@ import os
 from typing import Optional, Tuple, Union, Callable, List, Dict
 
 from app import dialogue_store
+from app import account_health
 from app.telemetry import emit as emit_event
+
+# A FloodWait up to this many seconds is slept-through and retried; longer ones put
+# the agent on a cooldown instead of blocking the worker.
+FLOOD_MAX_WAIT_SEC = int(os.getenv("TG_FLOOD_MAX_WAIT_SEC", "45"))
 
 # Pyrogram's sync wrapper calls asyncio.get_event_loop() at import time.
 # When uvloop is installed (e.g. from FastAPI), this fails in threads without a loop.
@@ -110,6 +115,17 @@ class TelegramDriver:
         logger.debug("TelegramDriver [%s]: simulated typing for %.1fs", self.agent_id, delay)
         await asyncio.sleep(delay)
 
+    async def _flood_retry(self, e: "FloodWait") -> bool:
+        """Short FloodWait → sleep it off and signal retry; long → cooldown, give up."""
+        wait = getattr(e, "value", None) or getattr(e, "x", 0) or 0
+        if wait and wait <= FLOOD_MAX_WAIT_SEC:
+            logger.warning("TelegramDriver [%s]: FloodWait %ss — waiting, will retry.", self.agent_id, wait)
+            await asyncio.sleep(wait + 2)
+            return True
+        logger.error("TelegramDriver [%s]: FloodWait %ss — too long, backing off.", self.agent_id, wait)
+        account_health.set_cooldown(self.agent_id, int(wait) or 300, "FloodWait")
+        return False
+
     async def _resolve_text(self, fallback: str, text_provider, context_text: str, thread_context: str, chat) -> str:
         """
         Decide the comment text. If a text_provider is supplied (mission path), it
@@ -185,10 +201,12 @@ class TelegramDriver:
                 )
                 return None, None
             except FloodWait as e:
-                logger.error("TelegramDriver [%s]: FloodWait of %ss while commenting.", self.agent_id, e.value)
+                if attempt == 1 and await self._flood_retry(e):
+                    continue
                 return None, None
             except Exception as e:
                 logger.error("TelegramDriver [%s]: failed to post comment: %s", self.agent_id, e)
+                account_health.handle_fault(self.agent_id, e)
                 return None, None
         return None, None
 
@@ -338,20 +356,25 @@ class TelegramDriver:
 
                 # Group / supergroup / private chat → post directly (optionally as a
                 # reply when a message id was supplied).
-                try:
-                    await app.send_message(chat.id, final_text, reply_to_message_id=post_id)
-                    logger.info("TelegramDriver [%s]: sent message to %s.", self.agent_id, chat.title or chat.id)
-                    emit_event(self.agent_id, "commented", "опубликовал сообщение: " + final_text[:60],
-                               status="ok", target=target_url)
-                    return True
-                except FloodWait as e:
-                    logger.error("TelegramDriver [%s]: FloodWait of %ss.", self.agent_id, e.value)
-                    return False
-                except Exception as e:
-                    logger.error("TelegramDriver [%s]: failed to send message: %s", self.agent_id, e)
-                    return False
+                for attempt in (1, 2):
+                    try:
+                        await app.send_message(chat.id, final_text, reply_to_message_id=post_id)
+                        logger.info("TelegramDriver [%s]: sent message to %s.", self.agent_id, chat.title or chat.id)
+                        emit_event(self.agent_id, "commented", "опубликовал сообщение: " + final_text[:60],
+                                   status="ok", target=target_url)
+                        return True
+                    except FloodWait as e:
+                        if attempt == 1 and await self._flood_retry(e):
+                            continue
+                        return False
+                    except Exception as e:
+                        logger.error("TelegramDriver [%s]: failed to send message: %s", self.agent_id, e)
+                        account_health.handle_fault(self.agent_id, e)
+                        return False
+                return False
         except Exception as e:
             logger.error("TelegramDriver [%s]: failed to initialize Pyrogram (session error?): %s", self.agent_id, e)
+            account_health.handle_fault(self.agent_id, e)
             return False
 
     def _register_dialogue_watch(self, chat, post_id, disc_chat_id, bot_msg_id,
@@ -481,8 +504,13 @@ class TelegramDriver:
                             return False
                         continue
                     return False
+                except FloodWait as e:
+                    if attempt == 1 and await self._flood_retry(e):
+                        continue
+                    return False
                 except Exception as e:
                     logger.warning("TelegramDriver [%s]: send_reaction failed: %s", self.agent_id, e)
+                    account_health.handle_fault(self.agent_id, e)
                     return False
         return False
 
@@ -709,11 +737,16 @@ class TelegramDriver:
                         # of send_message(disc_chat_id, ...)).
                         sent = await m.reply_text(reply_text.strip())
                     except FloodWait as e:
-                        logger.error("TelegramDriver [%s]: FloodWait %ss answering %s.",
-                                     self.agent_id, e.value, author)
-                        continue
+                        if await self._flood_retry(e):
+                            try:
+                                sent = await m.reply_text(reply_text.strip())
+                            except Exception:
+                                continue
+                        else:
+                            continue
                     except Exception as e:
                         logger.error("TelegramDriver [%s]: failed to answer %s: %s", self.agent_id, author, e)
+                        account_health.handle_fault(self.agent_id, e)
                         continue
                     results["handled"].append((disc_chat_id, m.id))
                     emit_event(self.agent_id, "replied",

@@ -401,3 +401,6 @@ input, textarea {
   border: 1px solid rgba(129,140,248,0.3);
 }
 .sc-btn-channels:hover { background: rgba(129,140,248,0.18); }
+
+.status-badge.banned { color: #ef4444; background: rgba(239,68,68,0.16); }
+.status-badge.limited { color: #e0a23c; background: rgba(224,162,60,0.16); }
