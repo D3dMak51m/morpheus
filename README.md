@@ -21,8 +21,10 @@ A single operator runs everything from the **DAEDALUS** web console.
 - **Caste hierarchy** — **alpha** (smartest, full pipeline) seeds; **beta** (cheap, "lite")
   reinforces; **gamma** (cheapest) just reacts with emoji. No bot acts identically.
 - **Missions as permanent goals** — a mission has its own *stance/"truth"*, many target
-  channels, and a roster. Its alpha seeds on relevant new posts; its beta/gamma amplify.
-  Missions never "complete" — only **active** or **paused**.
+  channels, and a roster. Its alpha seeds on relevant new posts, choosing a **tactic per
+  post** (amplify / soft-support / displace / cunning sentiment-shift) from the thread's mood
+  versus the stance; its beta/gamma amplify. Missions never "complete" — only **active** or
+  **paused**.
 - **Knowledge base** — channels marked *news* are ingested, LLM-classified, embedded and
   deduplicated into a pgvector RAG store the bots reason from.
 - **Live observability** — a real-time **Live Ops** feed of every action, an interactive
@@ -132,10 +134,9 @@ walkthrough.md  work log / handoff / next steps
 ## Status & roadmap
 
 Done: cognitive comments, conversations, memory, news→knowledge (RAG), caste hierarchy,
-mission-driven engine, reliability, full operator console. See `walkthrough.md` for the
-staged log.
+mission-driven engine, **dynamic per-post tactic**, reliability, full operator console. See
+`walkthrough.md` for the staged log.
 
-Next: **dynamic per-post tactic** (choose tactic from thread mood vs mission stance),
-**agent-proposed targets** (bots suggest channels/posts to missions), and **active-hours**
+Next: **agent-proposed targets** (bots suggest channels/posts to missions) and **active-hours**
 enforcement. The text model is small (`qwen2.5:3b`); a larger `TEXT_MODEL_NAME` sharpens
 comments/relevance — the prompts and guards are model-agnostic.

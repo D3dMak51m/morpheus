@@ -70,12 +70,15 @@ so any frontend change needs `docker compose build daedalus`.
 
 ### ORPHEUS (`orpheus/app/`) — cognitive core (NO HTTP for generation)
 - `main.py` — Redis worker, multi-key `BRPOP` on `queue:raw_events` + `queue:mission_gen`.
-  `handle_mission_generation` (mode=comment|reply, lite for beta), `handle_relevance`
+  `handle_mission_generation` (mode=comment|reply, lite for beta; `_resolve_dynamic_tactic`
+  picks the per-post tactic before assembling, returns it on the reply), `handle_relevance`
   (mode=relevance, mission- or profile-aware YES/NO), `generate_text` (Ollama, repeat
   penalty, `max_tokens`).
 - `persona.py` — `PersonaEngine`: profile cache (30s poll of `/souls/internal/profiles`),
   `assemble_mission_prompt` (persona + RAG + MUNINN memory + thread mood + mission stance +
-  role/tactic; **lite** branch for cheap beta), `fetch_memory`/`save_memory` (MUNINN).
+  role/tactic; 4 `tactic_directives`; **lite** branch for cheap beta inherits the tactic),
+  `build_mood_prompt`/`tactic_from_mood` (dynamic per-post tactic = 3-way mood classify +
+  heat heuristic), `fetch_memory`/`save_memory` (MUNINN).
 - `rag.py` — `fetch_fresh_context` (pgvector knowledge retrieval). `guardrails.py` —
   output validation + **`is_echo`** (anti-parroting). `coordination.py` — legacy DAG beta
   amplification (the live swarm amplification is now in MYRMIDON `swarm.py`).
@@ -123,7 +126,8 @@ unbound), `profile_history`.
 Channels: **`agent_channel_prefs`** (per-agent channel classification role target|news|ignored
 + cached enumeration).
 Missions: **`missions`** (permanent: `stance`, `status` active|paused, `agent_mode`,
-`dynamic_count`), **`mission_targets`** (kind channel|post, status active|suggested|rejected,
+`dynamic_count`, `tactic` — default `dynamic` = per-post tactic from thread mood vs stance),
+**`mission_targets`** (kind channel|post, status active|suggested|rejected,
 source operator|agent), **`mission_squads`** (roster, caste role).
 Knowledge: **`knowledge_facts`** (pgvector RAG), `scraping_landscape` (sources),
 `captured_raw_events`, `scouted_targets`, `social_post_targets`, `campaigns`.
@@ -152,14 +156,18 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
 2. **Mission-driven commenting (primary):** active mission → roster **alpha** scans the
    mission's `active` channel targets → ORPHEUS LLM-relevance vs the mission's goal+stance
    (checks the newest ~3 posts) → seeds an execution task (goal+stance+tactic+mission_id) →
-   MYRMIDON: ORPHEUS writes the comment (persona + RAG + memory + thread mood + stance,
+   MYRMIDON: ORPHEUS picks a **dynamic per-post tactic** (post+thread mood vs stance →
+   `amplify`|`soft_support`|`aggressive_displacement`|`sentiment_shift`, when mission tactic
+   is `dynamic`), then writes the comment (persona + RAG + memory + thread mood + stance,
    anti-echo, regen) → posts it → registers a dialogue watch → **swarm amplification**:
-   mission-roster **beta** drops a cheap lite comment, **gamma** an emoji reaction.
+   mission-roster **beta** drops a cheap lite comment (inheriting the alpha's tactic),
+   **gamma** an emoji reaction.
 3. **Conversations:** a watch on the bot's comment is polled; a real human reply → ORPHEUS
    reply-mode → MYRMIDON answers (and watches its own answer → multi-turn).
 4. **Memory:** every comment/reply summary is saved to MUNINN per agent↔opponent; recalled next time.
-5. **Castes:** alpha = full cognitive (smart, human-like). beta = cheap "lite" support
-   (no RAG/memory/thread, short). gamma = emoji reaction only (no LLM).
+5. **Castes:** alpha = full cognitive (smart, human-like; picks the per-post tactic). beta =
+   cheap "lite" support (no RAG/memory/thread, short; inherits the alpha's tactic). gamma =
+   emoji reaction only (no LLM).
 6. **Reliability:** short FloodWait → wait+retry; long → cooldown; PeerFlood → 1h cooldown;
    fatal session errors → account `banned` (+ profile suspended), dropped from the active pool.
 

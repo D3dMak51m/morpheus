@@ -26,6 +26,56 @@ CONFIG_DIR = os.getenv("GLOBAL_CONFIG_DIR", "/app/global_config/personalities")
 # Global Cache to prevent blocking inference
 PROFILES_CACHE: Dict[str, dict] = {}
 
+# ── Dynamic per-post tactic ────────────────────────────────────────────────
+# A mission can leave its tactic as "dynamic": instead of one fixed default, the
+# alpha picks a tactic *per post* from the mood of the post+thread judged against
+# the mission's stance. Keep the choice to a single keyword — qwen2.5:3b is weak.
+DYNAMIC_TACTIC = "dynamic"
+# operator-facing (RU) labels for the Live Ops feed.
+TACTIC_LABELS_RU = {
+    "amplify": "усиление (ветка за нас)",
+    "soft_support": "мягкая поддержка (нейтрально)",
+    "aggressive_displacement": "контратака (ветка против)",
+    "sentiment_shift": "тонкий разворот (ветка против)",
+}
+
+
+# Words/markers that signal a *heated* (insulting/dismissive) opposition rather
+# than a calm disagreement — used to split confront vs. cunning-reframe. No LLM.
+_HEAT_MARKERS = (
+    "нищ", "тупо", "идиот", "дебил", "бред", "прошлый век", "позор", "отстой",
+    "ненавиж", "дура", "клоун", "лох", "stupid", "idiot", "trash", "garbage",
+    "loser", "pathetic",
+)
+
+
+def build_mood_prompt(stance: str, thread_context: str, post_text: str) -> str:
+    """Cheap classification prompt: a weak model judges 3-way agreement far more
+    reliably than it picks a tactic name. Expects ONE word: AGREE / NEUTRAL / OPPOSE."""
+    return (
+        "Decide how the crowd feels about OUR position in this discussion.\n"
+        f"OUR POSITION: {(stance or '(general support of the topic)')[:300]}\n\n"
+        f"THE POST:\n{(post_text or '(no readable text)')[:300]}\n\n"
+        f"COMMENTS BY OTHERS:\n{(thread_context or '(no comments yet)')[:600]}\n\n"
+        "Do the post and comments mostly AGREE with our position, stay NEUTRAL/mixed, "
+        "or OPPOSE it?\nAnswer with ONE word only: AGREE, NEUTRAL or OPPOSE."
+    )
+
+
+def tactic_from_mood(mood_answer: str, post_text: str = "", thread_context: str = "") -> str:
+    """Map a 3-way mood verdict to a concrete tactic. Opposition splits into a blunt
+    counter (calm disagreement) vs. a cunning sentiment-shift (heated/insulting), the
+    latter detected cheaply from heat markers so we never escalate a flame war."""
+    a = (mood_answer or "").strip().lower()
+    # Check opposition first — "disagree" contains "agree".
+    if "oppose" in a or "disagree" in a or "against" in a or "против" in a:
+        blob = f"{post_text}\n{thread_context}".lower()
+        heated = blob.count("!") >= 2 or any(m in blob for m in _HEAT_MARKERS)
+        return "sentiment_shift" if heated else "aggressive_displacement"
+    if "agree" in a or "support" in a or "за нас" in a:
+        return "amplify"
+    return "soft_support"  # neutral / mixed / unrecognised
+
 
 class PersonaEngine:
     def __init__(self):
@@ -244,6 +294,13 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         if req.get("lite"):
             identity = profile.get("identity", {})
             personality = profile.get("personality", {})
+            # The alpha's per-post tactic is propagated here so beta backs the ally
+            # in the same key instead of always cheerfully agreeing.
+            lite_tactic_hint = {
+                "aggressive_displacement": "Ветка против нас — поддержи союзника твёрдо и уверенно, мягко осади противоположное мнение.",
+                "sentiment_shift": "Ветка против нас — не спорь в лоб, тонко поддержи союзника и сдвинь настроение в нашу сторону.",
+                "amplify": "Ветка за нас — живо подхвати и усиль общий настрой.",
+            }.get(tactic, "")
             return (
                 f"Ты — {identity.get('full_name') or 'обычный человек'}, "
                 f"{identity.get('occupation') or ''} из {identity.get('city') or ''}. "
@@ -251,6 +308,7 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
                 f"Тон: {personality.get('tone_level', 'Neutral')}.\n\n"
                 f"Пост: {post_text[:200] or '(тема обсуждения)'}\n"
                 + (f"Позиция, которую отстаиваем: {mission_stance[:200]}\n" if mission_stance else "")
+                + (f"{lite_tactic_hint}\n" if lite_tactic_hint else "")
                 + f"Союзник уже написал: \"{(alpha_context or '')[:200]}\"\n\n"
                 "[Задача] Коротко поддержи и усиль мысль союзника (в духе позиции) — ОДНО "
                 "короткое предложение, своими словами, на языке поста. НЕ повторяй его дословно. "
@@ -284,8 +342,10 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
             "gamma": "You are adding light supporting engagement — short, casual and natural; nudge sentiment without arguing at length.",
         }
         tactic_directives = {
+            "amplify": "The crowd already leans your way. Reinforce and energize the prevailing sentiment — add a concrete reason that makes the shared view feel obvious and widely held.",
             "soft_support": "Be measured, friendly and constructive. Persuade gently; never attack.",
-            "aggressive_displacement": "Be assertive and confident; firmly counter the opposing framing. Stay civil — no insults, slurs or threats.",
+            "aggressive_displacement": "The crowd leans against your side. Be assertive and confident; firmly counter the opposing framing and replace it with yours. Stay civil — no insults, slurs or threats.",
+            "sentiment_shift": "The crowd leans against your side. Do NOT confront head-on — concede a small point, then subtly reframe the emotional angle toward your stance so readers shift without feeling pushed. Cunning, not combative.",
         }
         role_line = role_directives.get(role, role_directives["alpha"])
         tactic_line = tactic_directives.get(tactic, tactic_directives["soft_support"])

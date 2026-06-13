@@ -23,7 +23,14 @@ from typing import Optional
 import redis
 
 from app.media_enricher import MediaEnricher
-from app.persona import PersonaEngine, periodically_update_profiles_cache
+from app.persona import (
+    PersonaEngine,
+    periodically_update_profiles_cache,
+    build_mood_prompt,
+    tactic_from_mood,
+    TACTIC_LABELS_RU,
+    DYNAMIC_TACTIC,
+)
 from app.guardrails import OutputGuardrails
 from app.coordination import generate_beta_subtasks
 from app.telemetry import emit as emit_event
@@ -230,6 +237,30 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
             pass
 
 
+def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
+    """
+    When a mission leaves its tactic as 'dynamic', pick a per-post tactic from the
+    mood of the post + existing thread comments judged against the mission's stance.
+    Cognitive (alpha) seed path only — a beta runs the cheap 'lite' branch and
+    inherits the alpha's tactic via the seed task, and replies keep their default.
+    Returns the chosen tactic, or None when no selection was made (keep as-is).
+    """
+    tactic = (req.get("tactic") or "").strip().lower()
+    if tactic not in ("", DYNAMIC_TACTIC):
+        return None  # operator pinned an explicit tactic — respect it
+    if req.get("lite") or req.get("mode") == "reply":
+        return None
+    post_text = (req.get("post_text") or "").strip()
+    thread = (req.get("thread_context") or "").strip()
+    if not post_text and not thread:
+        return "soft_support"  # no signal to read → gentle default, skip the LLM call
+    raw = generate_text(
+        build_mood_prompt((req.get("stance") or "").strip(), thread, post_text),
+        max_tokens=6,
+    )
+    return tactic_from_mood(raw, post_text, thread)
+
+
 def handle_mission_generation(req: dict, redis_client, persona_engine, guardrails) -> None:
     """
     Generate a real, context-aware mission comment and return it to MYRMIDON via
@@ -267,6 +298,16 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
 
     result = {"status": "error", "text": "", "reason": ""}
     try:
+        # Dynamic per-post tactic: let the model pick the tactic from the thread
+        # mood vs the mission stance before we assemble the comment prompt.
+        chosen_tactic = _resolve_dynamic_tactic(req)
+        if chosen_tactic:
+            req["tactic"] = chosen_tactic
+            logger.info("Mission-gen %s — dynamic tactic → %s.", request_id, chosen_tactic)
+            emit_event(agent_id, "tactic",
+                       "тактика по настроению ветки: " + TACTIC_LABELS_RU.get(chosen_tactic, chosen_tactic),
+                       status="info", target=req.get("target_url") or req.get("author") or "")
+
         prompt = persona_engine.assemble_mission_prompt(agent_id, req)
         if not prompt:
             result["reason"] = "profile_not_found"
@@ -299,7 +340,10 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                 )
             if final_text:
                 redis_client.incr("metrics:comments_sent")
-                result = {"status": "ok", "text": final_text, "reason": ""}
+                # Return the resolved tactic so MYRMIDON can propagate it to the
+                # mission's beta/gamma amplification (squad coherence).
+                result = {"status": "ok", "text": final_text, "reason": "",
+                          "tactic": req.get("tactic")}
                 emit_event(agent_id, "generated",
                            ("готов ответ: " if is_reply else "готов комментарий: ") + final_text[:60],
                            status="ok", target=req.get("author") or "")

@@ -322,6 +322,11 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         _, raw = res
         data = json.loads(raw)
         if data.get("status") == "ok" and data.get("text"):
+            # Carry the per-post tactic ORPHEUS resolved back onto the task so swarm
+            # amplification (beta/gamma) inherits it instead of the "dynamic" default.
+            resolved_tactic = data.get("tactic")
+            if resolved_tactic and resolved_tactic != "dynamic":
+                task["tactic"] = resolved_tactic
             logger.info("Task %s — ORPHEUS comment ready (%d chars).", task.get("task_id"), len(data["text"]))
             return data["text"]
         logger.warning("Task %s — ORPHEUS returned no text (%s); using fallback.", task.get("task_id"), data.get("reason"))
