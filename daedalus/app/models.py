@@ -576,6 +576,11 @@ class AgentChannelPref(Base):
     title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     role: Mapped[str] = mapped_column(String(20), default="target", nullable=False)
     watching: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Cached enumeration metadata (so the panel opens instantly from DB instead of
+    # re-querying the slow live Telegram session every time).
+    chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    members: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),

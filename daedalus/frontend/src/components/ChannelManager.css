@@ -80,3 +80,26 @@
 .cm-action-type { font-weight: 700; text-transform: uppercase; font-size: 0.72rem; }
 .cm-action-url { color: var(--accent, #818cf8); text-decoration: none; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-action-text { width: 100%; color: var(--text-muted, #94a3b8); font-style: italic; }
+
+/* topbar / filters / bulk (P1 cache info, P5 search+filter+bulk) */
+.cm-topbar { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
+.cm-synced { font-size: 0.72rem; color: var(--text-muted, #94a3b8); }
+
+.cm-filterbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.cm-search {
+  flex: 1; min-width: 200px;
+  background: var(--bg-base, #07080f);
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.12));
+  color: var(--text-main, #e2e8f0);
+  border-radius: 7px; padding: 7px 11px; font-size: 0.82rem;
+}
+.cm-filter-pills { display: flex; gap: 5px; flex-wrap: wrap; }
+
+.cm-bulkbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 10px; margin-bottom: 10px;
+  background: var(--bg-card, rgba(255,255,255,0.03));
+  border: 1px dashed var(--border-subtle, rgba(255,255,255,0.12));
+  border-radius: 8px;
+  font-size: 0.78rem; color: var(--text-muted, #94a3b8);
+}

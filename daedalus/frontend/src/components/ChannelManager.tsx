@@ -7,10 +7,9 @@ interface Channel {
   username: string | null;
   type: string;
   members: number | null;
-  unread: number | null;
   role: 'target' | 'news' | 'ignored';
   watching: boolean;
-  stale?: boolean;
+  synced_at?: string | null;
 }
 
 interface ActionLog {
@@ -39,28 +38,54 @@ const ROLES: Array<'target' | 'news' | 'ignored'> = ['target', 'news', 'ignored'
 const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, onClose }) => {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [actions, setActions] = useState<ActionLog[]>([]);
   const [tab, setTab] = useState<'channels' | 'actions'>('channels');
 
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string>('all');
+  const [watchFilter, setWatchFilter] = useState<string>('all');
+
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  const apply = (data: any) => {
+    setChannels(data.channels || []);
+    setCounts(data.counts || {});
+    setSyncedAt(data.synced_at || null);
+    if (data.error) setError(`Сессия недоступна: ${data.error}`); else setError('');
+  };
 
   const fetchChannels = useCallback(async () => {
     setLoading(true);
-    setError('');
     try {
+      // Cached read — instant after the first enumeration.
       const res = await fetch(`/api/v1/souls/agents/${agentId}/channels`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setChannels(data.channels || []);
-      setCounts(data.counts || {});
-      if (data.error) setError(`Не удалось опросTG-сессию: ${data.error}`);
+      apply(await res.json());
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки каналов');
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки');
     }
     setLoading(false);
   }, [agentId, token]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/v1/souls/agents/${agentId}/channels/sync`, { method: 'POST', headers });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.detail || `HTTP ${res.status}`);
+      }
+      apply(await res.json());
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Не удалось обновить');
+    }
+    setRefreshing(false);
+  };
 
   const fetchActions = useCallback(async () => {
     try {
@@ -74,18 +99,41 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
   const update = async (ch: Channel, patch: Partial<Pick<Channel, 'role' | 'watching'>>) => {
     setChannels(prev => prev.map(c => c.chat_id === ch.chat_id ? { ...c, ...patch } : c));
     try {
-      await fetch(`/api/v1/souls/agents/${agentId}/channels/${encodeURIComponent(ch.chat_id)}`, {
+      const res = await fetch(`/api/v1/souls/agents/${agentId}/channels/${encodeURIComponent(ch.chat_id)}`, {
         method: 'POST', headers, body: JSON.stringify(patch),
       });
-      // refresh counts cheaply
-      setCounts(prev => {
-        const next = { ...prev };
-        if (patch.role) {
-          next[patch.role] = (next[patch.role] || 0) + 1;
-          if (next[ch.role] > 0) next[ch.role] -= 1;
-        }
-        return next;
+      if (res.ok) recount();
+    } catch { fetchChannels(); }
+  };
+
+  const recount = () => {
+    setChannels(prev => {
+      setCounts(ROLES.reduce((acc, r) => ({ ...acc, [r]: prev.filter(c => c.role === r).length }), {}));
+      return prev;
+    });
+  };
+
+  const filtered = channels.filter(c => {
+    if (roleFilter !== 'all' && c.role !== roleFilter) return false;
+    if (watchFilter === 'on' && !c.watching) return false;
+    if (watchFilter === 'off' && c.watching) return false;
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      if (!`${c.title || ''} ${c.username || ''} ${c.chat_id}`.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  // Bulk action over the currently filtered set.
+  const bulk = async (patch: { role?: string; watching?: boolean }) => {
+    const chat_ids = filtered.map(c => c.chat_id);
+    if (chat_ids.length === 0) return;
+    setChannels(prev => prev.map(c => chat_ids.includes(c.chat_id) ? { ...c, ...patch } as Channel : c));
+    try {
+      const res = await fetch(`/api/v1/souls/agents/${agentId}/channels/bulk`, {
+        method: 'POST', headers, body: JSON.stringify({ chat_ids, ...patch }),
       });
+      if (res.ok) apply(await res.json());
     } catch { fetchChannels(); }
   };
 
@@ -101,7 +149,9 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
             <button className={`tab-btn ${tab === 'actions' ? 'active' : ''}`} onClick={() => setTab('actions')}>
               Действия бота
             </button>
-            <button className="btn-secondary cm-refresh" onClick={fetchChannels}>↻ Обновить</button>
+            <button className="btn-secondary cm-refresh" onClick={refresh} disabled={refreshing}>
+              {refreshing ? '⏳ Опрос…' : '↻ Обновить из Telegram'}
+            </button>
           </div>
         </div>
 
@@ -110,29 +160,48 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
 
           {tab === 'channels' && (
             <>
-              <p className="help-text">
-                Это все каналы и группы, на которые подписан аккаунт — потенциальные цели и источники новостей агента.
-                Отметьте роль и включите/выключите слежение.
-              </p>
-              <div className="cm-counts">
-                <span className="role-target">Цели: {counts.target ?? 0}</span>
-                <span className="role-news">Новости: {counts.news ?? 0}</span>
-                <span className="role-ignored">Игнор: {counts.ignored ?? 0}</span>
+              <div className="cm-topbar">
+                <span className="cm-counts">
+                  <span className="role-target">Цели: {counts.target ?? 0}</span>
+                  <span className="role-news">Новости: {counts.news ?? 0}</span>
+                  <span className="role-ignored">Игнор: {counts.ignored ?? 0}</span>
+                </span>
+                <span className="cm-synced">{syncedAt ? `обновлено: ${new Date(syncedAt).toLocaleString('ru-RU')}` : 'из кэша'}</span>
+              </div>
+
+              {/* Search + filters */}
+              <div className="cm-filterbar">
+                <input className="cm-search" placeholder="🔍 Поиск канала…" value={query} onChange={e => setQuery(e.target.value)} />
+                <div className="cm-filter-pills">
+                  <button className={`pill ${roleFilter === 'all' ? 'selected' : ''}`} onClick={() => setRoleFilter('all')}>все роли</button>
+                  {ROLES.map(r => (
+                    <button key={r} className={`pill ${roleFilter === r ? 'selected' : ''}`} onClick={() => setRoleFilter(r)}>{ROLE_META[r].label}</button>
+                  ))}
+                  <button className={`pill ${watchFilter === 'on' ? 'selected' : ''}`} onClick={() => setWatchFilter(watchFilter === 'on' ? 'all' : 'on')}>👁 слежу</button>
+                  <button className={`pill ${watchFilter === 'off' ? 'selected' : ''}`} onClick={() => setWatchFilter(watchFilter === 'off' ? 'all' : 'off')}>⏸ пауза</button>
+                </div>
+              </div>
+
+              {/* Bulk actions over visible */}
+              <div className="cm-bulkbar">
+                <span>Ко всем видимым ({filtered.length}):</span>
+                {ROLES.map(r => (
+                  <button key={r} className={`cm-role-btn ${ROLE_META[r].cls}`} onClick={() => bulk({ role: r })}>→ {ROLE_META[r].label}</button>
+                ))}
+                <button className="cm-watch on" onClick={() => bulk({ watching: true })}>👁 слежу</button>
+                <button className="cm-watch off" onClick={() => bulk({ watching: false })}>⏸ пауза</button>
               </div>
 
               {loading ? (
-                <p className="cm-loading">⏳ Опрашиваю Telegram-сессию аккаунта… (несколько секунд)</p>
-              ) : channels.length === 0 ? (
-                <p className="text-muted">Каналы не найдены (аккаунт ни на что не подписан или сессия недоступна).</p>
+                <p className="cm-loading">⏳ Загрузка…</p>
+              ) : filtered.length === 0 ? (
+                <p className="text-muted">{channels.length === 0 ? 'Кэш пуст — нажмите «↻ Обновить из Telegram».' : 'Ничего не найдено по фильтру.'}</p>
               ) : (
                 <div className="cm-list">
-                  {channels.map(ch => (
+                  {filtered.map(ch => (
                     <div key={ch.chat_id} className={`cm-row ${!ch.watching ? 'paused' : ''}`}>
                       <div className="cm-ch-info">
-                        <span className="cm-ch-title">
-                          {ch.title || ch.username || ch.chat_id}
-                          {ch.stale && <span className="cm-stale" title="аккаунт больше не в этом канале">архив</span>}
-                        </span>
+                        <span className="cm-ch-title">{ch.title || ch.username || ch.chat_id}</span>
                         <span className="cm-ch-meta">
                           {ch.username ? `@${ch.username}` : ch.chat_id} · {ch.type}
                           {ch.members ? ` · ${ch.members.toLocaleString('ru-RU')} уч.` : ''}
@@ -140,20 +209,13 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
                       </div>
                       <div className="cm-roles">
                         {ROLES.map(r => (
-                          <button
-                            key={r}
-                            className={`cm-role-btn ${ROLE_META[r].cls} ${ch.role === r ? 'active' : ''}`}
-                            onClick={() => update(ch, { role: r })}
-                          >
+                          <button key={r} className={`cm-role-btn ${ROLE_META[r].cls} ${ch.role === r ? 'active' : ''}`} onClick={() => update(ch, { role: r })}>
                             {ROLE_META[r].label}
                           </button>
                         ))}
                       </div>
-                      <button
-                        className={`cm-watch ${ch.watching ? 'on' : 'off'}`}
-                        onClick={() => update(ch, { watching: !ch.watching })}
-                        title={ch.watching ? 'слежу — нажмите чтобы остановить' : 'на паузе — нажмите чтобы продолжить'}
-                      >
+                      <button className={`cm-watch ${ch.watching ? 'on' : 'off'}`} onClick={() => update(ch, { watching: !ch.watching })}
+                        title={ch.watching ? 'слежу — нажмите чтобы остановить' : 'на паузе — нажмите чтобы продолжить'}>
                         {ch.watching ? '👁 слежу' : '⏸ пауза'}
                       </button>
                     </div>

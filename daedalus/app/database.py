@@ -86,6 +86,10 @@ def init_tables() -> None:
     _STAGE23_COLUMNS = [
         ("agent_profiles", "status", "VARCHAR(20) NOT NULL DEFAULT 'unbound'"),
         ("souls_accounts", "status", "VARCHAR(20) NOT NULL DEFAULT 'unbound'"),
+        # Stage 25 — cached channel-enumeration metadata.
+        ("agent_channel_prefs", "chat_type", "VARCHAR(20)"),
+        ("agent_channel_prefs", "members", "INTEGER"),
+        ("agent_channel_prefs", "synced_at", "TIMESTAMPTZ"),
     ]
     try:
         with engine.begin() as conn:

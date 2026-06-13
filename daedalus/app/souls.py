@@ -14,9 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from datetime import datetime, timezone
+
 from app.models import (
     AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory,
-    AgentChannelPref, LANDSCAPE_LAYERS, bind_account_to_soul, unbind_account,
+    AgentChannelPref, ScrapingLandscape, LANDSCAPE_LAYERS, bind_account_to_soul, unbind_account,
 )
 from app.rbac import require_permission
 
@@ -272,58 +274,162 @@ class ChannelPrefRequest(BaseModel):
     watching: Optional[bool] = None
 
 
+class BulkChannelRequest(BaseModel):
+    chat_ids: list[str]
+    role: Optional[str] = None
+    watching: Optional[bool] = None
+
+
+def _serialize_pref(p: AgentChannelPref) -> dict:
+    return {
+        "chat_id": p.chat_id, "title": p.title, "username": p.username,
+        "type": p.chat_type or "channel", "members": p.members,
+        "role": p.role, "watching": p.watching,
+        "synced_at": p.synced_at.isoformat() if p.synced_at else None,
+    }
+
+
+def _channels_from_db(db: Session, agent_id: str) -> dict[str, Any]:
+    rows = db.query(AgentChannelPref).filter(AgentChannelPref.agent_id == agent_id).all()
+    channels = [_serialize_pref(p) for p in rows]
+    counts = {r: sum(1 for c in channels if c["role"] == r) for r in VALID_CHANNEL_ROLES}
+    synced = max((p.synced_at for p in rows if p.synced_at), default=None)
+    return {
+        "agent_id": agent_id, "channels": channels, "total": len(channels),
+        "counts": counts, "synced_at": synced.isoformat() if synced else None,
+    }
+
+
+def _live_sync_channels(db: Session, agent_id: str) -> None:
+    """
+    Re-enumerate the account's Telegram subscriptions (slow live session call) and
+    upsert them into agent_channel_prefs — this is the cache. Operator choices
+    (role/watching) on existing rows are preserved; new channels default target/watch.
+    """
+    with httpx.Client(timeout=90.0) as client:
+        resp = client.get(
+            f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{agent_id}/channels",
+            headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+        )
+        resp.raise_for_status()
+        live = resp.json().get("channels", [])
+
+    prefs = {p.chat_id: p for p in db.query(AgentChannelPref).filter(
+        AgentChannelPref.agent_id == agent_id).all()}
+    now = datetime.now(timezone.utc)
+    for ch in live:
+        cid = str(ch.get("chat_id"))
+        p = prefs.get(cid)
+        if p is None:
+            p = AgentChannelPref(agent_id=agent_id, chat_id=cid, role="target", watching=True)
+            db.add(p)
+        p.title = ch.get("title")
+        p.username = ch.get("username")
+        p.chat_type = ch.get("type")
+        p.members = ch.get("members")
+        p.synced_at = now
+    db.commit()
+
+
+def _tg_identifier(username: Optional[str], chat_id: str) -> str:
+    return f"@{username}" if username else str(chat_id)
+
+
+def _sync_news_landscape(db: Session, agent_id: str, pref: AgentChannelPref) -> None:
+    """
+    Mirror a channel marked 'news' into the scraping landscape (the общий котёл) so
+    HUGINN tracks it — auto-filling platform/type/layers. When a channel stops being
+    'news', its auto-entry is deactivated (kept, reversible). Layers default to the
+    agent's context subscriptions.
+    """
+    ident = _tg_identifier(pref.username, pref.chat_id)
+    existing = db.query(ScrapingLandscape).filter(
+        ScrapingLandscape.target_identifier == ident).first()
+    if pref.role == "news":
+        profile = db.query(AgentProfile).filter(AgentProfile.agent_id == agent_id).first()
+        layers = (profile.context_subscriptions if profile and profile.context_subscriptions else ["global"])
+        tags = [pref.title] if pref.title else []
+        if existing is None:
+            db.add(ScrapingLandscape(
+                platform="telegram", type="channel", target_identifier=ident,
+                is_active=True, default_layers=layers, associated_tags=tags[:3],
+            ))
+        else:
+            existing.is_active = True
+            existing.platform = "telegram"
+            existing.type = "channel"
+            if not existing.default_layers:
+                existing.default_layers = layers
+    elif existing is not None and existing.platform == "telegram":
+        existing.is_active = False
+
+
 @router.get("/agents/{agent_id}/channels")
 def list_agent_channels(
     agent_id: str,
+    refresh: bool = False,
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("agents:view")),
 ) -> dict[str, Any]:
     """
-    The agent's universe of Telegram channels: live-enumerated from its account's
-    subscriptions (via MYRMIDON) and merged with the operator's saved
-    classification (role + watching). New channels default to target/watching.
+    The agent's Telegram channel universe, served from the cached table for instant
+    open. On first ever open (empty cache) or ``?refresh=true`` it re-queries the
+    live session; otherwise it's a fast DB read.
     """
-    live: list[dict] = []
-    error = None
+    have = db.query(AgentChannelPref).filter(AgentChannelPref.agent_id == agent_id).count()
+    if refresh or have == 0:
+        try:
+            _live_sync_channels(db, agent_id)
+        except Exception as e:
+            out = _channels_from_db(db, agent_id)
+            out["error"] = str(e)
+            return out
+    return _channels_from_db(db, agent_id)
+
+
+@router.post("/agents/{agent_id}/channels/sync")
+def sync_agent_channels(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """Force a live re-enumeration of the account's subscriptions into the cache."""
     try:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.get(
-                f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{agent_id}/channels",
-                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
-            )
-            resp.raise_for_status()
-            live = resp.json().get("channels", [])
+        _live_sync_channels(db, agent_id)
     except Exception as e:
-        error = str(e)
+        raise HTTPException(status_code=502, detail=f"Не удалось опросить TG-сессию: {e}")
+    return _channels_from_db(db, agent_id)
 
-    prefs = {
-        p.chat_id: p
-        for p in db.query(AgentChannelPref).filter(AgentChannelPref.agent_id == agent_id).all()
-    }
 
-    merged = []
-    for ch in live:
-        cid = str(ch.get("chat_id"))
-        pref = prefs.get(cid)
-        merged.append({
-            **ch,
-            "role": pref.role if pref else "target",
-            "watching": pref.watching if pref else True,
-        })
-
-    # Stored channels the account no longer surfaces (left/limited) — keep visible.
-    seen = {str(c.get("chat_id")) for c in live}
-    for cid, p in prefs.items():
-        if cid not in seen:
-            merged.append({
-                "chat_id": cid, "title": p.title, "username": p.username,
-                "type": "channel", "members": None, "unread": None,
-                "role": p.role, "watching": p.watching, "stale": True,
-            })
-
-    counts = {r: sum(1 for m in merged if m["role"] == r) for r in VALID_CHANNEL_ROLES}
-    return {"agent_id": agent_id, "channels": merged, "total": len(merged),
-            "counts": counts, "error": error}
+@router.post("/agents/{agent_id}/channels/bulk")
+def bulk_set_channels(
+    agent_id: str,
+    request: BulkChannelRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """Apply a role and/or watching change to many channels at once."""
+    if request.role is not None and request.role not in VALID_CHANNEL_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of {sorted(VALID_CHANNEL_ROLES)}")
+    prefs = {p.chat_id: p for p in db.query(AgentChannelPref).filter(
+        AgentChannelPref.agent_id == agent_id,
+        AgentChannelPref.chat_id.in_(request.chat_ids)).all()}
+    for cid in request.chat_ids:
+        p = prefs.get(cid)
+        if p is None:
+            p = AgentChannelPref(agent_id=agent_id, chat_id=cid)
+            db.add(p)
+            prefs[cid] = p
+        if request.role is not None:
+            p.role = request.role
+        if request.watching is not None:
+            p.watching = request.watching
+    db.flush()
+    if request.role is not None:
+        for cid in request.chat_ids:
+            _sync_news_landscape(db, agent_id, prefs[cid])
+    db.commit()
+    return _channels_from_db(db, agent_id)
 
 
 @router.post("/agents/{agent_id}/channels/{chat_id}")
@@ -334,7 +440,7 @@ def set_agent_channel(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("agents:manage")),
 ) -> dict[str, Any]:
-    """Upsert the operator's classification (role / watching) for one channel."""
+    """Upsert one channel's classification (role / watching) + sync news→landscape."""
     if request.role is not None and request.role not in VALID_CHANNEL_ROLES:
         raise HTTPException(status_code=400, detail=f"role must be one of {sorted(VALID_CHANNEL_ROLES)}")
 
@@ -344,11 +450,13 @@ def set_agent_channel(
     if pref is None:
         pref = AgentChannelPref(agent_id=agent_id, chat_id=chat_id)
         db.add(pref)
-    # Optional title/username passthrough so a stale row keeps a label.
     if request.role is not None:
         pref.role = request.role
     if request.watching is not None:
         pref.watching = request.watching
+    db.flush()
+    if request.role is not None:
+        _sync_news_landscape(db, agent_id, pref)
     db.commit()
     db.refresh(pref)
     return {"agent_id": agent_id, "chat_id": chat_id, "role": pref.role, "watching": pref.watching}

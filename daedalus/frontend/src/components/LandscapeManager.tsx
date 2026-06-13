@@ -25,7 +25,8 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
-  
+  const [editId, setEditId] = useState<number | null>(null);
+
   // Form State
   const [newPlatform, setNewPlatform] = useState(PLATFORMS[0]);
   const [newType, setNewType] = useState(TYPES[0]);
@@ -102,37 +103,53 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
     }
   };
 
-  const handleAddSubmit = async (e: React.FormEvent) => {
+  const openAdd = () => {
+    setEditId(null);
+    setNewPlatform(PLATFORMS[0]); setNewType(TYPES[0]); setNewLayers(['global']);
+    setNewTargetIdentifier(''); setNewTagsString('');
+    setShowModal(true);
+  };
+
+  const openEdit = (t: LandscapeTarget) => {
+    setEditId(t.id);
+    setNewPlatform(t.platform); setNewType(t.type || 'channel');
+    setNewLayers(t.default_layers && t.default_layers.length ? t.default_layers : ['global']);
+    setNewTargetIdentifier(t.target_identifier);
+    setNewTagsString((t.associated_tags || []).join(', '));
+    setShowModal(true);
+  };
+
+  const closeModal = () => { setShowModal(false); setEditId(null); };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newLayers.length === 0) {
       setError('Select at least one default landscape layer.');
       return;
     }
     const tags = newTagsString.split(',').map(t => t.trim()).filter(t => t.length > 0);
+    const body = {
+      platform: newPlatform,
+      type: newType,
+      default_layers: newLayers,
+      target_identifier: newTargetIdentifier,
+      associated_tags: tags.length > 0 ? tags : null,
+      ...(editId === null ? { is_active: true } : {}),
+    };
     try {
-      const res = await fetch('/api/v1/landscape/', {
-        method: 'POST',
+      const res = await fetch(editId === null ? '/api/v1/landscape/' : `/api/v1/landscape/${editId}`, {
+        method: editId === null ? 'POST' : 'PUT',
         headers,
-        body: JSON.stringify({
-          platform: newPlatform,
-          type: newType,
-          default_layers: newLayers,
-          target_identifier: newTargetIdentifier,
-          is_active: true,
-          associated_tags: tags.length > 0 ? tags : null
-        })
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => null);
         throw new Error(errData?.detail || `HTTP ${res.status}`);
       }
-      setShowModal(false);
-      setNewTargetIdentifier('');
-      setNewTagsString('');
-      setNewLayers(['global']);
+      closeModal();
       fetchTargets();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to add target');
+      setError(e instanceof Error ? e.message : 'Failed to save target');
     }
   };
 
@@ -146,7 +163,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
         <div className="header-actions">
           <button className="btn-secondary" onClick={handleForceSync}>Force Sync HUGINN</button>
           <button className="btn-secondary" onClick={fetchTargets}>Refresh</button>
-          <button className="btn-primary" onClick={() => setShowModal(true)}>+ Add Target</button>
+          <button className="btn-primary" onClick={openAdd}>+ Add Target</button>
         </div>
       </div>
 
@@ -201,6 +218,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
                     </label>
                   </td>
                   <td>
+                    <button className="btn-secondary" onClick={() => openEdit(target)} style={{ marginRight: 6 }}>Edit</button>
                     <button className="btn-danger-text" onClick={() => handleDelete(target.id)}>Delete</button>
                   </td>
                 </tr>
@@ -211,10 +229,10 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
       </div>
 
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+        <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>Add Scraping Target</h2>
-            <form onSubmit={handleAddSubmit}>
+            <h2>{editId === null ? 'Add Scraping Target' : 'Edit Scraping Target'}</h2>
+            <form onSubmit={handleSubmit}>
               <div className="form-group">
                 <label>Platform</label>
                 <select value={newPlatform} onChange={e => setNewPlatform(e.target.value)}>
@@ -265,8 +283,8 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
                 />
               </div>
               <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn-primary">Save Target</button>
+                <button type="button" className="btn-secondary" onClick={closeModal}>Cancel</button>
+                <button type="submit" className="btn-primary">{editId === null ? 'Save Target' : 'Update Target'}</button>
               </div>
             </form>
           </div>
