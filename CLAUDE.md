@@ -62,7 +62,8 @@ so any frontend change needs `docker compose build daedalus`.
   `/missions/internal/suggest-target`** (agents propose targets, dedup). `mission_control.py`
   — squad eligibility/auto-assign (DAG launch is legacy). `analytics.py` — metrics,
   `/stream` (durable activity), `/live` (telemetry tail), `/swarm` (dashboard aggregate),
-  `/dialogues`. `router_knowledge.py` — RAG facts ingest/search/list. `landscape.py` —
+  `/dialogues`. `router_knowledge.py` — RAG facts ingest/search/list + `/knowledge/internal/
+  by-geo` (recent facts by PLACE = `tags` overlap, for channel comment grounding). `landscape.py` —
   scraping sources. `router_scouting.py`, `router_auth_factory.py` (TG login/code),
   `router_factory.py` (clone factory), `router_sandbox.py`, `db_explorer.py`,
   `classifier.py`/`embeddings.py` (LLM classify + embed for knowledge), `genesis_engine.py`.
@@ -91,7 +92,8 @@ so any frontend change needs `docker compose build daedalus`.
   garbled `'дятьнет'` — the real cause of "non-deterministic relevance").
 - `persona.py` — `PersonaEngine`: profile cache (30s poll of `/souls/internal/profiles`),
   `assemble_mission_prompt` (persona + RAG + MUNINN memory + thread mood + **media context** +
-  **channel context** (`build_channel_block` — the channel's geo/topics/hot-themes) + mission
+  **channel context** (`build_channel_block` — the channel's geo/topics/hot-themes + current
+  region news by place) + mission
   stance + role/tactic; 4 `tactic_directives`; human-style + anti-repeat prompt blocks;
   **lite** branch for cheap beta inherits the tactic + channel context),
   `build_mood_prompt`/`tactic_from_mood` (dynamic per-post tactic = 3-way mood classify +

@@ -98,6 +98,10 @@ def build_channel_block(cp: Optional[dict]) -> str:
         parts.append("Тематика: " + ", ".join(topics) + ".")
     if themes:
         parts.append("Сейчас тут активно обсуждают: " + ", ".join(themes) + ".")
+    # Phase 2c — current region/city news (from the geo-layered knowledge base).
+    news = [n for n in (cp.get("news_digest") or []) if n][:3]
+    if news:
+        parts.append("Свежие новости региона: " + " | ".join(n[:110] for n in news) + ".")
     return " ".join(parts)
 
 

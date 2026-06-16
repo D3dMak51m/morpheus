@@ -311,6 +311,35 @@ def rag_search(
     return RagSearchResponse(status="success", matches=matches)
 
 
+@router.get("/internal/by-geo")
+def facts_by_geo(
+    terms: str = "",
+    limit: int = 5,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Recent knowledge facts about a PLACE — facts whose ``tags`` overlap the given place
+    terms (comma-separated, e.g. ``ташкент,узбекистан``). Layers are only a scope
+    (global/regional/state/city), not a place, so we match on the place tags to ground a
+    channel's comments in its OWN region's current news (Phase 2c). Newest first.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    wanted = [t.strip().lower() for t in terms.split(",") if t.strip() and len(t.strip()) >= 3]
+    if not wanted:
+        return {"facts": []}
+    rows = (
+        db.query(KnowledgeFact)
+        .filter(KnowledgeFact.tags.op("?|")(array(wanted)))
+        .order_by(KnowledgeFact.created_at.desc())
+        .limit(min(max(limit, 1), 20))
+        .all()
+    )
+    return {"facts": [{"content": f.content, "tags": f.tags or [],
+                       "categories": f.categories or []} for f in rows]}
+
+
 # ── Operator endpoints (Muninn Explorer UI) ────────────────────────────────
 
 @router.get("/facts", response_model=dict[str, Any])

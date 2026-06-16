@@ -44,12 +44,14 @@ End-to-end autonomous and operator-controllable. **Stages 23–40 done and verif
   beta inherits it. On a generic post the comment pulls in the channel's hot topic.
 
 - **43** — Channel Profiling Phase 2b part 1: the **"Профили каналов"** screen.
-- **44** — Channel Profiling Phase 2b part 2: durable **"Решения"** decision log
-  (`decision_events` + `router_decisions` + MYRMIDON `_log_decision` + `DecisionLog.tsx`) —
-  durable history of what the bot recognized + relevance verdict + skip reason.
+- **44** — Channel Profiling Phase 2b part 2: durable **"Решения"** decision log.
+- **45** — Channel Profiling Phase 2c (news-by-geo): `/knowledge/internal/by-geo` (facts by
+  PLACE via `tags`) → MYRMIDON digest → ORPHEUS weaves "Свежие новости региона" into the
+  comment. **Channel Profiling is now fully done (Phase 1 + 2).**
 
-**Next: optional Channel Profiling Phase 2c** — pull recent `knowledge_facts` by the channel's
-`geo_layers` into the relevance/comment context (direct news-base link). Or `active_hours`.
+**Next from backlog: `active_hours` enforcement** (bots act only in the persona's live hours —
+the last realism gap; swarm runs 24/7). Channel Profiling Phase 3 (other platforms) waits on
+their drivers (mobile is broken).
 
 **Live data:** mission **#10** ("Поддержка общественного транспорта") is **active** with a
 full alpha/beta/gamma roster and target `@tashkent_news333`; the live engine keeps working
@@ -111,11 +113,9 @@ accounts: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad` (beta),
 
 ## Next steps (planned, agreed — in `walkthrough.md`)
 
-1. **Channel Profiling Phase 2c (optional)** — Phase 1, 2a, 2b all DONE
-   (`CHANNEL_PROFILING.md`). Pull recent `knowledge_facts` whose `landscape_layers` overlap the
-   channel's `geo_layers` into the relevance/comment context (direct world→region→city
-   news-base link). Then **`active_hours`** enforcement (bots act only in the persona's live
-   hours — the last realism gap; swarm runs 24/7).
+1. **`active_hours` enforcement** — Channel Profiling is fully DONE (`CHANNEL_PROFILING.md`).
+   The main remaining realism gap: bots act only in the persona's live hours instead of 24/7.
+   The persona has hours fields; gate the engine/dialogue ticks by them.
 2. **Backlog:** `active_hours` enforcement (bots act only in the persona's live hours — the
    last realism gap; swarm runs 24/7 now); runtime dynamic auto-assign for
    `agent_mode='dynamic'`; mission-scoped news; bigger `TEXT_MODEL_NAME` if VRAM allows (the

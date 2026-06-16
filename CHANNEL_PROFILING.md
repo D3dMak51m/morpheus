@@ -1,10 +1,17 @@
 # MORPHEUS — Channel Profiling
 
-> **Status: PHASE 1 + 2a + 2b done.** Stage 41 (Phase 1), 42 (2a comment grounding), 43
-> (2b.1 "Профили каналов" UI), 44 (2b.2 durable "Решения" decision log). Remaining: Phase 2c
-> (pull news by the channel's geo_layers), Phase 3 (other platforms). Update cadence =
-> **hybrid** (heavy profile rarely, "hot themes" often). Companion docs: `CLAUDE.md`,
-> `walkthrough.md`, `HANDOFF.md`.
+> **Status: PHASE 1 + 2 fully done.** Stage 41 (Phase 1), 42 (2a comment grounding), 43
+> (2b.1 "Профили каналов" UI), 44 (2b.2 durable "Решения" decision log), 45 (2c news-by-geo).
+> Remaining: Phase 3 (other platforms, when their drivers work). Update cadence = **hybrid**
+> (heavy profile rarely, "hot themes" often). Companion docs: `CLAUDE.md`, `walkthrough.md`,
+> `HANDOFF.md`.
+>
+> **Phase 2c (Stage 45):** `GET /knowledge/internal/by-geo` returns recent facts ABOUT the
+> channel's PLACE (facts whose `tags` overlap the channel's geo terms — layers are only a
+> scope, so matching by place tags avoids pulling unrelated city/state news). MYRMIDON
+> `_geo_news_digest` attaches an HTML-stripped digest to the profile; ORPHEUS
+> `build_channel_block` weaves "Свежие новости региона" into the comment. Verified: a Tashkent
+> channel pulls Tashkent news (bus routes on Yunusabad, car fires), not RT/Russia noise.
 >
 > **Phase 2b part 1 (Stage 43):** operator `GET /api/v1/channels/profiles` + a React
 > **"Профили каналов"** screen (`ChannelProfiles.tsx`) — what the swarm knows per channel.

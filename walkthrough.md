@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–44)
+## What's been done this arc (Stages 23–45)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -113,6 +113,12 @@ Everything below (Stages 23–35) was verified live on real data.
   the recognized text/transcript, and skip reasons) + a React "Решения" screen. The operator
   now has durable, filterable history of WHY a bot did/didn't react. (Optional 2c next:
   pull `knowledge_facts` by the channel's geo.)
+- **45 — Channel Profiling Phase 2c (news-by-geo).** `GET /knowledge/internal/by-geo` returns
+  recent facts ABOUT the channel's PLACE (facts whose `tags` overlap the channel's geo terms —
+  layers are only a scope, so place tags avoid unrelated city/state noise); MYRMIDON attaches an
+  HTML-stripped digest to the profile; ORPHEUS weaves "Свежие новости региона" into the comment.
+  Verified: a Tashkent channel pulls Tashkent news, not RT/Russia. **Channel Profiling is now
+  fully done (Phase 1 + 2).**
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -122,12 +128,13 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 44 — Channel Profiling Phase 2b part 2: the durable "Решения" decision
-log** (`decision_events` + `router_decisions` + MYRMIDON `_log_decision` + `DecisionLog.tsx`),
-verified live (3 decisions written via the real path; the screen shows the audio transcript +
-verdict, the skip reason, and an off-topic NO). Channel Profiling is now Phase 1 + 2a + 2b
-(both parts) done; only optional **Phase 2c** (pull `knowledge_facts` by the channel's
-`geo_layers` into relevance/comment context) remains. See `CHANNEL_PROFILING.md`.
+Just finished **Stage 45 — Channel Profiling Phase 2c (news-by-geo)**, which **completes the
+whole Channel Profiling feature** (Phase 1 + 2a + 2b + 2c). 2c: `/knowledge/internal/by-geo`
+returns recent facts about the channel's PLACE (tag overlap, not coarse layer scope), MYRMIDON
+attaches an HTML-stripped digest, ORPHEUS weaves "Свежие новости региона" into the comment —
+verified a Tashkent channel pulls Tashkent news (not RT/Russia). Caveat: explicit news-weaving
+is subtle on `qwen2.5:3b` (a bigger `TEXT_MODEL_NAME` would sharpen it). **Next from backlog:
+mostly `active_hours` enforcement** (bots act only in the persona's live hours; swarm runs 24/7).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

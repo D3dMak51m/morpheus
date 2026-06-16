@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 import uuid
@@ -375,6 +376,12 @@ def _process_mission(mission: dict, sf) -> None:
         # The channel's profile (topics/geo/hot-themes) lets relevance judge a post IN
         # context (e.g. «опять эти машины» on a Tashkent traffic channel → relevant).
         channel_profile = _get_channel_profile(ident)
+        # Phase 2c: attach current news ABOUT the channel's place (facts tagged with its
+        # geo terms) so the comment can reference what's actually happening locally.
+        if channel_profile and channel_profile.get("geo_label"):
+            digest = _geo_news_digest(channel_profile)
+            if digest:
+                channel_profile = {**channel_profile, "news_digest": digest}
         # Check the few newest new posts (not just the latest) for one relevant to
         # the mission — bounded so the LLM relevance load stays small.
         chosen = None
@@ -630,6 +637,34 @@ def _get_channel_profile(ident: str) -> Optional[dict]:
         return data.get("profile") if data.get("status") == "ok" else None
     except Exception:
         return None
+
+
+def _geo_news_digest(profile: dict, limit: int = 4) -> list:
+    """Recent news ABOUT the channel's place (facts tagged with its geo terms) — to ground
+    comments in the region's current events (Phase 2c). Layers are only a scope, so we
+    match on place terms derived from geo_label. Best-effort; HTML stripped."""
+    geo_label = profile.get("geo_label") or ""
+    terms = [w for w in (x.strip(" ,.;:").lower() for x in geo_label.replace(",", " ").split())
+             if len(w) >= 4]
+    if not terms:
+        return []
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{DAEDALUS_URL}/api/v1/knowledge/internal/by-geo",
+                params={"terms": ",".join(terms), "limit": limit},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+        out = []
+        for f in resp.json().get("facts", []):
+            c = re.sub(r"<[^>]+>", " ", f.get("content") or "")  # strip HTML
+            c = " ".join(c.split()).strip()
+            if c:
+                out.append(c)
+        return out
+    except Exception:
+        return []
 
 
 def _log_decision(kind: str, agent_id: str, mission_id, channel_ref: str, post_url: str,
