@@ -217,6 +217,30 @@ def _remember_output(redis_client, agent_id: str, text: str) -> None:
         pass
 
 
+def _channel_context(cp: Optional[dict]) -> str:
+    """Render a channel profile into a short Russian context line for the relevance
+    (and, later, comment) prompt — so a post is judged IN the channel's context."""
+    if not cp:
+        return ""
+    parts = []
+    title = (cp.get("title") or "").strip()
+    geo = (cp.get("geo_label") or "").strip()
+    topics = [t for t in (cp.get("topics") or []) if t][:8]
+    themes = [t.get("theme") for t in (cp.get("recent_themes") or []) if t.get("theme")][:6]
+    head = f"Канал «{title}»" if title else "Канал"
+    if geo:
+        head += f" ({geo})"
+    parts.append(head + ".")
+    if topics:
+        parts.append("Тематика канала: " + ", ".join(topics) + ".")
+    if themes:
+        parts.append("Сейчас в канале активно обсуждают: " + ", ".join(themes) + ".")
+    summary = (cp.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
+    return " ".join(parts)
+
+
 def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     """
     Cheap LLM relevance gate for the target engine: given the agent's mission +
@@ -234,16 +258,19 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
         m_goal = (req.get("goal") or "").strip()
         m_stance = (req.get("stance") or "").strip()
         if m_goal or m_stance:
+            cp_ctx = _channel_context(req.get("channel_profile"))
             prompt = (
-                f"Миссия продвигает: {m_goal[:250]}\n"
+                (cp_ctx + "\n\n" if cp_ctx else "")
+                + f"Миссия продвигает: {m_goal[:250]}\n"
                 f"Позиция: {m_stance[:250]}\n\n"
-                f"Сообщение: \"{post_text[:400]}\"\n\n"
-                "Реши, стоит ли стороннику миссии вступить в обсуждение. Ответь ДА, если "
-                "сообщение хоть как-то связано с темой миссии, с проблемой, которую она решает, "
-                "или с её причинами/последствиями — даже косвенно, эмоционально, как жалоба, "
-                "мнение или новость. Ответь НЕТ, если сообщение про совершенно другую тему или "
-                "сферу (другой товар, книга, технология, программирование, еда, погода, спорт, "
-                "реклама, объявление, личное). Одно слово: ДА или НЕТ."
+                f"Сообщение в этом канале: \"{post_text[:400]}\"\n\n"
+                "Реши, стоит ли стороннику миссии вступить в обсуждение. С УЧЁТОМ тематики "
+                "канала и того, что в нём сейчас обсуждают, ответь ДА, если сообщение хоть как-то "
+                "связано с темой миссии, с проблемой, которую она решает, или с её "
+                "причинами/последствиями — даже косвенно, эмоционально, как жалоба, мнение или "
+                "новость. Ответь НЕТ, если сообщение про совершенно другую тему или сферу "
+                "(другой товар, книга, технология, программирование, еда, погода, спорт, реклама, "
+                "объявление, личное). Одно слово: ДА или НЕТ."
             )
         else:
             mission = profile.get("core_mission") or ""

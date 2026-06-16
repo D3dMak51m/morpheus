@@ -637,6 +637,57 @@ class AgentChannelPref(Base):
         return f"<AgentChannelPref(agent='{self.agent_id}', chat='{self.chat_id}', role='{self.role}')>"
 
 
+class ChannelProfile(Base):
+    """
+    Channel Profiling — an independent, per-channel characterization (NOT per agent).
+    Built from the channel's own posts and linked to the geo-layered news base
+    (``knowledge_facts.landscape_layers`` shares the same closed set), so the swarm can
+    judge a post IN the channel's context (topics / geo / what's discussed now) instead
+    of in a vacuum. Platform-agnostic; Telegram is implemented first.
+
+    Updated on a HYBRID cadence: the heavy profile (geo/topics/summary) rarely, the
+    live ``recent_themes`` ("hot topics now") often. See CHANNEL_PROFILING.md.
+    """
+    __tablename__ = "channel_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(30), default="telegram", nullable=False)
+    channel_ref: Mapped[str] = mapped_column(String(500), nullable=False)  # @username / id / url
+    title: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+
+    # Geo: same closed set as knowledge_facts.landscape_layers (cross-queryable).
+    geo_layers: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    geo_label: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    # Themes.
+    topics: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    recent_themes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    # Characterization.
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    audience_tone: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    language: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+
+    # Bookkeeping.
+    sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    posts_seen: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_profiled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_themes_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (UniqueConstraint("platform", "channel_ref", name="uq_channel_profile"),)
+
+    def __repr__(self) -> str:
+        return f"<ChannelProfile(platform='{self.platform}', ref='{self.channel_ref}', geo={self.geo_layers})>"
+
+
 # ── Stage 23 — Identity binding (decoupled accounts ⇄ souls) ───────────────
 
 def bind_account_to_soul(db: Session, account_id: int, agent_id: str) -> "SoulAccount":

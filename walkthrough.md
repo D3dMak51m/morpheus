@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–40)
+## What's been done this arc (Stages 23–41)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -89,8 +89,14 @@ Everything below (Stages 23–35) was verified live on real data.
   tokens (garbled `'дятьнет'`). Classification calls (relevance, tactic) now run with
   `penalties=False` + low temperature; the relevance prompt was sharpened (engages on related
   complaints — пробки/парковка/автобусы; rejects off-topic — погода/книга/еда).
-- **Channel Profiling — DESIGNED only** (`CHANNEL_PROFILING.md`): per-channel profile (topics/geo/
-  hot themes) linked to the geo-layered news base, fed into relevance + comments. Build next.
+- **41 — Channel Profiling (Phase 1) + observability.** Per-channel independent profile
+  (`channel_profiles`: geo_layers/geo_label/topics/recent_themes/summary), built by DAEDALUS
+  `channel_profiler` (LLM strict-JSON, sibling of the news classifier) via MYRMIDON, hybrid
+  cadence (heavy daily, hot themes ~4h, Redis-gated, runs BEFORE commenting). Relevance now
+  judges a post **in the channel's context** → `«опять эти машины»`/voice-about-пробки on a
+  Tashkent channel flips **False→True**. Plus Live Ops observability: `media_read` (the actual
+  transcript / image text), `relevance` (per-post verdict), `rate_skip` (why a relevant post
+  was throttled). Full design: **`CHANNEL_PROFILING.md`**. (Phase 2 = comment grounding + UI.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -100,12 +106,15 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just committed Stages **37–40** (agent target suggestions, human/anti-repeat comments,
-media reading via HEIMDALL + OCR, relevance penalties/prompt fix) and the **Channel
-Profiling design** (`CHANNEL_PROFILING.md`). All verified live (HEIMDALL transcribed real
-speech in ogg/flac; OCR read a Tashkent text-card photo; relevance now engages on
-пробки/парковка/автобусы and rejects погода/книга). **Next: build Channel Profiling Phase 1**
-(table + profiler + relevance integration) — the agreed next step.
+Just finished **Stage 41 — Channel Profiling Phase 1 + observability** (uncommitted until
+the operator's "коммит"). Verified live: `@tashkent_news333` profiled (geo Ташкент
+`['state','city']`, topics пробки/дороги/свет, hot themes пробки/…); a voice note about
+пробки transcribes correctly and relevance flips **False→True** with the profile; Live Ops
+now shows the transcript (`media_read`), the per-post `relevance` verdict, and `rate_skip`.
+Note: the swarm IS commenting on the channel (alpha seed + beta amplify + gamma react on
+traffic posts) — the ≤1 comment/channel/hr anti-spam cap is why a *second* on-topic post in
+the same hour is skipped (now visible via `rate_skip`). **Next: Channel Profiling Phase 2**
+(comment grounding with the profile + a Daedalus UX pass) — see `CHANNEL_PROFILING.md`.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

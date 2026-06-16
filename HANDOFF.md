@@ -35,8 +35,13 @@ End-to-end autonomous and operator-controllable. **Stages 23–40 done and verif
   albums, voice/audio) + **Tesseract OCR** for text-card images + ORPHEUS media weaving.
 - **40** — relevance fix: penalties OFF for classification (the real "non-deterministic
   relevance" cause) + sharper prompt + media-aware relevance for caption-less posts.
+- **41** — **Channel Profiling Phase 1** (`channel_profiles` + DAEDALUS `channel_profiler`/
+  `router_channels` + MYRMIDON hybrid profiler + relevance-in-context) — posts judged in the
+  channel's topic/geo/hot-theme context (`«опять эти машины»` → True). Plus Live Ops
+  observability: `media_read` (transcript/text), `relevance` verdict, `rate_skip` reason.
 
-**Next: build Channel Profiling (Phase 1)** — fully designed in **`CHANNEL_PROFILING.md`**.
+**Next: Channel Profiling Phase 2** — comment grounding with the profile + a Daedalus UX pass.
+Full design in **`CHANNEL_PROFILING.md`**.
 
 **Live data:** mission **#10** ("Поддержка общественного транспорта") is **active** with a
 full alpha/beta/gamma roster and target `@tashkent_news333`; the live engine keeps working
@@ -98,13 +103,12 @@ accounts: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad` (beta),
 
 ## Next steps (planned, agreed — in `walkthrough.md`)
 
-1. **Channel Profiling — DESIGNED, build next. Full design + schema in `CHANNEL_PROFILING.md`.**
-   Per-channel independent profile (topics / geo / "hot themes now") linked to the
-   geo-layered news base (`knowledge_facts` already has global→regional→state→city), fed
-   into the relevance gate + comment grounding so posts are judged **in the channel's
-   context** (the fix for `«опять эти машины»` on a Tashkent traffic channel). Update
-   cadence = **hybrid** (heavy daily, hot every few hours). Phase 1 MVP = `channel_profiles`
-   table + profiler + relevance integration; Phase 2 = comment grounding + UI.
+1. **Channel Profiling Phase 2** (Phase 1 is DONE — `CHANNEL_PROFILING.md`). (a) **Comment
+   grounding**: weave the channel profile (geo/topics/hot-themes + linked news) into
+   `assemble_mission_prompt` so comments sound native to the channel. (b) **Daedalus UX pass**:
+   a durable "what the bot heard/saw + verdict + why it acted" view (today it's only in the
+   capped Live Ops stream + logs), and a channel-profiles screen. (c) optional: pull recent
+   `knowledge_facts` by the channel's `geo_layers` into the relevance/comment context.
 2. **Backlog:** `active_hours` enforcement (bots act only in the persona's live hours — the
    last realism gap; swarm runs 24/7 now); runtime dynamic auto-assign for
    `agent_mode='dynamic'`; mission-scoped news; bigger `TEXT_MODEL_NAME` if VRAM allows (the

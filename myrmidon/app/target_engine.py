@@ -60,6 +60,15 @@ SUGGEST_POSTS_PER_CHANNEL = int(os.getenv("SUGGEST_POSTS_PER_CHANNEL", "3"))
 SUGGEST_RELEVANCE_CHECK = int(os.getenv("SUGGEST_RELEVANCE_CHECK", "2"))
 SUGGEST_RECHECK_SEC = int(os.getenv("SUGGEST_RECHECK_SEC", "21600"))  # 6h
 
+# Channel profiling (hybrid cadence): heavy profile rarely, hot themes often.
+PROFILE_TTL_SEC = int(os.getenv("CHANNEL_PROFILE_TTL_SEC", "86400"))   # 24h heavy
+THEMES_TTL_SEC = int(os.getenv("CHANNEL_THEMES_TTL_SEC", "14400"))     # 4h hot themes
+PROFILE_SAMPLE = int(os.getenv("CHANNEL_PROFILE_SAMPLE", "40"))
+THEMES_SAMPLE = int(os.getenv("CHANNEL_THEMES_SAMPLE", "18"))
+PROFILE_MAX_PER_CYCLE = int(os.getenv("CHANNEL_PROFILE_MAX_PER_CYCLE", "3"))
+PROFILE_HEAVY_PREFIX = "morpheus:profile:heavy:"     # <platform>:<ref> -> staleness gate
+PROFILE_THEMES_PREFIX = "morpheus:profile:themes:"
+
 TARGET_POLL_INTERVAL_SEC = int(os.getenv("TARGET_POLL_INTERVAL_SEC", "300"))
 MAX_PER_CHANNEL_PER_HOUR = int(os.getenv("TARGET_MAX_PER_CHANNEL_PER_HOUR", "1"))
 # Global cap across ALL channels for one agent — so the swarm never looks like a
@@ -94,17 +103,19 @@ def _get_gen_redis() -> redis.Redis:
     return _gen_redis
 
 
-def _relevance_via_orpheus(agent_id: str, post_text: str,
-                           goal: str = "", stance: str = "") -> Optional[bool]:
+def _relevance_via_orpheus(agent_id: str, post_text: str, goal: str = "", stance: str = "",
+                           channel_profile: Optional[dict] = None) -> Optional[bool]:
     """
     Ask ORPHEUS for a cheap LLM verdict on whether this post is worth commenting on.
-    If a mission goal/stance is given, relevance is judged against the MISSION;
-    otherwise against the agent's own profile. None on timeout → keyword fallback.
+    If a mission goal/stance is given, relevance is judged against the MISSION (and, when
+    provided, IN the channel's profile context); otherwise against the agent's own
+    profile. None on timeout → keyword fallback.
     """
     rid = uuid.uuid4().hex
     rk = f"reply:relevance:{rid}"
     req = {"request_id": rid, "reply_key": rk, "mode": "relevance",
-           "agent_id": agent_id, "post_text": post_text, "goal": goal, "stance": stance}
+           "agent_id": agent_id, "post_text": post_text, "goal": goal, "stance": stance,
+           "channel_profile": channel_profile}
     try:
         c = _get_gen_redis()
         c.lpush(MISSION_GEN_QUEUE, json.dumps(req, ensure_ascii=False))
@@ -359,6 +370,9 @@ def _process_mission(mission: dict, sf) -> None:
         if res["first_seen"]:
             continue
         posts = sorted(res["posts"], key=lambda p: p["post_id"], reverse=True)
+        # The channel's profile (topics/geo/hot-themes) lets relevance judge a post IN
+        # context (e.g. «опять эти машины» on a Tashkent traffic channel → relevant).
+        channel_profile = _get_channel_profile(ident)
         # Check the few newest new posts (not just the latest) for one relevant to
         # the mission — bounded so the LLM relevance load stays small.
         chosen = None
@@ -375,9 +389,16 @@ def _process_mission(mission: dict, sf) -> None:
             judge_text = (ctext + ("\n" + media_ctx if media_ctx else "")).strip()
             if not judge_text:
                 continue  # unreadable media / download failed — nothing to judge on
-            v = _relevance_via_orpheus(seeder, judge_text, goal=mission["goal"], stance=mission["stance"])
+            v = _relevance_via_orpheus(seeder, judge_text, goal=mission["goal"],
+                                       stance=mission["stance"], channel_profile=channel_profile)
             if v is None:
                 v = True  # mission target channel → engage if LLM unavailable
+            # Surface the per-post relevance decision so the operator sees WHY the bot
+            # did/didn't engage (not just silence).
+            emit_event(seeder, "relevance",
+                       ("по теме: " if v else "не по теме: ") + judge_text.replace("\n", " ")[:70],
+                       status="ok" if v else "info",
+                       target=_mission_post_url(ident, cand["post_id"]))
             if v:
                 chosen = cand
                 chosen_media = media_ctx
@@ -385,6 +406,11 @@ def _process_mission(mission: dict, sf) -> None:
         if not chosen:
             continue
         if not _allow_rate(f"mission_{mid}", ident):
+            # Relevant, but the anti-spam hourly cap is spent — say so (else it looks
+            # like the bot ignored a clearly on-topic post).
+            emit_event(seeder, "rate_skip",
+                       f"по теме, но пропуск: лимит {MAX_PER_CHANNEL_PER_HOUR} коммент/час на канал исчерпан",
+                       status="warn", target=_mission_post_url(ident, chosen["post_id"]))
             continue
         _enqueue_comment(seeder, _mission_post_url(ident, chosen["post_id"]), chosen["text"],
                          mission["goal"], mission["stance"], mission["tactic"], mid,
@@ -579,14 +605,122 @@ def _suggest_targets_for_mission(mission: dict, sf) -> None:
                             agent_id, c["ident"], mid)
 
 
+# ── Channel profiling (hybrid: heavy profile rarely, hot themes often) ────────
+
+def _get_channel_profile(ident: str) -> Optional[dict]:
+    """Fetch a channel's cached profile from DAEDALUS (None if missing/unavailable)."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{DAEDALUS_URL}/api/v1/channels/internal/profile",
+                params={"platform": "telegram", "channel_ref": ident},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("profile") if data.get("status") == "ok" else None
+    except Exception:
+        return None
+
+
+def _build_channel_profile(ident: str, title: str, posts: list[str]) -> bool:
+    try:
+        with httpx.Client(timeout=150.0) as client:
+            resp = client.post(
+                f"{DAEDALUS_URL}/api/v1/channels/internal/profile",
+                json={"platform": "telegram", "channel_ref": ident, "title": title or "", "posts": posts},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.warning("profiler: build_profile failed for %s: %s", ident, exc)
+        return False
+
+
+def _refresh_channel_themes(ident: str, posts: list[str]) -> bool:
+    try:
+        with httpx.Client(timeout=90.0) as client:
+            resp = client.post(
+                f"{DAEDALUS_URL}/api/v1/channels/internal/themes",
+                json={"platform": "telegram", "channel_ref": ident, "posts": posts},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.warning("profiler: refresh_themes failed for %s: %s", ident, exc)
+        return False
+
+
+def _profile_channels_for_mission(mission: dict, sf) -> None:
+    """
+    Keep each mission target channel's profile current (independent per channel),
+    hybrid cadence: heavy profile every PROFILE_TTL_SEC, hot themes every
+    THEMES_TTL_SEC. Staleness gated by Redis markers so most cycles do nothing (no
+    session opened); only stale channels are read.
+    """
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+    from app import account_health
+
+    r = _get_redis()
+    todo = []  # (ident, title, heavy_key, themes_key, need_heavy, need_themes)
+    for ch in mission["channels"]:
+        ident = ch["identifier"]
+        nref = _norm_ident(ident)
+        heavy_key = f"{PROFILE_HEAVY_PREFIX}telegram:{nref}"
+        themes_key = f"{PROFILE_THEMES_PREFIX}telegram:{nref}"
+        need_heavy = not r.get(heavy_key)
+        need_themes = not r.get(themes_key)
+        if need_heavy or need_themes:
+            todo.append((ident, ch.get("title"), heavy_key, themes_key, need_heavy, need_themes))
+    if not todo:
+        return
+
+    alphas = [a["agent_id"] for a in mission["agents"] if a["role"] == "alpha"]
+    reader = (alphas or [a["agent_id"] for a in mission["agents"]])[0] if mission["agents"] else None
+    if not reader or account_health.in_cooldown(reader):
+        return
+    creds = get_agent_credentials(sf, reader, "telegram")
+    if creds is None:
+        return
+    driver = TelegramDriver(reader, creds)
+
+    for ident, title, heavy_key, themes_key, need_heavy, need_themes in todo[:PROFILE_MAX_PER_CYCLE]:
+        username = ident.lstrip("@") if ident.startswith("@") else None
+        limit = PROFILE_SAMPLE if need_heavy else THEMES_SAMPLE
+        results = driver.fetch_new_posts([{"chat_id": ident, "username": username}], {ident: 0}, limit)
+        posts = [p["text"] for p in (results[0]["posts"] if results else []) if p.get("text")]
+        if not posts:
+            continue
+        if need_heavy:
+            if _build_channel_profile(ident, title, posts[:PROFILE_SAMPLE]):
+                r.set(heavy_key, "1", ex=PROFILE_TTL_SEC)
+                r.set(themes_key, "1", ex=THEMES_TTL_SEC)  # heavy also seeds hot themes
+                emit_event(reader, "channel_profile",
+                           f"профилирует канал {title or ident}", status="info", target=ident)
+        elif need_themes:
+            if _refresh_channel_themes(ident, posts[:THEMES_SAMPLE]):
+                r.set(themes_key, "1", ex=THEMES_TTL_SEC)
+
+
 def _poll_once(sf) -> None:
     # 1) Mission-driven commenting (missions are the primary driver).
     for mission in _active_missions(sf):
+        # 1a) Channel profiling FIRST (hybrid cadence, mostly a no-op via Redis gates) so
+        # relevance always judges posts in the channel's freshest context — otherwise a
+        # cold-start channel's first relevant posts are judged blind and lost to lastseen.
+        try:
+            _profile_channels_for_mission(mission, sf)
+        except Exception as exc:
+            logger.error("profiler: mission %s failed: %s", mission.get("id"), exc)
+        # 1b) Seed/amplify comments on the mission's target channels.
         try:
             _process_mission(mission, sf)
         except Exception as exc:
             logger.error("mission_engine: mission %s failed: %s", mission.get("id"), exc)
-        # 1b) Agent-proposed targets: roster bots read their own channels and propose
+        # 1c) Agent-proposed targets: roster bots read their own channels and propose
         # mission-relevant ones the operator hasn't added yet (status=suggested).
         try:
             _suggest_targets_for_mission(mission, sf)

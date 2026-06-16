@@ -357,6 +357,13 @@ class TelegramDriver:
             logger.warning("TelegramDriver [%s]: media enrichment failed: %s", self.agent_id, e)
         finally:
             self._cleanup_media(items)
+        # Surface WHAT was recognized (transcript / image text) — to logs and Live Ops,
+        # so the operator can see what the bot actually heard/saw in the post.
+        if ctx:
+            flat = ctx.replace("\n", " ")
+            logger.info("TelegramDriver [%s]: recognized media on %s: %s", self.agent_id, target_url, flat)
+            emit_event(self.agent_id, "media_read", "распознал в посте: " + flat[:140],
+                       status="ok", target=target_url)
         return ctx or ""
 
     def read_media_context(self, channel_ref, post_id: Optional[int], target_url: str = "") -> str:

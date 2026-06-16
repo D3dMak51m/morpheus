@@ -66,6 +66,8 @@ so any frontend change needs `docker compose build daedalus`.
   scraping sources. `router_scouting.py`, `router_auth_factory.py` (TG login/code),
   `router_factory.py` (clone factory), `router_sandbox.py`, `db_explorer.py`,
   `classifier.py`/`embeddings.py` (LLM classify + embed for knowledge), `genesis_engine.py`.
+  `channel_profiler.py` (LLM strict-JSON per-channel profile + hot themes) +
+  `router_channels.py` (internal `/channels/internal/{profile,themes}` build, `…/profile` GET).
 - React (`daedalus/frontend/src/components/`): `LiveOps` (live activity), `SwarmDashboard`
   ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),
   `ChannelManager` (account channels), `MissionDeck` (missions), `MuninnExplorer`
@@ -77,7 +79,9 @@ so any frontend change needs `docker compose build daedalus`.
   `handle_mission_generation` (mode=comment|reply, lite for beta; `_resolve_dynamic_tactic`
   picks the per-post tactic; anti-repeat via `_recent_outputs`/`_remember_output` +
   `guardrails.is_repeat`), `handle_relevance` (mode=relevance, mission- or profile-aware
-  YES/NO). **`generate_text(prompt, max_tokens, temperature, penalties)`** — set
+  YES/NO; `_channel_context` weaves the **channel profile** — geo/topics/hot-themes — so a
+  post is judged IN context, not in a vacuum).
+  **`generate_text(prompt, max_tokens, temperature, penalties)`** — set
   `penalties=False` for short CLASSIFICATION calls (relevance, tactic): the anti-parroting
   repeat/frequency penalties otherwise push the model OFF the clean `да`/`нет` tokens (gave
   garbled `'дятьнет'` — the real cause of "non-deterministic relevance").
@@ -107,12 +111,14 @@ so any frontend change needs `docker compose build daedalus`.
 - `media_reader.py` — turns a post's media into text: audio → **HEIMDALL** STT, image →
   Ollama VLM (Moondream) + **Tesseract OCR** (a text-card image is read by OCR; the small VLM
   hallucinates a scene on those). Returns a compact `media_context`.
-- `target_engine.py` — **primary driver**: per active mission, the roster alpha scans the
-  mission's target channels, LLM-relevance-checks newest posts vs the mission's goal/stance
-  (caption-less media posts are "read" first so relevance is grounded in the photo/audio),
-  seeds a comment (then `swarm.py` amplifies). Also `_suggest_targets_for_mission` (bots
-  propose new mission targets from their own channels) and per-agent **news ingest**
-  (role=news → DAEDALUS knowledge).
+- `target_engine.py` — **primary driver**: per active mission it first
+  `_profile_channels_for_mission` (hybrid-cadence channel profiling, Redis-gated, runs BEFORE
+  commenting), then the roster alpha scans the target channels, LLM-relevance-checks newest
+  posts vs the mission's goal/stance **in the channel's profile context** (`_get_channel_profile`;
+  caption-less media posts are "read" first so relevance is grounded in the photo/audio), seeds
+  a comment (then `swarm.py` amplifies). Emits `media_read`/`relevance`/`rate_skip` to Live Ops.
+  Also `_suggest_targets_for_mission` (bots propose new mission targets) and per-agent **news
+  ingest** (role=news → DAEDALUS knowledge).
 - `dialogue_engine.py` + `dialogue_store.py` — poll watched comments for human replies →
   ORPHEUS reply → post → register follow-up watch (multi-turn). Logs `action_type=reply`.
 - `swarm.py` — caste amplification: after an **alpha** seed posts, **beta** = cheap "lite"
@@ -147,7 +153,9 @@ unbound, `core_mission`, `core_interests`, `context_subscriptions`), **`souls_ac
 (access: platform, `auth_cookies` JSONB = `{session_string}`, `status` active|banned|limited|
 unbound), `profile_history`.
 Channels: **`agent_channel_prefs`** (per-agent channel classification role target|news|ignored
-+ cached enumeration).
++ cached enumeration), **`channel_profiles`** (per-channel, NOT per-agent: `geo_layers`
+[same closed set as knowledge], `geo_label`, `topics`, `recent_themes`, `summary` — built by
+`channel_profiler`, used by relevance/comments).
 Missions: **`missions`** (permanent: `stance`, `status` active|paused, `agent_mode`,
 `dynamic_count`, `tactic` — default `dynamic` = per-post tactic from thread mood vs stance),
 **`mission_targets`** (kind channel|post, status active|suggested|rejected,
@@ -168,6 +176,7 @@ Targets: `morpheus:target:lastseen` (hash, also `mission:<id>:<channel>`),
 `morpheus:target:rate:*` (hourly caps), `morpheus:suggest:checked:<mid>:<ident>` (6h
 re-scan marker for agent target suggestions).
 Anti-repeat: `morpheus:recent_outputs:<agent>` (capped list of the agent's last comments).
+Profiling: `morpheus:profile:heavy:<platform>:<ref>` (24h gate), `…:themes:…` (4h gate).
 Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_cooldown:<agent>`,
 `morpheus:amplified:<url>` (once-per-post amplification). Metrics: `metrics:*`.
 

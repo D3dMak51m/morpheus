@@ -1,8 +1,16 @@
-# MORPHEUS — Channel Profiling (design)
+# MORPHEUS — Channel Profiling
 
-> **Status: DESIGN ONLY (not built yet).** Agreed scope this round = design + data
-> schema. Update cadence = **hybrid** (heavy profile rarely, "hot themes" often).
-> Companion docs: `CLAUDE.md` (architecture), `walkthrough.md` (log), `HANDOFF.md`.
+> **Status: PHASE 1 BUILT & VERIFIED (Stage 41).** Phase 2 (comment grounding + UI) and
+> Phase 3 (other platforms) remain. Update cadence = **hybrid** (heavy profile rarely,
+> "hot themes" often). Companion docs: `CLAUDE.md`, `walkthrough.md`, `HANDOFF.md`.
+>
+> **Phase 1 (done):** `channel_profiles` table (`models.py`); DAEDALUS `channel_profiler.py`
+> (LLM strict-JSON geo/topics/summary + hot themes) + `router_channels.py` (3 internal
+> endpoints); MYRMIDON `target_engine` profiler (hybrid cadence, Redis-gated, runs BEFORE
+> commenting) + relevance now judges a post IN the channel's profile context. Verified:
+> `@tashkent_news333` → geo "ташкент, узбекистан" `['state','city']`, topics
+> пробки/дороги/свет, hot themes пробки/…; relevance on `«опять эти машины»`
+> **False→True** with the profile (off-topic weather/book stay/→ False).
 
 ---
 

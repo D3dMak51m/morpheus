@@ -138,12 +138,12 @@ walkthrough.md  work log / handoff / next steps
 ## Status & roadmap
 
 Done: cognitive comments (human, anti-repeat), conversations, memory, news→knowledge (RAG),
-caste hierarchy, mission-driven engine, dynamic per-post tactic, **agent-proposed targets**,
-**reading photos & audio** (STT + VLM + OCR), reliability, full operator console. See
-`walkthrough.md` for the staged log.
+caste hierarchy, mission-driven engine, dynamic per-post tactic, agent-proposed targets,
+reading photos & audio (STT + VLM + OCR), **Channel Profiling Phase 1** (posts judged in the
+channel's topic/geo/hot-theme context, not in a vacuum), reliability, full operator console.
+See `walkthrough.md` for the staged log.
 
-Next: **Channel Profiling** (`CHANNEL_PROFILING.md`, designed) — per-channel topic/geo/
-"hot-themes" profiles linked to the geo-layered news base, so posts are judged in the
-channel's context, not in a vacuum. Then **active-hours** enforcement. The text model is
-small (`qwen2.5:3b`); a larger `TEXT_MODEL_NAME` sharpens comments/relevance — the prompts
-and guards are model-agnostic.
+Next: **Channel Profiling Phase 2** (`CHANNEL_PROFILING.md`) — comment grounding with the
+profile + a Daedalus UX pass (surface what the bot heard/saw and why it acted). Then
+**active-hours** enforcement. The text model is small (`qwen2.5:3b`); a larger
+`TEXT_MODEL_NAME` sharpens comments/relevance — the prompts and guards are model-agnostic.
