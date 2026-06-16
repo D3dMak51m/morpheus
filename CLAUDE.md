@@ -87,8 +87,9 @@ so any frontend change needs `docker compose build daedalus`.
   garbled `'дятьнет'` — the real cause of "non-deterministic relevance").
 - `persona.py` — `PersonaEngine`: profile cache (30s poll of `/souls/internal/profiles`),
   `assemble_mission_prompt` (persona + RAG + MUNINN memory + thread mood + **media context** +
-  mission stance + role/tactic; 4 `tactic_directives`; human-style + anti-repeat prompt blocks;
-  **lite** branch for cheap beta inherits the tactic),
+  **channel context** (`build_channel_block` — the channel's geo/topics/hot-themes) + mission
+  stance + role/tactic; 4 `tactic_directives`; human-style + anti-repeat prompt blocks;
+  **lite** branch for cheap beta inherits the tactic + channel context),
   `build_mood_prompt`/`tactic_from_mood` (dynamic per-post tactic = 3-way mood classify +
   heat heuristic), `fetch_memory`/`save_memory` (MUNINN).
 - `rag.py` — `fetch_fresh_context` (pgvector knowledge retrieval). `guardrails.py` —

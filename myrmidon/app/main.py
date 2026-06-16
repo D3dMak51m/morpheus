@@ -306,6 +306,7 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "author": author or "",
         "thread_context": thread_context or "",
         "media_context": media_context or "",
+        "channel_profile": task.get("channel_profile"),  # ground the comment in the channel
         "narrative_goal": task.get("narrative_goal") or "",
         "stance": task.get("stance") or "",
         "tactic": task.get("tactic") or "soft_support",

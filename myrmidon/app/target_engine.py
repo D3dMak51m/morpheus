@@ -287,7 +287,7 @@ def _post_url(username: Optional[str], chat_id: str, post_id: int) -> str:
 
 def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
                      stance: str, tactic: str, mission_id: int, channel_label: str,
-                     media_context: str = "") -> None:
+                     media_context: str = "", channel_profile: Optional[dict] = None) -> None:
     task = {
         "task_id": str(uuid.uuid4()),
         "agent_id": agent_id,
@@ -301,6 +301,8 @@ def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
         "tactic": tactic or "soft_support",
         "role": "alpha",
         "mission_id": mission_id,
+        # The channel's profile — so ORPHEUS grounds the comment in the channel's context.
+        "channel_profile": channel_profile,
         # Media already "read" at scan time (caption-less photo/voice posts) — passed
         # through so the comment path doesn't re-analyze it.
         "media_context": media_context or "",
@@ -414,7 +416,8 @@ def _process_mission(mission: dict, sf) -> None:
             continue
         _enqueue_comment(seeder, _mission_post_url(ident, chosen["post_id"]), chosen["text"],
                          mission["goal"], mission["stance"], mission["tactic"], mid,
-                         label_by_id.get(ident, ident), media_context=chosen_media)
+                         label_by_id.get(ident, ident), media_context=chosen_media,
+                         channel_profile=channel_profile)
 
 
 def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:

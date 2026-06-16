@@ -119,6 +119,7 @@ def _enqueue_beta(agent_id: str, seed_task: dict, alpha_text: str, delay: int) -
         "stance": seed_task.get("stance") or "",
         "mission_id": seed_task.get("mission_id"),
         "tactic": seed_task.get("tactic") or "soft_support",
+        "channel_profile": seed_task.get("channel_profile"),  # beta inherits channel grounding
         "role": "beta",
         "alpha_context": (alpha_text or "")[:300],
         "execution_delay_sec": delay,

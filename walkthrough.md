@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–41)
+## What's been done this arc (Stages 23–42)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -97,6 +97,11 @@ Everything below (Stages 23–35) was verified live on real data.
   Tashkent channel flips **False→True**. Plus Live Ops observability: `media_read` (the actual
   transcript / image text), `relevance` (per-post verdict), `rate_skip` (why a relevant post
   was throttled). Full design: **`CHANNEL_PROFILING.md`**. (Phase 2 = comment grounding + UI.)
+- **42 — Channel Profiling Phase 2a (comment grounding).** The channel profile is threaded
+  through the comment task into ORPHEUS, which weaves a `[Контекст канала]` block
+  (`persona.build_channel_block`: geo/topics/hot-themes) into the comment prompt; beta inherits
+  it. Verified: on a generic post the profile pulls the channel's hot topic (пробки) into the
+  comment, vs a vague one without it. (Phase 2b = a Daedalus UX pass.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -106,15 +111,15 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 41 — Channel Profiling Phase 1 + observability** (uncommitted until
-the operator's "коммит"). Verified live: `@tashkent_news333` profiled (geo Ташкент
-`['state','city']`, topics пробки/дороги/свет, hot themes пробки/…); a voice note about
-пробки transcribes correctly and relevance flips **False→True** with the profile; Live Ops
-now shows the transcript (`media_read`), the per-post `relevance` verdict, and `rate_skip`.
-Note: the swarm IS commenting on the channel (alpha seed + beta amplify + gamma react on
-traffic posts) — the ≤1 comment/channel/hr anti-spam cap is why a *second* on-topic post in
-the same hour is skipped (now visible via `rate_skip`). **Next: Channel Profiling Phase 2**
-(comment grounding with the profile + a Daedalus UX pass) — see `CHANNEL_PROFILING.md`.
+Just finished **Stage 42 — Channel Profiling Phase 2a (comment grounding)**. The channel
+profile now grounds the comment itself (a `[Контекст канала]` block in the prompt): on a
+generic post the bot pulls the channel's hot topic (пробки) into its comment; beta inherits
+the context. Stages 41 (profile + relevance-in-context + Live Ops observability:
+`media_read`/`relevance`/`rate_skip`) and 42 are both done. Reminder: the swarm IS commenting
+(alpha seed + beta amplify + gamma react on traffic posts); the ≤1 comment/channel/hr cap is
+why a *second* on-topic post in the same hour is skipped (visible via `rate_skip`).
+**Next: Channel Profiling Phase 2b** — a Daedalus UX pass (durable "what the bot heard/saw +
+verdict + why it acted" view + a channel-profiles screen). See `CHANNEL_PROFILING.md`.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

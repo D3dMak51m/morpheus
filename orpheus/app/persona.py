@@ -77,6 +77,30 @@ def tactic_from_mood(mood_answer: str, post_text: str = "", thread_context: str 
     return "soft_support"  # neutral / mixed / unrecognised
 
 
+def build_channel_block(cp: Optional[dict]) -> str:
+    """Render a channel profile into a short Russian '[Контекст канала]' block so the
+    comment is grounded in the channel's character (topics/geo/what locals discuss now)."""
+    if not cp:
+        return ""
+    title = (cp.get("title") or "").strip()
+    geo = (cp.get("geo_label") or "").strip()
+    summary = (cp.get("summary") or "").strip()
+    topics = [t for t in (cp.get("topics") or []) if t][:6]
+    themes = [t.get("theme") for t in (cp.get("recent_themes") or []) if t.get("theme")][:6]
+    parts = []
+    head = f"Это канал «{title}»" if title else "Это канал"
+    if geo:
+        head += f" ({geo})"
+    parts.append(head + ".")
+    if summary:
+        parts.append(summary)
+    if topics:
+        parts.append("Тематика: " + ", ".join(topics) + ".")
+    if themes:
+        parts.append("Сейчас тут активно обсуждают: " + ", ".join(themes) + ".")
+    return " ".join(parts)
+
+
 class PersonaEngine:
     def __init__(self):
         self._local_yaml_fallback: Dict[str, dict] = self._load_local_yaml_profiles()
@@ -290,6 +314,9 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         role = req.get("role") or "alpha"
         forced_context = req.get("forced_context")
         alpha_context = req.get("alpha_context")
+        # Channel Profiling (Phase 2): ground the comment in the channel's character —
+        # its topics, geo and what locals are discussing now — so it reads native.
+        channel_block = build_channel_block(req.get("channel_profile"))
 
         # Beta "lite" support path — cheap by design (a beta agent is cheaper than an
         # alpha). Persona + the ally's line + a short supporting reply; SKIPS the
@@ -310,6 +337,7 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
                 "Пиши как живой человек, НЕ как ИИ, без пояснений и кавычек. "
                 f"Тон: {personality.get('tone_level', 'Neutral')}.\n\n"
                 f"Пост: {post_text[:200] or '(тема обсуждения)'}\n"
+                + (f"Контекст канала: {channel_block[:180]}\n" if channel_block else "")
                 + (f"Позиция, которую отстаиваем: {mission_stance[:200]}\n" if mission_stance else "")
                 + (f"{lite_tactic_hint}\n" if lite_tactic_hint else "")
                 + f"Союзник уже написал: \"{(alpha_context or '')[:200]}\"\n\n"
@@ -372,7 +400,11 @@ Use these as ground truth. Weave in only what is relevant; never quote verbatim 
 [Your Memory of {author}]
 This is what you (the persona) remember from past interactions. Stay consistent with it — like a real person who remembers who they've talked to.
 {memory_context}
-
+""" + (f"""
+[Контекст канала, где ты пишешь]
+{channel_block}
+Пиши как местный, кто в курсе этих тем и того, что волнует здешнюю аудиторию — отсылайся к местным реалиям, но естественно, без перечислений.
+""" if channel_block else "") + f"""
 [The Post You Are Discussing]
 {post_text or '(no readable text — infer from the channel/topic)'}
 """

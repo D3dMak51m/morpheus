@@ -1,8 +1,16 @@
 # MORPHEUS — Channel Profiling
 
-> **Status: PHASE 1 BUILT & VERIFIED (Stage 41).** Phase 2 (comment grounding + UI) and
-> Phase 3 (other platforms) remain. Update cadence = **hybrid** (heavy profile rarely,
-> "hot themes" often). Companion docs: `CLAUDE.md`, `walkthrough.md`, `HANDOFF.md`.
+> **Status: PHASE 1 done (Stage 41); PHASE 2a (comment grounding) done (Stage 42).**
+> Remaining: Phase 2b (Daedalus UX pass), Phase 2c (pull news by the channel's geo_layers),
+> Phase 3 (other platforms). Update cadence = **hybrid** (heavy profile rarely, "hot themes"
+> often). Companion docs: `CLAUDE.md`, `walkthrough.md`, `HANDOFF.md`.
+>
+> **Phase 2a (done):** the channel profile is threaded through the comment task
+> (`_enqueue_comment` → `generate_comment_via_orpheus` → mission_gen req) and ORPHEUS weaves
+> a `[Контекст канала]` block (`persona.build_channel_block`: geo/topics/hot-themes) into
+> `assemble_mission_prompt`; beta inherits it (`swarm.py` + a short lite hint). Verified: on a
+> GENERIC post ("когда наведут порядок в городе") the profile pulls the channel's hot topic
+> (пробки) into the comment, vs a vague comment without it.
 >
 > **Phase 1 (done):** `channel_profiles` table (`models.py`); DAEDALUS `channel_profiler.py`
 > (LLM strict-JSON geo/topics/summary + hot themes) + `router_channels.py` (3 internal
