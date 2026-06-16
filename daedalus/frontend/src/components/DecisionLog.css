@@ -1,3 +1,4 @@
+.decision-log { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .decision-log .header-actions { display: flex; gap: 8px; align-items: center; }
 
 .decision-log .dl-select {

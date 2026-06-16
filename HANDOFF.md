@@ -53,8 +53,17 @@ End-to-end autonomous and operator-controllable. **Stages 23–40 done and verif
   replies by the persona's window; swarm tz `ACTIVE_HOURS_UTC_OFFSET` default +5; read-only
   work stays 24/7). Last realism gap closed.
 
-**Backlog now is smaller:** runtime dynamic auto-assign for `agent_mode='dynamic'`; Channel
-Profiling Phase 3 (other platforms, blocked on mobile drivers); a bigger `TEXT_MODEL_NAME`.
+- **47** — runtime dynamic roster auto-assign (`mission_control.reconcile_dynamic_rosters`
+  fills `agent_mode='dynamic'` mission rosters to `dynamic_count`).
+- **48** — **UX/UI overhaul Phase 1**: fixed HTTP 400 in Database (live-table validation),
+  hash routing (refresh keeps the tab + deep links), reusable `DataTable` (search/sort/paginate)
+  applied to "Решения".
+
+**Active work — UX/UI overhaul (multi-phase).** Phase 1 done. Next: P2 migrate other list
+screens to `DataTable`; P3 replace the 9 blocking modals with side-panels/routed edit views
+(+ pick-from-list instead of typing IDs); P4 styling audit + fix the range sliders; P5
+consolidate scattered data. Other backlog: Channel Profiling Phase 3 (blocked on mobile
+drivers); a bigger `TEXT_MODEL_NAME`.
 
 **Live data:** mission **#10** ("Поддержка общественного транспорта") is **active** with a
 full alpha/beta/gamma roster and target `@tashkent_news333`; the live engine keeps working

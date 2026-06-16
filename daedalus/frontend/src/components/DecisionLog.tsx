@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ListChecks, RefreshCw, Check, X, Ban } from 'lucide-react';
+import { DataTable, Column } from './DataTable';
 import './DecisionLog.css';
 
 interface Decision {
@@ -28,7 +29,7 @@ const DecisionLog: React.FC<Props> = ({ token }) => {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ limit: '150' });
+      const params = new URLSearchParams({ limit: '300' });
       if (kind) params.set('kind', kind);
       const res = await fetch(`/api/v1/decisions?${params}`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -50,57 +51,51 @@ const DecisionLog: React.FC<Props> = ({ token }) => {
     return <span className="dl-badge">—</span>;
   };
 
-  const channelLabel = (ref: string | null) => (ref || '—');
+  const columns: Column<Decision>[] = [
+    { key: 'created_at', header: 'Время', width: '150px',
+      sortValue: d => d.created_at || '',
+      render: d => <span className="dl-time">{d.created_at ? new Date(d.created_at).toLocaleString('ru-RU') : '—'}</span> },
+    { key: 'agent_id', header: 'Агент', render: d => <span className="dl-agent">{d.agent_id || '—'}</span> },
+    { key: 'channel_ref', header: 'Канал', render: d => <span className="dl-channel">{d.channel_ref || '—'}</span> },
+    { key: 'verdict', header: 'Вердикт', width: '120px', sortValue: d => d.kind === 'skip' ? 2 : d.verdict ? 1 : 0,
+      render: verdictBadge },
+    { key: 'detail', header: 'Что распознал / причина', sortable: false,
+      render: d => <span className="dl-detail">{d.detail || '—'}</span> },
+    { key: 'post', header: '', sortable: false, width: '70px',
+      render: d => d.post_url ? <a className="dl-link" href={d.post_url} target="_blank" rel="noreferrer">пост ↗</a> : null },
+  ];
 
   return (
     <div className="decision-log view-container">
       <div className="header-row">
         <div>
           <h1><ListChecks size={22} style={{ verticalAlign: '-4px' }} /> Решения</h1>
-          <p className="subtitle">Почему рой отреагировал или нет: что бот распознал в посте (текст / расшифровка аудио / OCR фото), вердикт релевантности и причина пропуска. История (Live Ops показывает то же в реальном времени).</p>
-        </div>
-        <div className="header-actions">
-          <select className="dl-select" value={kind} onChange={e => setKind(e.target.value)}>
-            <option value="">Все типы</option>
-            <option value="relevance">Релевантность</option>
-            <option value="skip">Пропуски</option>
-          </select>
-          <button className="btn-secondary" onClick={fetchRows}><RefreshCw size={14} /> Обновить</button>
+          <p className="subtitle">Почему рой отреагировал или нет: что бот распознал (текст / расшифровка аудио / OCR фото), вердикт релевантности и причина пропуска. История с поиском и сортировкой.</p>
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="data-grid-container">
-        {loading && rows.length === 0 ? <p>Загрузка…</p> : (
-          <table className="data-grid">
-            <thead>
-              <tr>
-                <th>Время</th>
-                <th>Агент</th>
-                <th>Канал</th>
-                <th>Вердикт</th>
-                <th>Что распознал / причина</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr><td colSpan={6} className="empty-state">Решений пока нет. Они пишутся, когда движок проверяет посты целевых каналов активных миссий.</td></tr>
-              ) : rows.map(d => (
-                <tr key={d.id}>
-                  <td className="dl-time">{d.created_at ? new Date(d.created_at).toLocaleString('ru-RU') : '—'}</td>
-                  <td className="dl-agent">{d.agent_id || '—'}</td>
-                  <td className="dl-channel">{channelLabel(d.channel_ref)}</td>
-                  <td>{verdictBadge(d)}</td>
-                  <td className="dl-detail">{d.detail || '—'}</td>
-                  <td>{d.post_url ? <a className="dl-link" href={d.post_url} target="_blank" rel="noreferrer">пост ↗</a> : null}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={d => d.id}
+        loading={loading}
+        searchText={d => `${d.agent_id || ''} ${d.channel_ref || ''} ${d.detail || ''}`}
+        searchPlaceholder="🔍 Поиск по каналу, агенту или тексту…"
+        emptyText="Решений пока нет. Они пишутся, когда движок проверяет посты целевых каналов."
+        pageSize={25}
+        toolbar={
+          <>
+            <select className="dl-select" value={kind} onChange={e => setKind(e.target.value)}>
+              <option value="">Все типы</option>
+              <option value="relevance">Релевантность</option>
+              <option value="skip">Пропуски</option>
+            </select>
+            <button className="btn-secondary" onClick={fetchRows}><RefreshCw size={14} /> Обновить</button>
+          </>
+        }
+      />
     </div>
   );
 };

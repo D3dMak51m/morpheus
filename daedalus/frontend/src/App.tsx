@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import SoulsContext from './components/SoulsContext';
 import DeviceGrid from './components/DeviceGrid';
 import Login from './components/Login';
@@ -22,8 +22,32 @@ import CloneFactory from './components/CloneFactory';
 import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks } from 'lucide-react';
 import './App.css';
 
+// Views are addressable via the URL hash (#/swarm, #/missions, …) so a page refresh
+// keeps you where you were, links are shareable, and browser back/forward work — instead
+// of always snapping back to Dashboard.
+const VIEWS = ['dashboard', 'live', 'swarm', 'accounts', 'souls', 'genesis', 'factory', 'auth',
+  'devices', 'sandbox', 'missions', 'scouting', 'landscape', 'newshub', 'muninn',
+  'channelprofiles', 'decisions', 'database', 'activity'] as const;
+type View = typeof VIEWS[number];
+
+function readHashView(): View {
+  const h = window.location.hash.replace(/^#\/?/, '');
+  return (VIEWS as readonly string[]).includes(h) ? (h as View) : 'dashboard';
+}
+
+function useHashView(): [View, (v: View) => void] {
+  const [view, setView] = useState<View>(readHashView);
+  useEffect(() => {
+    const onHash = () => setView(readHashView());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  const navigate = (v: View) => { window.location.hash = '/' + v; };
+  return [view, navigate];
+}
+
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'live' | 'swarm' | 'accounts' | 'souls' | 'genesis' | 'factory' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'channelprofiles' | 'decisions' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useHashView();
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
   const [missionPrefill, setMissionPrefill] = useState<MissionPrefill | null>(null);
 

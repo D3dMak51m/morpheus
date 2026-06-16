@@ -60,7 +60,8 @@ so any frontend change needs `docker compose build daedalus`.
   accounts + bind/unbind + channel prefs (`agent_channel_prefs`) + channel enumeration
   proxy. `router_missions.py` — permanent-goal missions + targets + squad + **internal
   `/missions/internal/suggest-target`** (agents propose targets, dedup). `mission_control.py`
-  — squad eligibility/auto-assign (DAG launch is legacy). `analytics.py` — metrics,
+  — squad eligibility/auto-assign + `reconcile_dynamic_rosters` (the reconciler auto-fills
+  `agent_mode='dynamic'` mission rosters to `dynamic_count` at runtime); DAG launch is legacy. `analytics.py` — metrics,
   `/stream` (durable activity), `/live` (telemetry tail), `/swarm` (dashboard aggregate),
   `/dialogues`. `router_knowledge.py` — RAG facts ingest/search/list + `/knowledge/internal/
   by-geo` (recent facts by PLACE = `tags` overlap, for channel comment grounding). `landscape.py` —
@@ -71,7 +72,11 @@ so any frontend change needs `docker compose build daedalus`.
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
   GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal
   `/decisions/internal/log`; operator `GET /decisions` — the durable decision history).
-- React (`daedalus/frontend/src/components/`): `LiveOps` (live activity), `SwarmDashboard`
+- React (`daedalus/frontend/src/`): **hash routing** — `App.tsx` keeps the active view in the
+  URL hash (`#/view`) so refresh/deep-links/back-forward work. **`components/DataTable.tsx`** —
+  reusable table (search / sortable columns / pagination / states); migrate list screens to it.
+  `db_explorer` validates table reads against LIVE tables (not a stale whitelist). Components
+  (`components/`): `LiveOps` (live activity), `SwarmDashboard`
   ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),
   `ChannelManager` (account channels), `MissionDeck` (missions), `MuninnExplorer`
   ("Знания роя", RAG facts), `ChannelProfiles` ("Профили каналов" — per-channel geo/topics/

@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–46)
+## What's been done this arc (Stages 23–48)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -125,6 +125,18 @@ Everything below (Stages 23–35) was verified live on real data.
   windows; fail-open) gates the posting paths — alpha seeding (`_process_mission`), swarm
   amplification (`_companions` filters beta/gamma), and dialogue replies (`_process_agent`).
   Read-only work (news ingest, channel profiling) stays 24/7. Closes the last realism gap.
+- **47 — Runtime dynamic roster auto-assign.** The DAEDALUS reconciler now also fills the
+  roster of every `active` mission with `agent_mode='dynamic'` up to its `dynamic_count`
+  (`mission_control.reconcile_dynamic_rosters`: ≥1 alpha + beta/gamma split, best-match by
+  caste↔role + topic overlap, additive only). Also fixed: `ACTIVE_MISSION_STATES` now includes
+  `active` so the per-bot mission cap counts permanent missions. Verified: a dynamic mission
+  with no squad auto-filled with caste-matched alpha/beta/gamma within ~16s.
+- **48 — UX/UI overhaul, Phase 1 (foundation + critical bugs).** Fixed the **HTTP 400** in the
+  Database Explorer (table reads validated against LIVE tables, not a stale 8-table whitelist —
+  new tables open, bogus names still 400). Added **hash routing** (`#/view`) so a refresh keeps
+  the current tab + deep links + back/forward (no more snap-to-Dashboard). New reusable
+  **`DataTable`** (search / sortable columns / pagination / states), applied to the "Решения"
+  screen. (Next phases: migrate other lists to DataTable; de-modal editing; styling/sliders.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -134,13 +146,15 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 46 — active_hours enforcement** (`schedule.in_active_hours` gates alpha
-seeding, swarm amplification and dialogue replies by the persona's window; read-only work
-stays 24/7). Verified the logic (exclude/include/overnight; Tashkent UTC+5 default). This was
-the last realism gap. The big arcs (mission-driven engine, media reading, Channel Profiling
-1+2, decision log, active hours) are all done. **Backlog now is smaller**: runtime dynamic
-auto-assign for `agent_mode='dynamic'`; Channel Profiling Phase 3 (other platforms, blocked on
-mobile drivers); a bigger `TEXT_MODEL_NAME` for sharper comments/relevance.
+Just finished **Stage 47** (runtime dynamic roster auto-assign) and **Stage 48 — UX/UI
+overhaul Phase 1** (HTTP 400 fix in Database, hash routing so refresh keeps the tab, a reusable
+`DataTable` applied to "Решения"). All verified live. **Now in progress: the UX/UI overhaul**
+(operator asked to bring the whole console to a real "mission center" standard). Phase 1 =
+foundation + critical bugs (done). **Next: Phase 2** — migrate the other list screens
+(Accounts, Знания роя, Профили каналов, Landscape, Рой drill-downs) to `DataTable` for uniform
+search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with non-blocking
+panels/routed edit views + pick-from-list instead of typing IDs), P4 styling/sliders, P5
+consolidate scattered data.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
