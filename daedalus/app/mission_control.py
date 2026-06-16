@@ -54,7 +54,9 @@ EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
 # fit), but never more than this many *active* missions at once.
 MAX_MISSIONS_PER_BOT = int(os.getenv("MAX_MISSIONS_PER_BOT", "5"))
 # Missions in these states count against a bot's load; completed/failed free it.
-ACTIVE_MISSION_STATES = ("pending", "running", "amplifying")
+# 'active' = the new permanent-goal missions (Stage 34+); legacy DAG missions use
+# pending/running/amplifying.
+ACTIVE_MISSION_STATES = ("active", "pending", "running", "amplifying")
 VALID_ROLES = ("alpha", "beta", "gamma")
 
 # Per-wave execution delay (seconds) — staggers the swarm to look organic.
@@ -274,6 +276,44 @@ def auto_assign_squad(db: Session, mission: Mission, counts: dict[str, int]) -> 
         "skipped_at_capacity": skipped_at_cap,
         "requested": requested,
     }
+
+
+# ── Runtime dynamic roster auto-fill (agent_mode='dynamic') ────────────────
+
+def _dynamic_role_counts(n: int) -> dict[str, int]:
+    """Split a mission's ``dynamic_count`` into a per-role target: always ≥1 alpha to
+    seed, the rest split between beta (amplify) and gamma (reactions)."""
+    n = max(1, int(n or 1))
+    alpha = 1
+    rest = n - alpha
+    return {"alpha": alpha, "beta": (rest + 1) // 2, "gamma": rest // 2}
+
+
+def reconcile_dynamic_rosters(db: Session) -> None:
+    """
+    For each ACTIVE mission with ``agent_mode='dynamic'`` whose roster is below its
+    ``dynamic_count`` target, auto-fill the deficit with the best-matching available
+    bots (caste↔role + topic overlap). Additive only — never removes agents. Safe to
+    call every reconciler tick (a no-op once filled or when no eligible bot remains).
+    """
+    missions = (
+        db.query(Mission)
+        .filter(Mission.status == "active", Mission.agent_mode == "dynamic")
+        .all()
+    )
+    for m in missions:
+        try:
+            target = _dynamic_role_counts(m.dynamic_count)
+            have = {r: sum(1 for s in m.squad if s.assigned_role == r) for r in VALID_ROLES}
+            if all(have[r] >= target[r] for r in VALID_ROLES):
+                continue
+            report = auto_assign_squad(db, m, target)
+            if report["assigned_count"]:
+                logger.info("Mission %s (dynamic) auto-filled +%d agent(s) → target %s.",
+                            m.id, report["assigned_count"], target)
+        except Exception:
+            logger.exception("Dynamic roster reconcile failed for mission %s", m.id)
+            db.rollback()
 
 
 # ── Narrative composition per role/tactic ────────────────────────────────
@@ -544,7 +584,8 @@ def _reconciler_loop() -> None:
     while not _reconciler_stop.is_set():
         db = SessionLocal()
         try:
-            reconcile_all(db)
+            reconcile_all(db)                 # legacy DAG missions (running/amplifying)
+            reconcile_dynamic_rosters(db)     # auto-fill dynamic permanent-mission rosters
         except Exception:
             logger.exception("Mission reconciler tick failed.")
         finally:
