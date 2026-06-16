@@ -67,11 +67,13 @@ so any frontend change needs `docker compose build daedalus`.
   `router_factory.py` (clone factory), `router_sandbox.py`, `db_explorer.py`,
   `classifier.py`/`embeddings.py` (LLM classify + embed for knowledge), `genesis_engine.py`.
   `channel_profiler.py` (LLM strict-JSON per-channel profile + hot themes) +
-  `router_channels.py` (internal `/channels/internal/{profile,themes}` build, `…/profile` GET).
+  `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
+  GET; operator `GET /channels/profiles` for the UI).
 - React (`daedalus/frontend/src/components/`): `LiveOps` (live activity), `SwarmDashboard`
   ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),
   `ChannelManager` (account channels), `MissionDeck` (missions), `MuninnExplorer`
-  ("Знания роя", RAG facts), `LandscapeManager`, `ScoutingRadar`, `AccountsManager`,
+  ("Знания роя", RAG facts), `ChannelProfiles` ("Профили каналов" — per-channel geo/topics/
+  hot-themes), `LandscapeManager`, `ScoutingRadar`, `AccountsManager`,
   `AuthFactory`, etc. Operator-facing screens are **in Russian**.
 
 ### ORPHEUS (`orpheus/app/`) — cognitive core (NO HTTP for generation)

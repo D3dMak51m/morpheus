@@ -43,8 +43,13 @@ End-to-end autonomous and operator-controllable. **Stages 23–40 done and verif
   ORPHEUS and weaves a `[Контекст канала]` block into the comment prompt (`build_channel_block`);
   beta inherits it. On a generic post the comment pulls in the channel's hot topic.
 
-**Next: Channel Profiling Phase 2b** — a Daedalus UX pass (durable "what the bot heard/saw +
-verdict + why it acted" view + a channel-profiles screen). Full design in **`CHANNEL_PROFILING.md`**.
+- **43** — Channel Profiling Phase 2b part 1: the **"Профили каналов"** Daedalus screen
+  (`GET /channels/profiles` + `ChannelProfiles.tsx`) — operator sees each channel's
+  geo/topics/hot-themes/summary.
+
+**Next: Channel Profiling Phase 2b part 2** — a durable "what the bot heard/saw + verdict +
+why it acted" view (today only in the capped Live Ops stream + logs); needs a storage
+decision (new table vs extend `agent_activity_logs`). Then optional 2c (news-by-geo).
 
 **Live data:** mission **#10** ("Поддержка общественного транспорта") is **active** with a
 full alpha/beta/gamma roster and target `@tashkent_news333`; the live engine keeps working
@@ -106,11 +111,11 @@ accounts: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad` (beta),
 
 ## Next steps (planned, agreed — in `walkthrough.md`)
 
-1. **Channel Profiling Phase 2b/2c** (Phase 1 + 2a are DONE — `CHANNEL_PROFILING.md`).
-   (b) **Daedalus UX pass**: a durable "what the bot heard/saw + verdict + why it acted" view
-   (today it's only in the capped Live Ops stream + logs), and a channel-profiles screen.
-   (c) optional: pull recent `knowledge_facts` by the channel's `geo_layers` into the
-   relevance/comment context (direct news-base link).
+1. **Channel Profiling Phase 2b part 2 / 2c** (Phase 1, 2a, 2b part 1 DONE —
+   `CHANNEL_PROFILING.md`). (2b.2) a **durable** "what the bot heard/saw + verdict + why it
+   acted" view (today only in the capped Live Ops stream + logs) — pick storage (new
+   `decision_events` table vs extend `agent_activity_logs`) + a UI. (2c) optional: pull recent
+   `knowledge_facts` by the channel's `geo_layers` into the relevance/comment context.
 2. **Backlog:** `active_hours` enforcement (bots act only in the persona's live hours — the
    last realism gap; swarm runs 24/7 now); runtime dynamic auto-assign for
    `agent_mode='dynamic'`; mission-scoped news; bigger `TEXT_MODEL_NAME` if VRAM allows (the

@@ -1,9 +1,15 @@
 # MORPHEUS — Channel Profiling
 
-> **Status: PHASE 1 done (Stage 41); PHASE 2a (comment grounding) done (Stage 42).**
-> Remaining: Phase 2b (Daedalus UX pass), Phase 2c (pull news by the channel's geo_layers),
-> Phase 3 (other platforms). Update cadence = **hybrid** (heavy profile rarely, "hot themes"
-> often). Companion docs: `CLAUDE.md`, `walkthrough.md`, `HANDOFF.md`.
+> **Status: PHASE 1 done (Stage 41); 2a comment grounding done (Stage 42); 2b part 1 —
+> Channel Profiles UI screen done (Stage 43).** Remaining: 2b part 2 (durable
+> heard/saw+verdict+why view), Phase 2c (pull news by the channel's geo_layers), Phase 3
+> (other platforms). Update cadence = **hybrid** (heavy profile rarely, "hot themes" often).
+> Companion docs: `CLAUDE.md`, `walkthrough.md`, `HANDOFF.md`.
+>
+> **Phase 2b part 1 (done, Stage 43):** operator `GET /api/v1/channels/profiles`
+> (`router_channels`, `monitoring:view`) + a React **"Профили каналов"** screen
+> (`ChannelProfiles.tsx`) showing each channel's geo, topics, hot themes, summary — so the
+> operator can see what the swarm knows about every channel.
 >
 > **Phase 2a (done):** the channel profile is threaded through the comment task
 > (`_enqueue_comment` → `generate_comment_via_orpheus` → mission_gen req) and ORPHEUS weaves

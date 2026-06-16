@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from app import channel_profiler
 from app.database import get_db
-from app.models import ChannelProfile
+from app.models import AdminUser, ChannelProfile
+from app.rbac import require_permission
 
 logger = logging.getLogger("daedalus.router_channels")
 
@@ -144,6 +145,20 @@ async def refresh_themes(
     db.commit()
     db.refresh(row)
     return {"status": "ok", "recent_themes": row.recent_themes or []}
+
+
+@router.get("/profiles")
+def list_profiles(
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("monitoring:view")),
+) -> dict[str, Any]:
+    """Operator-facing: list all channel profiles (newest-profiled first)."""
+    rows = (
+        db.query(ChannelProfile)
+        .order_by(ChannelProfile.last_profiled_at.desc().nullslast())
+        .all()
+    )
+    return {"profiles": [_serialize(p) for p in rows], "total": len(rows)}
 
 
 @router.get("/internal/profile")

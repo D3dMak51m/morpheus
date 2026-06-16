@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–42)
+## What's been done this arc (Stages 23–43)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -102,6 +102,11 @@ Everything below (Stages 23–35) was verified live on real data.
   (`persona.build_channel_block`: geo/topics/hot-themes) into the comment prompt; beta inherits
   it. Verified: on a generic post the profile pulls the channel's hot topic (пробки) into the
   comment, vs a vague one without it. (Phase 2b = a Daedalus UX pass.)
+- **43 — Channel Profiling Phase 2b (part 1): "Профили каналов" UI.** Operator
+  `GET /api/v1/channels/profiles` + a React screen (`ChannelProfiles.tsx`, nav item under
+  GATHERING) showing each channel's geo, topics, "what's discussed now" and summary — the
+  operator can finally see what the swarm knows per channel. (Remaining 2b = a durable
+  "what the bot heard/saw + verdict + why it acted" view.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -111,15 +116,13 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 42 — Channel Profiling Phase 2a (comment grounding)**. The channel
-profile now grounds the comment itself (a `[Контекст канала]` block in the prompt): on a
-generic post the bot pulls the channel's hot topic (пробки) into its comment; beta inherits
-the context. Stages 41 (profile + relevance-in-context + Live Ops observability:
-`media_read`/`relevance`/`rate_skip`) and 42 are both done. Reminder: the swarm IS commenting
-(alpha seed + beta amplify + gamma react on traffic posts); the ≤1 comment/channel/hr cap is
-why a *second* on-topic post in the same hour is skipped (visible via `rate_skip`).
-**Next: Channel Profiling Phase 2b** — a Daedalus UX pass (durable "what the bot heard/saw +
-verdict + why it acted" view + a channel-profiles screen). See `CHANNEL_PROFILING.md`.
+Just finished **Stage 43 — Channel Profiling Phase 2b part 1: the "Профили каналов" screen**
+(operator endpoint + React `ChannelProfiles.tsx`), verified live (Tashkent_news & Kun.uz
+render with geo/topics/hot-themes). Channel Profiling so far: Phase 1 (profile + relevance
++ Live Ops `media_read`/`relevance`/`rate_skip`), 2a (comment grounding), 2b part 1 (UI) —
+all done. **Next (2b part 2): a durable "what the bot heard/saw + verdict + why it acted"
+view** (today it's only in the capped Live Ops stream + logs) — needs a storage decision
+(new table vs extend `agent_activity_logs`). Then optional 2c (news-by-geo).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

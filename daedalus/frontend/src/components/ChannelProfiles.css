@@ -1,0 +1,25 @@
+.channel-profiles .header-actions { display: flex; gap: 8px; align-items: center; }
+
+.channel-profiles .cp-title { font-weight: 600; color: #e2e8f0; }
+.channel-profiles .cp-ref { font-size: 0.78rem; color: #94a3b8; }
+
+.channel-profiles .cp-geo {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.82rem; color: #f59e0b; margin-bottom: 4px;
+}
+
+.channel-profiles .cp-chip-row { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.channel-profiles .cp-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 0.74rem; padding: 2px 7px; border-radius: 10px;
+  background: rgba(71, 85, 105, 0.25); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.2);
+}
+.channel-profiles .cp-chip-topic { background: rgba(59, 130, 246, 0.14); color: #93c5fd; border-color: rgba(59, 130, 246, 0.3); }
+.channel-profiles .cp-chip-hot { background: rgba(239, 68, 68, 0.14); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3); }
+
+.channel-profiles .cp-summary { max-width: 360px; font-size: 0.85rem; color: #cbd5e1; }
+.channel-profiles .cp-tone { font-size: 0.76rem; color: #94a3b8; font-style: italic; margin-top: 3px; }
+
+.channel-profiles .cp-date { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; }
+.channel-profiles .cp-subdate { font-size: 0.72rem; color: #64748b; margin-top: 2px; }
