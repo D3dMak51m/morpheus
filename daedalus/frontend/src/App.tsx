@@ -17,12 +17,13 @@ import MissionDeck from './components/MissionDeck';
 import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
 import MuninnExplorer from './components/MuninnExplorer';
 import ChannelProfiles from './components/ChannelProfiles';
+import DecisionLog from './components/DecisionLog';
 import CloneFactory from './components/CloneFactory';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass } from 'lucide-react';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks } from 'lucide-react';
 import './App.css';
 
 function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'live' | 'swarm' | 'accounts' | 'souls' | 'genesis' | 'factory' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'channelprofiles' | 'database' | 'activity'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'live' | 'swarm' | 'accounts' | 'souls' | 'genesis' | 'factory' | 'auth' | 'devices' | 'sandbox' | 'missions' | 'scouting' | 'landscape' | 'newshub' | 'muninn' | 'channelprofiles' | 'decisions' | 'database' | 'activity'>('dashboard');
   const [token, setToken] = useState<string | null>(localStorage.getItem('daedalus_token'));
   const [missionPrefill, setMissionPrefill] = useState<MissionPrefill | null>(null);
 
@@ -156,6 +157,12 @@ function App() {
             <TerminalSquare size={18} /> Sandbox Console
           </button>
           <button
+            className={`nav-item ${activeView === 'decisions' ? 'active' : ''}`}
+            onClick={() => setActiveView('decisions')}
+          >
+            <ListChecks size={18} /> Решения
+          </button>
+          <button
             className={`nav-item ${activeView === 'activity' ? 'active' : ''}`}
             onClick={() => setActiveView('activity')}
           >
@@ -187,6 +194,7 @@ function App() {
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
         <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><MuninnExplorer token={token} /></div>
         <div style={{ display: activeView === 'channelprofiles' ? 'block' : 'none', height: '100%' }}><ChannelProfiles token={token} /></div>
+        <div style={{ display: activeView === 'decisions' ? 'block' : 'none', height: '100%' }}><DecisionLog token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
         <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingRadar token={token} onConverted={handleConverted} /></div>

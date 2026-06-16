@@ -39,6 +39,7 @@ from app.router_scouting import router as scouting_router
 from app.router_knowledge import router as knowledge_router
 from app.router_factory import router as factory_router
 from app.router_channels import router as channels_router
+from app.router_decisions import router as decisions_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -165,6 +166,7 @@ app.include_router(scouting_router)
 app.include_router(knowledge_router)
 app.include_router(factory_router)
 app.include_router(channels_router)
+app.include_router(decisions_router)
 
 # ── Static Frontend SPA ──────────────────────────────────────────────────
 

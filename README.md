@@ -118,6 +118,8 @@ Open the console at **http://localhost:8000** and log in with `SUPERADMIN_USERNA
 - **Знания роя** — the RAG knowledge base (search by text/source).
 - **Профили каналов** — what the swarm knows about each channel: geo, topics, what's being
   discussed now, summary (drives in-context relevance + comment grounding).
+- **Решения** — durable history of WHY a bot did/didn't react: what it recognized (text /
+  audio transcript / photo OCR), the relevance verdict, and skip reasons.
 - Accounts, Auth Factory, Clone Factory, Landscape, Scouting Radar, Devices, etc.
 
 ---

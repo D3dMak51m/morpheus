@@ -688,6 +688,34 @@ class ChannelProfile(Base):
         return f"<ChannelProfile(platform='{self.platform}', ref='{self.channel_ref}', geo={self.geo_layers})>"
 
 
+class DecisionEvent(Base):
+    """
+    A durable record of WHY the swarm did (or didn't) act on a post — so the operator
+    can see the decision chain, not just the final comment: what the bot recognized
+    (text incl. media transcript/OCR), the relevance verdict, and skips (e.g. the
+    hourly rate cap). The capped Live Ops stream shows these live; this table keeps
+    history (queryable/filterable). See CHANNEL_PROFILING.md (Phase 2b).
+    """
+    __tablename__ = "decision_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    mission_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    platform: Mapped[str] = mapped_column(String(30), default="telegram", nullable=False)
+    channel_ref: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, index=True)
+    post_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    # kind: 'relevance' (judged a post) | 'skip' (relevant but throttled) | 'comment'
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # judged text / reason
+    verdict: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # relevance yes/no
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<DecisionEvent(kind='{self.kind}', channel='{self.channel_ref}', verdict={self.verdict})>"
+
+
 # ── Stage 23 — Identity binding (decoupled accounts ⇄ souls) ───────────────
 
 def bind_account_to_soul(db: Session, account_id: int, agent_id: str) -> "SoulAccount":

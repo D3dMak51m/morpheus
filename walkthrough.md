@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–43)
+## What's been done this arc (Stages 23–44)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -107,6 +107,12 @@ Everything below (Stages 23–35) was verified live on real data.
   GATHERING) showing each channel's geo, topics, "what's discussed now" and summary — the
   operator can finally see what the swarm knows per channel. (Remaining 2b = a durable
   "what the bot heard/saw + verdict + why it acted" view.)
+- **44 — Channel Profiling Phase 2b (part 2): durable "Решения" decision log.**
+  `decision_events` table + DAEDALUS `router_decisions` (internal log + operator `GET
+  /decisions`, 7-day prune) + MYRMIDON `_log_decision` (records every relevance verdict with
+  the recognized text/transcript, and skip reasons) + a React "Решения" screen. The operator
+  now has durable, filterable history of WHY a bot did/didn't react. (Optional 2c next:
+  pull `knowledge_facts` by the channel's geo.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -116,13 +122,12 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 43 — Channel Profiling Phase 2b part 1: the "Профили каналов" screen**
-(operator endpoint + React `ChannelProfiles.tsx`), verified live (Tashkent_news & Kun.uz
-render with geo/topics/hot-themes). Channel Profiling so far: Phase 1 (profile + relevance
-+ Live Ops `media_read`/`relevance`/`rate_skip`), 2a (comment grounding), 2b part 1 (UI) —
-all done. **Next (2b part 2): a durable "what the bot heard/saw + verdict + why it acted"
-view** (today it's only in the capped Live Ops stream + logs) — needs a storage decision
-(new table vs extend `agent_activity_logs`). Then optional 2c (news-by-geo).
+Just finished **Stage 44 — Channel Profiling Phase 2b part 2: the durable "Решения" decision
+log** (`decision_events` + `router_decisions` + MYRMIDON `_log_decision` + `DecisionLog.tsx`),
+verified live (3 decisions written via the real path; the screen shows the audio transcript +
+verdict, the skip reason, and an off-topic NO). Channel Profiling is now Phase 1 + 2a + 2b
+(both parts) done; only optional **Phase 2c** (pull `knowledge_facts` by the channel's
+`geo_layers` into relevance/comment context) remains. See `CHANNEL_PROFILING.md`.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

@@ -397,10 +397,12 @@ def _process_mission(mission: dict, sf) -> None:
                 v = True  # mission target channel → engage if LLM unavailable
             # Surface the per-post relevance decision so the operator sees WHY the bot
             # did/didn't engage (not just silence).
+            cand_url = _mission_post_url(ident, cand["post_id"])
             emit_event(seeder, "relevance",
                        ("по теме: " if v else "не по теме: ") + judge_text.replace("\n", " ")[:70],
-                       status="ok" if v else "info",
-                       target=_mission_post_url(ident, cand["post_id"]))
+                       status="ok" if v else "info", target=cand_url)
+            _log_decision("relevance", seeder, mid, ident, cand_url,
+                          detail=judge_text.replace("\n", " ")[:600], verdict=bool(v))
             if v:
                 chosen = cand
                 chosen_media = media_ctx
@@ -410,9 +412,13 @@ def _process_mission(mission: dict, sf) -> None:
         if not _allow_rate(f"mission_{mid}", ident):
             # Relevant, but the anti-spam hourly cap is spent — say so (else it looks
             # like the bot ignored a clearly on-topic post).
+            skip_url = _mission_post_url(ident, chosen["post_id"])
             emit_event(seeder, "rate_skip",
                        f"по теме, но пропуск: лимит {MAX_PER_CHANNEL_PER_HOUR} коммент/час на канал исчерпан",
-                       status="warn", target=_mission_post_url(ident, chosen["post_id"]))
+                       status="warn", target=skip_url)
+            _log_decision("skip", seeder, mid, ident, skip_url,
+                          detail=f"по теме, но лимит {MAX_PER_CHANNEL_PER_HOUR} коммент/час на канал исчерпан",
+                          verdict=True)
             continue
         _enqueue_comment(seeder, _mission_post_url(ident, chosen["post_id"]), chosen["text"],
                          mission["goal"], mission["stance"], mission["tactic"], mid,
@@ -624,6 +630,23 @@ def _get_channel_profile(ident: str) -> Optional[dict]:
         return data.get("profile") if data.get("status") == "ok" else None
     except Exception:
         return None
+
+
+def _log_decision(kind: str, agent_id: str, mission_id, channel_ref: str, post_url: str,
+                  detail: str = "", verdict=None) -> None:
+    """Durably record a decision (relevance/skip) to DAEDALUS for the operator's history.
+    Best-effort — never blocks the engine."""
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            client.post(
+                f"{DAEDALUS_URL}/api/v1/decisions/internal/log",
+                json={"kind": kind, "agent_id": agent_id, "mission_id": mission_id,
+                      "platform": "telegram", "channel_ref": channel_ref, "post_url": post_url,
+                      "detail": detail, "verdict": verdict},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+    except Exception as exc:
+        logger.debug("decision log failed: %s", exc)
 
 
 def _build_channel_profile(ident: str, title: str, posts: list[str]) -> bool:

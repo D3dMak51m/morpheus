@@ -68,12 +68,14 @@ so any frontend change needs `docker compose build daedalus`.
   `classifier.py`/`embeddings.py` (LLM classify + embed for knowledge), `genesis_engine.py`.
   `channel_profiler.py` (LLM strict-JSON per-channel profile + hot themes) +
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
-  GET; operator `GET /channels/profiles` for the UI).
+  GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal
+  `/decisions/internal/log`; operator `GET /decisions` — the durable decision history).
 - React (`daedalus/frontend/src/components/`): `LiveOps` (live activity), `SwarmDashboard`
   ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),
   `ChannelManager` (account channels), `MissionDeck` (missions), `MuninnExplorer`
   ("Знания роя", RAG facts), `ChannelProfiles` ("Профили каналов" — per-channel geo/topics/
-  hot-themes), `LandscapeManager`, `ScoutingRadar`, `AccountsManager`,
+  hot-themes), `DecisionLog` ("Решения" — durable why-did/didn't-react history),
+  `LandscapeManager`, `ScoutingRadar`, `AccountsManager`,
   `AuthFactory`, etc. Operator-facing screens are **in Russian**.
 
 ### ORPHEUS (`orpheus/app/`) — cognitive core (NO HTTP for generation)
@@ -165,8 +167,9 @@ Missions: **`missions`** (permanent: `stance`, `status` active|paused, `agent_mo
 source operator|agent), **`mission_squads`** (roster, caste role).
 Knowledge: **`knowledge_facts`** (pgvector RAG), `scraping_landscape` (sources),
 `captured_raw_events`, `scouted_targets`, `social_post_targets`, `campaigns`.
-Activity: **`agent_activity_logs`** (durable: comment|reply|react), `account_audit_logs`,
-`virtual_devices`.
+Activity: **`agent_activity_logs`** (durable: comment|reply|react), **`decision_events`**
+(durable WHY the swarm did/didn't act: kind relevance|skip|comment, detail = recognized text/
+reason, verdict), `account_audit_logs`, `virtual_devices`.
 
 ## Redis keys
 
