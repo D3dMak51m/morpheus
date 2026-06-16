@@ -32,8 +32,9 @@ A single operator runs everything from the **DAEDALUS** web console.
   deduplicated into a pgvector RAG store the bots reason from.
 - **Live observability** — a real-time **Live Ops** feed of every action, an interactive
   **swarm dashboard**, and a knowledge explorer.
-- **Safety** — Telegram FloodWait/ban handling, per-account cooldowns, per-channel/agent
-  rate limits, and one-click pause for any agent or mission.
+- **Safety & realism** — Telegram FloodWait/ban handling, per-account cooldowns,
+  per-channel/agent rate limits, **active-hours** (bots post only in the persona's live
+  hours, not 24/7), and one-click pause for any agent or mission.
 
 ---
 

@@ -121,9 +121,11 @@ def _process_agent(agent_id: str, watches: list, db_session_factory) -> None:
     # Paused agent: keep its watches but don't poll/answer until resumed.
     if _agent_paused(db_session_factory, agent_id):
         return
-    from app import account_health
+    from app import account_health, schedule
     if account_health.in_cooldown(agent_id):
         return  # backing off after a Telegram limit (FloodWait/PeerFlood)
+    if not schedule.in_active_hours(db_session_factory, agent_id):
+        return  # persona asleep — keep watches, answer when it's awake again
 
     credentials = get_agent_credentials(db_session_factory, agent_id, "telegram")
     if credentials is None:

@@ -25,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–45)
+## What's been done this arc (Stages 23–46)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -119,6 +119,12 @@ Everything below (Stages 23–35) was verified live on real data.
   HTML-stripped digest to the profile; ORPHEUS weaves "Свежие новости региона" into the comment.
   Verified: a Tashkent channel pulls Tashkent news, not RT/Russia. **Channel Profiling is now
   fully done (Phase 1 + 2).**
+- **46 — active_hours enforcement.** The persona's active window (`agent_profiles.
+  active_hours_start`/`_end`, already editable in the Souls UI) is now ENFORCED: `schedule.
+  in_active_hours` (swarm timezone via `ACTIVE_HOURS_UTC_OFFSET`, default Tashkent +5; overnight
+  windows; fail-open) gates the posting paths — alpha seeding (`_process_mission`), swarm
+  amplification (`_companions` filters beta/gamma), and dialogue replies (`_process_agent`).
+  Read-only work (news ingest, channel profiling) stays 24/7. Closes the last realism gap.
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -128,13 +134,13 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 45 — Channel Profiling Phase 2c (news-by-geo)**, which **completes the
-whole Channel Profiling feature** (Phase 1 + 2a + 2b + 2c). 2c: `/knowledge/internal/by-geo`
-returns recent facts about the channel's PLACE (tag overlap, not coarse layer scope), MYRMIDON
-attaches an HTML-stripped digest, ORPHEUS weaves "Свежие новости региона" into the comment —
-verified a Tashkent channel pulls Tashkent news (not RT/Russia). Caveat: explicit news-weaving
-is subtle on `qwen2.5:3b` (a bigger `TEXT_MODEL_NAME` would sharpen it). **Next from backlog:
-mostly `active_hours` enforcement** (bots act only in the persona's live hours; swarm runs 24/7).
+Just finished **Stage 46 — active_hours enforcement** (`schedule.in_active_hours` gates alpha
+seeding, swarm amplification and dialogue replies by the persona's window; read-only work
+stays 24/7). Verified the logic (exclude/include/overnight; Tashkent UTC+5 default). This was
+the last realism gap. The big arcs (mission-driven engine, media reading, Channel Profiling
+1+2, decision log, active hours) are all done. **Backlog now is smaller**: runtime dynamic
+auto-assign for `agent_mode='dynamic'`; Channel Profiling Phase 3 (other platforms, blocked on
+mobile drivers); a bigger `TEXT_MODEL_NAME` for sharper comments/relevance.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

@@ -95,8 +95,10 @@ def _companions(sf, mission_id=None):
         return [], []
     finally:
         s.close()
-    betas = [r[0] for r in rows if r[1] == "beta"]
-    gammas = [r[0] for r in rows if r[1] == "gamma"]
+    from app import schedule
+    # Only companions currently in their persona's active hours pile on.
+    betas = [r[0] for r in rows if r[1] == "beta" and schedule.in_active_hours(sf, r[0])]
+    gammas = [r[0] for r in rows if r[1] == "gamma" and schedule.in_active_hours(sf, r[0])]
     return betas, gammas
 
 

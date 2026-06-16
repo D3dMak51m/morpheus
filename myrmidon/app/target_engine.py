@@ -335,7 +335,7 @@ def _process_mission(mission: dict, sf) -> None:
     new post; beta/gamma amplify (mission-scoped) after alpha posts."""
     from app.main import get_agent_credentials
     from app.drivers.tg_client import TelegramDriver
-    from app import account_health
+    from app import account_health, schedule
 
     mid = mission["id"]
     # Pick the seeding alpha from the roster (fall back to any roster agent).
@@ -343,6 +343,8 @@ def _process_mission(mission: dict, sf) -> None:
     seeder = (alphas or [a["agent_id"] for a in mission["agents"]])[0] if mission["agents"] else None
     if not seeder or account_health.in_cooldown(seeder):
         return
+    if not schedule.in_active_hours(sf, seeder):
+        return  # persona asleep — don't seed comments outside its active hours
     creds = get_agent_credentials(sf, seeder, "telegram")
     if creds is None:
         return

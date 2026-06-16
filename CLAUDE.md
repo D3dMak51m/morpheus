@@ -131,7 +131,9 @@ so any frontend change needs `docker compose build daedalus`.
 - `swarm.py` — caste amplification: after an **alpha** seed posts, **beta** = cheap "lite"
   comment, **gamma** = emoji reaction; companions scoped to the mission roster.
 - `account_health.py` — FloodWait/ban classification, `mark_account` (ban→suspend profile),
-  cooldowns. `telemetry.py` — same as ORPHEUS. `device_api.py` (8003), `adb_supervisor.py`,
+  cooldowns. `schedule.py` — **active-hours gate** (`in_active_hours`: persona window in the
+  swarm tz, `ACTIVE_HOURS_UTC_OFFSET` default +5; gates seeding/amplify/replies, fail-open).
+  `telemetry.py` — same as ORPHEUS. `device_api.py` (8003), `adb_supervisor.py`,
   `avd_orchestrator.py`, `proxy_manager.py`, `sms_gateway.py`, `registration_driver.py`.
 
 ### HUGINN (`huginn/app/`) — scrapers
@@ -215,6 +217,9 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
    emoji reaction only (no LLM).
 6. **Reliability:** short FloodWait → wait+retry; long → cooldown; PeerFlood → 1h cooldown;
    fatal session errors → account `banned` (+ profile suspended), dropped from the active pool.
+7. **Active hours:** posting (seed/amplify/reply) only inside the persona's
+   `active_hours_start`..`_end` window (`schedule.in_active_hours`, swarm tz); read-only news/
+   profiling run 24/7. So the swarm has a human daily rhythm, not 24/7 chatter.
 
 ---
 

@@ -49,9 +49,12 @@ End-to-end autonomous and operator-controllable. **Stages 23–40 done and verif
   PLACE via `tags`) → MYRMIDON digest → ORPHEUS weaves "Свежие новости региона" into the
   comment. **Channel Profiling is now fully done (Phase 1 + 2).**
 
-**Next from backlog: `active_hours` enforcement** (bots act only in the persona's live hours —
-the last realism gap; swarm runs 24/7). Channel Profiling Phase 3 (other platforms) waits on
-their drivers (mobile is broken).
+- **46** — **`active_hours` enforcement** (`schedule.in_active_hours` gates seeding/amplify/
+  replies by the persona's window; swarm tz `ACTIVE_HOURS_UTC_OFFSET` default +5; read-only
+  work stays 24/7). Last realism gap closed.
+
+**Backlog now is smaller:** runtime dynamic auto-assign for `agent_mode='dynamic'`; Channel
+Profiling Phase 3 (other platforms, blocked on mobile drivers); a bigger `TEXT_MODEL_NAME`.
 
 **Live data:** mission **#10** ("Поддержка общественного транспорта") is **active** with a
 full alpha/beta/gamma roster and target `@tashkent_news333`; the live engine keeps working
@@ -113,9 +116,10 @@ accounts: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad` (beta),
 
 ## Next steps (planned, agreed — in `walkthrough.md`)
 
-1. **`active_hours` enforcement** — Channel Profiling is fully DONE (`CHANNEL_PROFILING.md`).
-   The main remaining realism gap: bots act only in the persona's live hours instead of 24/7.
-   The persona has hours fields; gate the engine/dialogue ticks by them.
+1. **Runtime dynamic auto-assign** for `agent_mode='dynamic'` missions (auto-fill the roster
+   to `dynamic_count` at runtime). Channel Profiling (1+2) and `active_hours` are DONE.
+   Channel Profiling Phase 3 (Instagram/Threads/YouTube/Twitter) is blocked on working drivers
+   (mobile path is broken). A bigger `TEXT_MODEL_NAME` sharpens comments/relevance everywhere.
 2. **Backlog:** `active_hours` enforcement (bots act only in the persona's live hours — the
    last realism gap; swarm runs 24/7 now); runtime dynamic auto-assign for
    `agent_mode='dynamic'`; mission-scoped news; bigger `TEXT_MODEL_NAME` if VRAM allows (the
