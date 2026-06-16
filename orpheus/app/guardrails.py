@@ -153,3 +153,37 @@ class OutputGuardrails:
                 if len(shared) / len(ref_cw) >= 0.6:
                     return True
         return False
+
+    def is_repeat(self, text: str, history: List[str]) -> bool:
+        """
+        Detect when the agent is repeating *itself* — the same opening, phrasing, or
+        talking points it already used in a recent comment (the thing that makes the
+        bot read as a robot reciting a script). Compares the new text to the agent's
+        own recent outputs: a high whole-text similarity OR a high two-way overlap of
+        meaningful words (same talking points, even if reworded) counts as a repeat.
+        """
+        t = _normalize(text)
+        if not t:
+            return False
+        t_cw = _content_words(t)
+        for prev in history or []:
+            p = _normalize(prev)
+            if len(p) < 12:
+                continue
+            if SequenceMatcher(None, t, p).ratio() > 0.6:
+                return True
+            # Same opening as a recent comment (~first 4-5 words) — a classic bot
+            # tell ("Как часто я тоскую…", "А если бы были…"). Force a new lead-in.
+            if len(t) >= 18 and t[:18] == p[:18]:
+                return True
+            p_cw = _content_words(p)
+            if len(t_cw) >= 4 and len(p_cw) >= 4:
+                shared = t_cw & p_cw
+                # min() so reusing most of either comment's key words trips it —
+                # catches recycled talking points regardless of length differences.
+                # 0.7 (not 0.6): on a narrow-topic mission two genuinely different
+                # comments still share topic words, so only a strong overlap (clear
+                # rehash) should block — the prompt is the primary anti-repeat lever.
+                if len(shared) / min(len(t_cw), len(p_cw)) >= 0.7:
+                    return True
+        return False

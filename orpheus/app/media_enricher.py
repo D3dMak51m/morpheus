@@ -14,24 +14,24 @@ import logging
 import os
 import subprocess
 import tempfile
-import time
 from typing import List, Optional
 
 import cv2
 import httpx
-from faster_whisper import WhisperModel
 
 logger = logging.getLogger("orpheus.media_enricher")
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME", "moondream:latest")
+# STT is centralized in the HEIMDALL service (faster-whisper) — ORPHEUS no longer
+# loads its own Whisper (lighter image, faster startup); it just calls HEIMDALL when
+# the legacy video path needs a transcript.
+HEIMDALL_URL = os.getenv("HEIMDALL_URL", "http://heimdall:8004")
+HEIMDALL_TIMEOUT = int(os.getenv("HEIMDALL_TIMEOUT_SEC", "180"))
 
 class MediaEnricher:
     def __init__(self):
-        logger.info("Initializing MediaEnricher: Loading faster-whisper (tiny) on CPU...")
-        # CPU constrained to preserve GPU VRAM
-        self.whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        logger.info("faster-whisper initialized.")
+        logger.info("MediaEnricher ready (STT via HEIMDALL, VLM via Ollama).")
 
     def extract_audio(self, video_path: str) -> Optional[str]:
         """Extracts audio to a temporary WAV file using ffmpeg."""
@@ -80,14 +80,17 @@ class MediaEnricher:
         return frames
 
     def transcribe_audio(self, audio_path: str) -> str:
-        """Transcribes audio using faster-whisper on CPU."""
-        logger.info("Transcribing audio: %s", audio_path)
+        """Transcribe an audio file via the HEIMDALL STT service."""
+        logger.info("Transcribing audio via HEIMDALL: %s", audio_path)
         try:
-            segments, _ = self.whisper_model.transcribe(audio_path, beam_size=5)
-            text = " ".join([segment.text for segment in segments])
-            return text.strip()
+            with open(audio_path, "rb") as f:
+                files = {"file": (os.path.basename(audio_path) or "audio", f, "application/octet-stream")}
+                with httpx.Client(timeout=HEIMDALL_TIMEOUT) as client:
+                    resp = client.post(f"{HEIMDALL_URL}/api/v1/transcribe", files=files)
+                    resp.raise_for_status()
+                    return (resp.json().get("text") or "").strip()
         except Exception as e:
-            logger.error("Transcription failed: %s", e)
+            logger.error("HEIMDALL transcription failed: %s", e)
             return ""
 
     def query_vlm(self, image_path: str) -> str:

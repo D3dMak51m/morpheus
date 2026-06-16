@@ -32,11 +32,14 @@ container names). Do not rabbit-hole on it unless explicitly asked.
 | **orpheus** | ./orpheus | 8001 | **Cognitive core**: Redis worker, calls host Ollama (GPU) |
 | **huginn** | ./huginn | — | Legacy scrapers (RSS/web feed knowledge; **TG scraper is dead Telethon**) |
 | **myrmidon** | ./myrmidon | (8003 internal) | **Execution swarm**: Pyrogram (TG) + Appium (mobile, broken) |
+| **heimdall** | ./heimdall | 8004 | **Speech-to-text** service (faster-whisper, CPU/int8, any format) |
 
 **External dependency:** host **Ollama** at `host.docker.internal:11434` — models
-`qwen2.5:3b` (text generation) and `nomic-embed-text` (RAG embeddings). MUNINN uses
-`intfloat/multilingual-e5-small` on CPU. The single ~6 GB GPU runs one model at a time
-(ORPHEUS unloads with `keep_alive=0`); keep LLM calls cheap/serial.
+`qwen2.5:3b` (text generation), `nomic-embed-text` (RAG embeddings), and `moondream`
+(VLM, image descriptions). MUNINN uses `intfloat/multilingual-e5-small` on CPU; HEIMDALL
+runs faster-whisper on CPU (`STT_MODEL`, default `medium`; set `large-v3` in prod);
+MYRMIDON has Tesseract (OCR for text-card images). The single ~6 GB GPU runs one model at
+a time (ORPHEUS unloads with `keep_alive=0`); keep LLM calls cheap/serial.
 
 Deploy a change: `docker compose build <svc> && docker compose up -d <svc>`.
 The **React SPA is built inside the daedalus image** (`npm run build` → `app/static/`),
@@ -55,7 +58,8 @@ so any frontend change needs `docker compose build daedalus`.
   never ALTERs).
 - `rbac.py` — roles/permissions, `require_permission`. `souls.py` — agent profiles +
   accounts + bind/unbind + channel prefs (`agent_channel_prefs`) + channel enumeration
-  proxy. `router_missions.py` — permanent-goal missions + targets + squad. `mission_control.py`
+  proxy. `router_missions.py` — permanent-goal missions + targets + squad + **internal
+  `/missions/internal/suggest-target`** (agents propose targets, dedup). `mission_control.py`
   — squad eligibility/auto-assign (DAG launch is legacy). `analytics.py` — metrics,
   `/stream` (durable activity), `/live` (telemetry tail), `/swarm` (dashboard aggregate),
   `/dialogues`. `router_knowledge.py` — RAG facts ingest/search/list. `landscape.py` —
@@ -71,31 +75,44 @@ so any frontend change needs `docker compose build daedalus`.
 ### ORPHEUS (`orpheus/app/`) — cognitive core (NO HTTP for generation)
 - `main.py` — Redis worker, multi-key `BRPOP` on `queue:raw_events` + `queue:mission_gen`.
   `handle_mission_generation` (mode=comment|reply, lite for beta; `_resolve_dynamic_tactic`
-  picks the per-post tactic before assembling, returns it on the reply), `handle_relevance`
-  (mode=relevance, mission- or profile-aware YES/NO), `generate_text` (Ollama, repeat
-  penalty, `max_tokens`).
+  picks the per-post tactic; anti-repeat via `_recent_outputs`/`_remember_output` +
+  `guardrails.is_repeat`), `handle_relevance` (mode=relevance, mission- or profile-aware
+  YES/NO). **`generate_text(prompt, max_tokens, temperature, penalties)`** — set
+  `penalties=False` for short CLASSIFICATION calls (relevance, tactic): the anti-parroting
+  repeat/frequency penalties otherwise push the model OFF the clean `да`/`нет` tokens (gave
+  garbled `'дятьнет'` — the real cause of "non-deterministic relevance").
 - `persona.py` — `PersonaEngine`: profile cache (30s poll of `/souls/internal/profiles`),
-  `assemble_mission_prompt` (persona + RAG + MUNINN memory + thread mood + mission stance +
-  role/tactic; 4 `tactic_directives`; **lite** branch for cheap beta inherits the tactic),
+  `assemble_mission_prompt` (persona + RAG + MUNINN memory + thread mood + **media context** +
+  mission stance + role/tactic; 4 `tactic_directives`; human-style + anti-repeat prompt blocks;
+  **lite** branch for cheap beta inherits the tactic),
   `build_mood_prompt`/`tactic_from_mood` (dynamic per-post tactic = 3-way mood classify +
   heat heuristic), `fetch_memory`/`save_memory` (MUNINN).
 - `rag.py` — `fetch_fresh_context` (pgvector knowledge retrieval). `guardrails.py` —
-  output validation + **`is_echo`** (anti-parroting). `coordination.py` — legacy DAG beta
-  amplification (the live swarm amplification is now in MYRMIDON `swarm.py`).
-  `media_enricher.py` — VLM/STT. `telemetry.py` — `emit()` → `stream:agent_events`.
+  output validation + **`is_echo`** (anti-parroting the input) + **`is_repeat`** (anti-rehashing
+  the agent's OWN recent comments). `coordination.py` — legacy DAG beta amplification (the live
+  swarm amplification is now in MYRMIDON `swarm.py`). `media_enricher.py` — VLM (Ollama) + STT
+  **delegated to HEIMDALL** (no local Whisper). `telemetry.py` — `emit()` → `stream:agent_events`.
 
 ### MYRMIDON (`myrmidon/app/`) — execution swarm (Pyrogram)
 - `main.py` — consumes `queue:execution_tasks`; `_execute_telegram` (comment via
   `text_provider`→ORPHEUS, or `action_type=react`); starts `dialogue_engine`,
   `target_engine`; respects account cooldown.
 - `drivers/tg_client.py` — `TelegramDriver` (all TG ops): `execute_comment` (channel
-  comment in the linked discussion group), `execute_reaction` (gamma), `fetch_new_posts`,
-  `list_channels`, `run_dialogue_cycle`, `_flood_retry`. **`_run(coro)`**: fresh event loop
-  per call (fixes daemon-thread loop crashes). Per-agent **session lock**.
+  comment in the linked discussion group; reads post text + thread mood + **media context**),
+  `execute_reaction` (gamma), `fetch_new_posts` (now keeps **media-only posts** via
+  `has_media`), `_download_media`/`_read_media_context`/`read_media_context` (album-aware
+  photo+audio download → enrich), `list_channels`, `run_dialogue_cycle`, `_flood_retry`.
+  **`_run(coro)`**: fresh event loop per call (fixes daemon-thread loop crashes). Per-agent
+  **session lock**.
+- `media_reader.py` — turns a post's media into text: audio → **HEIMDALL** STT, image →
+  Ollama VLM (Moondream) + **Tesseract OCR** (a text-card image is read by OCR; the small VLM
+  hallucinates a scene on those). Returns a compact `media_context`.
 - `target_engine.py` — **primary driver**: per active mission, the roster alpha scans the
-  mission's target channels, LLM-relevance-checks newest posts vs the mission's goal/stance,
-  seeds a comment (then `swarm.py` amplifies). Also per-agent **news ingest** (role=news →
-  DAEDALUS knowledge).
+  mission's target channels, LLM-relevance-checks newest posts vs the mission's goal/stance
+  (caption-less media posts are "read" first so relevance is grounded in the photo/audio),
+  seeds a comment (then `swarm.py` amplifies). Also `_suggest_targets_for_mission` (bots
+  propose new mission targets from their own channels) and per-agent **news ingest**
+  (role=news → DAEDALUS knowledge).
 - `dialogue_engine.py` + `dialogue_store.py` — poll watched comments for human replies →
   ORPHEUS reply → post → register follow-up watch (multi-turn). Logs `action_type=reply`.
 - `swarm.py` — caste amplification: after an **alpha** seed posts, **beta** = cheap "lite"
@@ -113,6 +130,12 @@ so any frontend change needs `docker compose build daedalus`.
 ### MUNINN (`muninn/app/main.py`)
 - ChromaDB-backed semantic dialog memory. `POST /api/v1/memory/{search,save}` keyed by
   `agent_id` + `opponent_id`.
+
+### HEIMDALL (`heimdall/app/main.py`) — speech-to-text service
+- Own container, FastAPI. `POST /api/v1/transcribe` (multipart, any audio format via
+  PyAV + ffmpeg fallback; optional `language` force) → `{text, language, …}`. faster-whisper
+  on **CPU/int8**; `STT_MODEL` env (default `medium`; `large-v3` in prod) cached in the
+  `heimdall_models` volume. Called by MYRMIDON `media_reader` and ORPHEUS `media_enricher`.
 
 ---
 
@@ -142,7 +165,9 @@ Queues: `queue:raw_events` (HUGINN→ORPHEUS autonomous), `queue:execution_tasks
 Telemetry: **`stream:agent_events`** (capped stream the Live Ops feed tails).
 Dialogue: `morpheus:dialogue:watches` (hash), `morpheus:dialogue:handled`.
 Targets: `morpheus:target:lastseen` (hash, also `mission:<id>:<channel>`),
-`morpheus:target:rate:*` (hourly caps).
+`morpheus:target:rate:*` (hourly caps), `morpheus:suggest:checked:<mid>:<ident>` (6h
+re-scan marker for agent target suggestions).
+Anti-repeat: `morpheus:recent_outputs:<agent>` (capped list of the agent's last comments).
 Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_cooldown:<agent>`,
 `morpheus:amplified:<url>` (once-per-post amplification). Metrics: `metrics:*`.
 
@@ -154,14 +179,17 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
    reads new posts → DAEDALUS `/knowledge/internal/ingest` → LLM classify + `nomic-embed-text`
    + pgvector dedup → `knowledge_facts`. ORPHEUS grounds comments on these (`rag.fetch_fresh_context`).
 2. **Mission-driven commenting (primary):** active mission → roster **alpha** scans the
-   mission's `active` channel targets → ORPHEUS LLM-relevance vs the mission's goal+stance
-   (checks the newest ~3 posts) → seeds an execution task (goal+stance+tactic+mission_id) →
-   MYRMIDON: ORPHEUS picks a **dynamic per-post tactic** (post+thread mood vs stance →
-   `amplify`|`soft_support`|`aggressive_displacement`|`sentiment_shift`, when mission tactic
-   is `dynamic`), then writes the comment (persona + RAG + memory + thread mood + stance,
-   anti-echo, regen) → posts it → registers a dialogue watch → **swarm amplification**:
-   mission-roster **beta** drops a cheap lite comment (inheriting the alpha's tactic),
-   **gamma** an emoji reaction.
+   mission's `active` channel targets (now incl. **media-only posts**; caption-less photo/voice
+   posts are "read" first — `media_reader`: VLM+OCR / HEIMDALL STT) → ORPHEUS LLM-relevance vs
+   the mission's goal+stance (penalties OFF for the YES/NO call) → seeds an execution task
+   (goal+stance+tactic+mission_id+media_context) → MYRMIDON: ORPHEUS picks a **dynamic per-post
+   tactic** (post+thread mood vs stance → `amplify`|`soft_support`|`aggressive_displacement`|
+   `sentiment_shift`), then writes the comment (persona + RAG + memory + thread mood + **media
+   context** + stance, anti-echo, anti-repeat, regen) → posts it → registers a dialogue watch →
+   **swarm amplification**: mission-roster **beta** drops a cheap lite comment (inheriting the
+   alpha's tactic), **gamma** an emoji reaction.
+   *Also:* roster bots propose new mission targets from their own channels
+   (`_suggest_targets_for_mission` → `/missions/internal/suggest-target`).
 3. **Conversations:** a watch on the bot's comment is polled; a real human reply → ORPHEUS
    reply-mode → MYRMIDON answers (and watches its own answer → multi-turn).
 4. **Memory:** every comment/reply summary is saved to MUNINN per agent↔opponent; recalled next time.
@@ -204,8 +232,19 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
   `message.reply_text()`; warm the discussion peer via `get_discussion_message`.
 - Discussion replies often have `from_user=None` (privacy/anonymous) — still real humans;
   answer them, scope memory by `anon:<chat>`/`thread:…`.
-- `qwen2.5:3b` parrots the input → `guardrails.is_echo` + regen; and is non-deterministic on
-  relevance. A bigger `TEXT_MODEL_NAME` would help; the guards/prompts are model-agnostic.
+- `qwen2.5:3b` parrots the input → `guardrails.is_echo` + regen; rehashes its own past
+  comments → `guardrails.is_repeat` + `morpheus:recent_outputs`. A bigger `TEXT_MODEL_NAME`
+  would help; the guards/prompts are model-agnostic.
+- **Anti-parroting penalties corrupt SHORT classification.** `repeat_penalty`/`frequency_penalty`
+  (good for comments) push the model OFF the clean `да`/`нет` token on YES/NO relevance/tactic
+  calls → garbage like `'дятьнет'`. Always pass `penalties=False` (+ low temp) for classification.
+- **Moondream (VLM) can't read text in images** — it hallucinates a scene (e.g. "a book cover")
+  on a Telegram "text card". Read text-bearing images with **Tesseract OCR** (MYRMIDON
+  `media_reader`); the VLM is only for real photos. Also keep VLM prompts SHORT (it returns
+  empty on long/structured prompts).
+- Relevance judges a post **in a vacuum** today → a vague but on-topic phrase (`«опять эти
+  машины»` on a Tashkent traffic channel) is missed. The fix is **Channel Profiling**
+  (`CHANNEL_PROFILING.md`, designed, build next): judge in the channel's topic/geo/news context.
 - `app/main.py` registers signal handlers at import — guarded to main-thread only (daemon
   threads re-import it).
 - Mission DAG reconciler is legacy; it only touches `running`/`amplifying` so new

@@ -14,8 +14,11 @@ A single operator runs everything from the **DAEDALUS** web console.
 ## Highlights
 
 - **Cognitive comments** — each post is answered from the bot's persona + retrieved
-  world-knowledge (RAG) + per-person memory + the live mood of the discussion, with an
-  anti-parroting guard. Bots reply in the post's language.
+  world-knowledge (RAG) + per-person memory + the live mood of the discussion, with
+  anti-parroting and anti-repeat guards. Comments are short and human, not press-release.
+- **Reads photos & audio** — a post's images (incl. albums) are described by a VLM and
+  read with OCR (text cards), and its voice/audio is transcribed by the **HEIMDALL** STT
+  service (any format, many languages) — so bots react to what they actually see and hear.
 - **Real conversations** — after commenting, a bot watches for human replies and answers
   them, carrying a thread for several turns.
 - **Caste hierarchy** — **alpha** (smartest, full pipeline) seeds; **beta** (cheap, "lite")
@@ -43,6 +46,7 @@ Microservices over Docker Compose, glued by Redis (queues/streams) and Postgres+
 | **DAEDALUS** | 8000 | Control plane — FastAPI API + React SPA (the operator console) |
 | **ORPHEUS** | 8001 | Cognitive core — Redis worker; LLM prompt assembly, RAG, guardrails |
 | **MYRMIDON** | (8003 int.) | Execution swarm — Pyrogram (Telegram), the autonomous engines |
+| **HEIMDALL** | 8004 | Speech-to-text service — faster-whisper (CPU), any audio format |
 | **HUGINN** | — | Scrapers — RSS/web → knowledge (legacy TG scraper unused) |
 | **MUNINN** | 8002 | Long-term dialog memory — embedded ChromaDB |
 | **postgres** | 5432 | Relational store + **pgvector** (RAG embeddings) |
@@ -133,10 +137,13 @@ walkthrough.md  work log / handoff / next steps
 
 ## Status & roadmap
 
-Done: cognitive comments, conversations, memory, news→knowledge (RAG), caste hierarchy,
-mission-driven engine, **dynamic per-post tactic**, reliability, full operator console. See
+Done: cognitive comments (human, anti-repeat), conversations, memory, news→knowledge (RAG),
+caste hierarchy, mission-driven engine, dynamic per-post tactic, **agent-proposed targets**,
+**reading photos & audio** (STT + VLM + OCR), reliability, full operator console. See
 `walkthrough.md` for the staged log.
 
-Next: **agent-proposed targets** (bots suggest channels/posts to missions) and **active-hours**
-enforcement. The text model is small (`qwen2.5:3b`); a larger `TEXT_MODEL_NAME` sharpens
-comments/relevance — the prompts and guards are model-agnostic.
+Next: **Channel Profiling** (`CHANNEL_PROFILING.md`, designed) — per-channel topic/geo/
+"hot-themes" profiles linked to the geo-layered news base, so posts are judged in the
+channel's context, not in a vacuum. Then **active-hours** enforcement. The text model is
+small (`qwen2.5:3b`); a larger `TEXT_MODEL_NAME` sharpens comments/relevance — the prompts
+and guards are model-agnostic.

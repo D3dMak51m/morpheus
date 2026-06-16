@@ -25,17 +25,18 @@ broken and out of scope.
 
 ## Current progress
 
-End-to-end autonomous and operator-controllable. **Stages 23–36 done and verified live**
-(see `walkthrough.md` for the per-stage detail). Most recent stage: **36 — Dynamic per-post
-tactic**.
+End-to-end autonomous and operator-controllable. **Stages 23–40 done and verified live**
+(see `walkthrough.md` for the per-stage detail). Recent stages:
+- **34–36** — mission redesign (permanent-goal missions; mission-driven engine; dynamic
+  per-post tactic from thread mood vs stance).
+- **37** — agent target suggestions (bots propose new mission targets from their channels).
+- **38** — human, non-repeating comments (`is_repeat` + recent-output memory + rewritten prompts).
+- **39** — reading media: **HEIMDALL** STT service + MYRMIDON media download/enrich (photos,
+  albums, voice/audio) + **Tesseract OCR** for text-card images + ORPHEUS media weaving.
+- **40** — relevance fix: penalties OFF for classification (the real "non-deterministic
+  relevance" cause) + sharper prompt + media-aware relevance for caption-less posts.
 
-The mission redesign is **3 of 3 behavior passes complete**:
-- Stage 34 — missions modeled as permanent goals (model + API + UI).
-- Stage 35 — mission-driven engine (roster alpha scans the mission's target channels,
-  LLM-relevance vs the mission's goal+stance, seeds a comment, beta/gamma amplify).
-- Stage 36 — **dynamic per-post tactic**: the alpha picks a tactic per post from the post +
-  thread mood vs the mission stance (`amplify`/`soft_support`/`aggressive_displacement`/
-  `sentiment_shift`); beta/gamma inherit it. Done.
+**Next: build Channel Profiling (Phase 1)** — fully designed in **`CHANNEL_PROFILING.md`**.
 
 **Live data:** mission **#10** ("Поддержка общественного транспорта") is **active** with a
 full alpha/beta/gamma roster and target `@tashkent_news333`; the live engine keeps working
@@ -78,9 +79,16 @@ accounts: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad` (beta),
   of scope; do not rabbit-hole unless explicitly asked.
 - **HUGINN `scrapers/tg_scraper.py` is dead** — unlogged-in Telethon session. TG news is
   handled by MYRMIDON Pyrogram instead.
-- **`qwen2.5:3b` parrots the input** and is non-deterministic on relevance → mitigated by
-  `guardrails.is_echo` + regen. A larger `TEXT_MODEL_NAME` would help (prompts/guards are
+- **`qwen2.5:3b` parrots the input** and rehashes itself → `guardrails.is_echo` /
+  `is_repeat` + regen. A larger `TEXT_MODEL_NAME` would help (prompts/guards are
   model-agnostic) but the single ~6 GB GPU runs one model at a time (`keep_alive=0`).
+- **Anti-parroting penalties broke ALL short classification** (the real "non-deterministic
+  relevance"): `repeat_penalty`/`frequency_penalty` pushed the model off the clean `да`/`нет`
+  token → garbage `'дятьнет'`. Use `generate_text(..., penalties=False)` + low temp for any
+  YES/NO or single-word classification (relevance, tactic).
+- **Moondream (VLM) can't read text in images** — hallucinates a scene ("a book cover") on a
+  text-card. Use **Tesseract OCR** for text-bearing images; VLM only for real photos; keep VLM
+  prompts SHORT (empty output on long/structured prompts).
 - **Large `-100…` chat ids resolve unreliably cold** → prefer `@username`, reply via
   `message.reply_text()`, warm the discussion peer with `get_discussion_message`.
 - **Discussion replies often have `from_user=None`** (privacy/anonymous) — still real
@@ -90,15 +98,21 @@ accounts: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad` (beta),
 
 ## Next steps (planned, agreed — in `walkthrough.md`)
 
-1. **Agent target suggestions.** Any-caste bots read their channels; on finding a
-   post/channel relevant to a mission but not in its targets, propose a `MissionTarget`
-   (`status='suggested', source='agent'`) for operator approve/reject. The API + UI already
-   exist — **only the generation side is missing.**
+1. **Channel Profiling — DESIGNED, build next. Full design + schema in `CHANNEL_PROFILING.md`.**
+   Per-channel independent profile (topics / geo / "hot themes now") linked to the
+   geo-layered news base (`knowledge_facts` already has global→regional→state→city), fed
+   into the relevance gate + comment grounding so posts are judged **in the channel's
+   context** (the fix for `«опять эти машины»` on a Tashkent traffic channel). Update
+   cadence = **hybrid** (heavy daily, hot every few hours). Phase 1 MVP = `channel_profiles`
+   table + profiler + relevance integration; Phase 2 = comment grounding + UI.
 2. **Backlog:** `active_hours` enforcement (bots act only in the persona's live hours — the
    last realism gap; swarm runs 24/7 now); runtime dynamic auto-assign for
    `agent_mode='dynamic'`; mission-scoped news; bigger `TEXT_MODEL_NAME` if VRAM allows (the
    small model occasionally leaks Chinese tokens / misjudges mood — the tactic mechanism is
    model-agnostic).
+
+Note: agent target suggestions, human/anti-repeat comments, media reading (HEIMDALL STT +
+OCR), and the relevance penalties fix are all BUILT (uncommitted) — see git diff.
 
 ---
 

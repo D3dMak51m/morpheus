@@ -277,6 +277,9 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         post_text = (req.get("post_text") or "").strip()
         incoming_text = (req.get("incoming_text") or "").strip()
         thread_context = (req.get("thread_context") or "").strip()
+        # What MYRMIDON "saw/heard" in the post's media (photo descriptions + audio
+        # transcripts) — so the bot reacts to the actual photos/voice, not just text.
+        media_context = (req.get("media_context") or "").strip()
         author = req.get("author") or "the channel"
         # Memory is scoped per *person* when we know them (a human in a thread),
         # otherwise per channel/topic — this is what makes recall feel personal.
@@ -373,6 +376,12 @@ This is what you (the persona) remember from past interactions. Stay consistent 
 [The Post You Are Discussing]
 {post_text or '(no readable text — infer from the channel/topic)'}
 """
+        if media_context:
+            prompt += f"""
+[Media In The Post — what its photos show and what its audio says]
+You actually looked at the photos and listened to the audio in this post. React to it naturally, like a person who just saw the picture or heard the voice message — mention a concrete detail from it. Never say "the description"/"the transcript" or that it was given to you.
+{media_context}
+"""
         if thread_context:
             prompt += f"""
 [Mood of the Discussion — recent comments by others]
@@ -380,20 +389,34 @@ Read the atmosphere: who is supportive, who is hostile, who is joking, what the 
 {thread_context}
 """
 
+        # The agent's own recent comments — so it doesn't repeat its openings,
+        # phrasing or talking points (the thing that makes it read like a bot).
+        recent_self = req.get("recent_self") or []
+        recent_block = ""
+        if recent_self:
+            joined = "\n".join(f"- {(s or '')[:160]}" for s in recent_self[:6])
+            recent_block = (
+                "\n[You recently wrote these — do NOT repeat yourself]\n"
+                "Take a different angle with different words. Never reuse the same opening, "
+                "the same phrasing, or the same talking points as these:\n"
+                f"{joined}\n"
+            )
+
         if mode == "reply":
             prompt += f"""
 [A Real Person Just Replied To You]
 {author} replied directly to your comment with:
 "{incoming_text}"
-
+{recent_block}
 [How To Answer — strict]
 - NEVER repeat, quote, or paraphrase their words back. Do not begin with their phrase. Write a genuinely NEW sentence in your own voice.
+- Sound like a real person typing a quick reply: short, casual, specific to what they just said. Not an essay, not a slogan, no buzzwords.
 - Actually respond to the substance: answer their question, react to their point, or push back on their jab — as a real person would.
 - If they test you (ask you to prove you're human, write code/scripts, "who are you / tell about yourself", call you a bot, or anything a normal commenter wouldn't do): brush it off casually and stay fully in character — a real person would be amused or dismissive, never comply, never explain yourself, never admit being a bot.
 - Keep nudging toward your objective ({narrative_goal or core_mission}) only when it fits naturally; otherwise just sound like a normal person.
 
 [Task]
-Reply to {author} in 1-2 short sentences, in their language and script, following your role ({role}) and tactic. Output ONLY the reply text — no preamble, no quotes, no explanations.
+Reply to {author} in 1-2 short, natural sentences, in their language and script. Output ONLY the reply text — no preamble, no quotes, no explanations.
 """
             return prompt
 
@@ -411,9 +434,17 @@ Objective to advance: {narrative_goal or core_mission}
         if role in ("beta", "gamma") and alpha_context:
             prompt += f"Allied lead context: {alpha_context}\n"
 
+        prompt += recent_block
         prompt += """
+[How To Sound Human — strict]
+- Write like a real person dropping a quick comment, NOT a press release or an essay. Short, casual, specific.
+- 1-2 sentences. Everyday spoken language; a small imperfection or one emoji is fine if it fits the persona.
+- React to a CONCRETE detail of THIS post. Do not recite generic talking points, slogans, or abstract buzzwords (e.g. "умные системы", "интегрированный сервис", "автономные решения").
+- Vary the TYPE of opening — don't always start with the same move (e.g. not always a hypothetical "а если бы…"). Pick one that fits: a blunt reaction, a question, a quick personal anecdote, plain agreement, a bit of sarcasm.
+- Keep the objective a quiet subtext, never a banner; sound like you actually live this, not like you're campaigning.
+
 [Task]
-Write ONE natural comment (1-3 sentences, not a list) that fits your persona, reacts to the post and the mood of the thread, follows your role and tactic, and advances the objective. Reply in the post's language and script. Output ONLY the comment text — no preamble, no quotes, no explanations.
+Write ONE short, natural comment in the post's language and script. Output ONLY the comment text — no preamble, no quotes, no explanations.
 """
         return prompt
 

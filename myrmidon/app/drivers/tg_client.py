@@ -14,6 +14,7 @@ discussion group on demand. Direct groups/supergroups are posted to directly.
 import logging
 import asyncio
 import os
+import tempfile
 from typing import Optional, Tuple, Union, Callable, List, Dict
 
 from app import dialogue_store
@@ -23,6 +24,9 @@ from app.telemetry import emit as emit_event
 # A FloodWait up to this many seconds is slept-through and retried; longer ones put
 # the agent on a cooldown instead of blocking the worker.
 FLOOD_MAX_WAIT_SEC = int(os.getenv("TG_FLOOD_MAX_WAIT_SEC", "45"))
+
+# How many media messages of a post/album to download for "reading" (photos+audio).
+MEDIA_DOWNLOAD_CAP = int(os.getenv("MEDIA_DOWNLOAD_CAP", "6"))
 
 # Pyrogram's sync wrapper calls asyncio.get_event_loop() at import time.
 # When uvloop is installed (e.g. from FastAPI), this fails in threads without a loop.
@@ -126,20 +130,23 @@ class TelegramDriver:
         account_health.set_cooldown(self.agent_id, int(wait) or 300, "FloodWait")
         return False
 
-    async def _resolve_text(self, fallback: str, text_provider, context_text: str, thread_context: str, chat) -> str:
+    async def _resolve_text(self, fallback: str, text_provider, context_text: str, thread_context: str,
+                            media_context: str, chat) -> str:
         """
         Decide the comment text. If a text_provider is supplied (mission path), it
-        is called with the post context, author and the *atmosphere* of the thread
-        (recent comments / mood) to produce a real, context-aware comment (ORPHEUS).
-        On any miss it degrades gracefully to ``fallback`` so a mission never stalls
-        when the cognitive core is slow or down.
+        is called with the post context, author, the *atmosphere* of the thread
+        (recent comments / mood) and the *media context* (what the photos show / what
+        the audio says) to produce a real, context-aware comment (ORPHEUS). On any
+        miss it degrades gracefully to ``fallback`` so a mission never stalls when the
+        cognitive core is slow or down.
         """
         if not text_provider:
             return fallback
         author = chat.title or chat.username or str(chat.id)
         try:
             loop = asyncio.get_event_loop()
-            generated = await loop.run_in_executor(None, text_provider, context_text, author, thread_context)
+            generated = await loop.run_in_executor(
+                None, text_provider, context_text, author, thread_context, media_context)
         except Exception as e:
             logger.error("TelegramDriver [%s]: text provider failed: %s", self.agent_id, e)
             generated = ""
@@ -253,6 +260,137 @@ class TelegramDriver:
         # Keep the most recent ``limit`` exchanges (the iterator yields oldest-first).
         return "\n".join(lines[-limit:])
 
+    # ── Media "reading" (photos + audio) ───────────────────────────────────
+
+    @staticmethod
+    def _media_kind(msg) -> Optional[str]:
+        """Classify a message's media as 'image' | 'audio' | None (skip)."""
+        if getattr(msg, "photo", None):
+            return "image"
+        # voice notes, music, and round video-notes all carry an audio track.
+        if getattr(msg, "voice", None) or getattr(msg, "audio", None) or getattr(msg, "video_note", None):
+            return "audio"
+        doc = getattr(msg, "document", None)
+        mime = ((getattr(doc, "mime_type", "") or "").lower()) if doc else ""
+        if mime.startswith("image/"):
+            return "image"
+        if mime.startswith("audio/"):
+            return "audio"
+        return None
+
+    async def _download_media(self, app: Client, chat, post_id: Optional[int]) -> List[dict]:
+        """
+        Download a post's media into temp files. Album-aware: a single channel post
+        can be a media group of up to 10 photos (a post is often pure media, no text).
+        Returns [{path, kind}] with kind 'image'|'audio'. Best-effort, capped.
+        """
+        if not post_id:
+            return []
+        msgs: List = []
+        try:
+            try:
+                group = await app.get_media_group(chat.id, post_id)
+                msgs = list(group)
+            except (ValueError, MsgIdInvalid):
+                one = await app.get_messages(chat.id, post_id)
+                if one:
+                    msgs = [one]
+        except Exception as e:
+            logger.debug("TelegramDriver [%s]: could not resolve media for post %s: %s",
+                         self.agent_id, post_id, e)
+            return []
+
+        items: List[dict] = []
+        tmpdir = tempfile.mkdtemp(prefix="media_")
+        for m in msgs[:MEDIA_DOWNLOAD_CAP]:
+            kind = self._media_kind(m)
+            if not kind:
+                continue
+            try:
+                path = await app.download_media(m, file_name=os.path.join(tmpdir, ""))
+            except Exception as e:
+                logger.debug("TelegramDriver [%s]: media download failed: %s", self.agent_id, e)
+                continue
+            if path:
+                items.append({"path": path, "kind": kind})
+        if not items:
+            try:
+                os.rmdir(tmpdir)
+            except OSError:
+                pass
+        return items
+
+    @staticmethod
+    def _cleanup_media(items: List[dict]) -> None:
+        dirs = set()
+        for it in items:
+            p = it.get("path")
+            if not p:
+                continue
+            dirs.add(os.path.dirname(p))
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        for d in dirs:
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+    async def _read_media_context(self, app: Client, chat, post_id: Optional[int],
+                                  target_url: str) -> str:
+        """Download the post's photos/audio and turn them into a text media-context
+        (HEIMDALL STT + Ollama VLM, via the media_reader). '' if there's no media."""
+        items = await self._download_media(app, chat, post_id)
+        if not items:
+            return ""
+        emit_event(self.agent_id, "reading_media",
+                   f"смотрит/слушает вложения поста ({len(items)})",
+                   status="active", target=target_url)
+        ctx = ""
+        try:
+            from app import media_reader
+            loop = asyncio.get_event_loop()
+            ctx = await loop.run_in_executor(None, media_reader.enrich, items)
+        except Exception as e:
+            logger.warning("TelegramDriver [%s]: media enrichment failed: %s", self.agent_id, e)
+        finally:
+            self._cleanup_media(items)
+        return ctx or ""
+
+    def read_media_context(self, channel_ref, post_id: Optional[int], target_url: str = "") -> str:
+        """
+        Open a session, resolve the post and "read" its media (photos→VLM,
+        audio→HEIMDALL) into a media-context string. Standalone + session-locked, so
+        the target engine can judge a caption-less media post for relevance by what's
+        actually in the photo/audio (and reuse the result as the comment's context).
+        """
+        if not post_id or not self._credentials_ok():
+            return ""
+        token = self._await_session_lock()
+        try:
+            return self._run(self._read_media_context_standalone(channel_ref, post_id, target_url))
+        except Exception as e:
+            logger.error("TelegramDriver [%s]: read_media_context failed: %s", self.agent_id, e)
+            return ""
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
+    async def _read_media_context_standalone(self, channel_ref, post_id, target_url: str) -> str:
+        ref = channel_ref
+        if isinstance(ref, str) and ref.lstrip("-").isdigit():
+            ref = int(ref)
+        app = self._build_client()
+        async with app:
+            try:
+                chat = await app.get_chat(ref)
+            except Exception as e:
+                logger.debug("TelegramDriver [%s]: media-ctx chat resolve failed for %s: %s",
+                             self.agent_id, channel_ref, e)
+                return ""
+            return await self._read_media_context(app, chat, post_id, target_url or str(channel_ref))
+
     def _credentials_ok(self) -> bool:
         if not self.session_string:
             logger.error("TelegramDriver: No session string in credentials for agent %s", self.agent_id)
@@ -280,7 +418,7 @@ class TelegramDriver:
         )
 
     async def _execute_comment_async(self, target_url: str, text: str, text_provider=None,
-                                     watch_meta: Optional[dict] = None) -> bool:
+                                     watch_meta: Optional[dict] = None, pre_media_context: str = "") -> bool:
         if not self._credentials_ok():
             return False
 
@@ -328,7 +466,18 @@ class TelegramDriver:
                 thread_context = await self._read_thread_context(
                     app, chat, post_id, dialogue_store.DIALOGUE_THREAD_CONTEXT_LIMIT
                 ) if is_channel else ""
-                final_text = await self._resolve_text(text, text_provider, context_text, thread_context, chat)
+                # "Read" the post's media (photos + audio) so the comment reacts to
+                # what's actually in the post, not just its text/caption. Reuse a
+                # context already read at scan time (caption-less media posts) instead
+                # of analyzing the media twice.
+                if pre_media_context:
+                    media_context = pre_media_context
+                elif is_channel:
+                    media_context = await self._read_media_context(app, chat, post_id, target_url)
+                else:
+                    media_context = ""
+                final_text = await self._resolve_text(
+                    text, text_provider, context_text, thread_context, media_context, chat)
                 if not final_text or not final_text.strip():
                     logger.error("TelegramDriver [%s]: no text to post.", self.agent_id)
                     return False
@@ -401,14 +550,14 @@ class TelegramDriver:
             logger.error("TelegramDriver [%s]: failed to register dialogue watch: %s", self.agent_id, e)
 
     def execute_comment(self, target_url: str, text: str, text_provider=None,
-                        watch_meta: Optional[dict] = None) -> bool:
+                        watch_meta: Optional[dict] = None, pre_media_context: str = "") -> bool:
         # Serialize all use of this agent's Telegram session (mission posting,
         # dialogue polling, scouting) behind a per-agent advisory lock so two
         # operations never drive the same AUTH_KEY simultaneously.
         token = self._await_session_lock()
         try:
             return self._run(
-                self._execute_comment_async(target_url, text, text_provider, watch_meta)
+                self._execute_comment_async(target_url, text, text_provider, watch_meta, pre_media_context)
             )
         finally:
             dialogue_store.release_session_lock(self.agent_id, token)
@@ -594,8 +743,12 @@ class TelegramDriver:
                         if since and m.id <= since:
                             continue
                         txt = (getattr(m, "text", None) or getattr(m, "caption", None) or "").strip()
-                        if txt:
-                            posts.append({"post_id": m.id, "text": txt})
+                        # Keep media posts too (a photo/voice post often has NO caption)
+                        # — otherwise they'd never reach the comment path and their media
+                        # would never get "read".
+                        has_media = self._media_kind(m) is not None
+                        if txt or has_media:
+                            posts.append({"post_id": m.id, "text": txt, "has_media": has_media})
                 except Exception as e:
                     logger.debug("TelegramDriver [%s]: cannot read history of %s: %s", self.agent_id, ref, e)
                     continue

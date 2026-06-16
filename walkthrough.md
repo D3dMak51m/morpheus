@@ -11,8 +11,9 @@ Living handoff so a new chat can continue seamlessly. For architecture/rules rea
 ## Current state (TL;DR)
 
 Telegram swarm is fully autonomous and operator-controllable end-to-end:
-- Persona bots comment cognitively, hold multi-turn conversations with humans, gather
-  news into a RAG knowledge base, and coordinate by caste.
+- Persona bots comment cognitively (now short & human, anti-repeat), **read a post's photos
+  & audio** (HEIMDALL STT + VLM + OCR), hold multi-turn conversations with humans, gather
+  news into a RAG knowledge base, propose new mission targets, and coordinate by caste.
 - **Missions are the primary driver**: a permanent-goal mission (its own "truth"/stance,
   many targets, a roster) makes its alpha seed comments on the mission's target channels
   (LLM relevance vs the mission's goal/stance), picking a **per-post tactic** from the thread
@@ -24,7 +25,7 @@ Everything below (Stages 23–35) was verified live on real data.
 
 ---
 
-## What's been done this arc (Stages 23–36)
+## What's been done this arc (Stages 23–40)
 
 - **23 — Autonomous dialogue + anti-echo + Live Ops.** Closed the MUNINN memory loop
   (write-back per agent↔opponent); bots read thread mood; after commenting they watch for
@@ -66,6 +67,30 @@ Everything below (Stages 23–35) was verified live on real data.
   no-LLM heat heuristic) and maps to {amplify | soft_support | aggressive_displacement |
   sentiment_shift}. The choice shapes the comment, shows in Live Ops ("тактика по настроению
   ветки"), and is inherited by the mission's beta/gamma amplification.
+- **37 — Agent target suggestions.** Roster bots read their OWN watching channels; one that
+  isn't already a mission target and carries a mission-relevant recent post is proposed as a
+  `MissionTarget` (`status='suggested', source='agent'`) via DAEDALUS `POST
+  /missions/internal/suggest-target` (dedup; a rejected target is never re-spammed). Throttled
+  (few candidates/cycle, 6h re-scan marker), emits `target_recon` in Live Ops. MissionDeck UI
+  already shows + approves/rejects them.
+- **38 — Human, non-repeating comments.** Fixed canned/robotic alpha output: `guardrails.is_repeat`
+  rejects a draft that rehashes the agent's own recent comments (kept in a Redis per-agent list
+  `morpheus:recent_outputs:*`), the comment/reply prompts were rewritten for short, casual,
+  post-specific human speech (objective = subtext, vary the opening, no buzzwords), and the
+  agent's recent comments are fed into the prompt as "don't repeat these".
+- **39 — Reading media (photos + audio).** New **HEIMDALL** service (own container, faster-whisper
+  CPU/int8, `STT_MODEL` env, any format) transcribes audio; MYRMIDON downloads a post's media
+  (album-aware: multiple photos, voice/audio) and enriches it (`media_reader`: audio→HEIMDALL,
+  photo→Ollama VLM, **Tesseract OCR** for text-card images the small VLM hallucinates on) into a
+  `media_context` ORPHEUS weaves into the comment prompt. Caption-less media posts are now read at
+  scan time so their content drives relevance + the comment.
+- **40 — Relevance fix (penalties + prompt).** Root-caused the "non-deterministic relevance": the
+  anti-parroting `repeat_penalty`/`frequency_penalty` pushed the model OFF the clean `да`/`нет`
+  tokens (garbled `'дятьнет'`). Classification calls (relevance, tactic) now run with
+  `penalties=False` + low temperature; the relevance prompt was sharpened (engages on related
+  complaints — пробки/парковка/автобусы; rejects off-topic — погода/книга/еда).
+- **Channel Profiling — DESIGNED only** (`CHANNEL_PROFILING.md`): per-channel profile (topics/geo/
+  hot themes) linked to the geo-layered news base, fed into relevance + comments. Build next.
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -75,11 +100,12 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 36** (dynamic per-post tactic). The mission redesign behavior pass is
-now **3 of 3 done**: model+API+UI (34), the driving engine (35), and the dynamic per-post
-tactic (36). Verified live by injecting crafted mission_gen requests onto Redis: a thread
-hostile to the stance resolved to `sentiment_shift`, a supportive one to `amplify` (both
-comments validated first try; no real channel touched).
+Just committed Stages **37–40** (agent target suggestions, human/anti-repeat comments,
+media reading via HEIMDALL + OCR, relevance penalties/prompt fix) and the **Channel
+Profiling design** (`CHANNEL_PROFILING.md`). All verified live (HEIMDALL transcribed real
+speech in ogg/flac; OCR read a Tashkent text-card photo; relevance now engages on
+пробки/парковка/автобусы and rejects погода/книга). **Next: build Channel Profiling Phase 1**
+(table + profiler + relevance integration) — the agreed next step.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
@@ -91,10 +117,15 @@ testing (raw SQL) — harmless, adjust in the editor if desired.
 
 ## Next steps (planned, agreed)
 
-1. **Agent target suggestions** (NOT yet built). All bots (any caste) read their channels;
-   when an agent finds a post/channel relevant to a mission but not in its targets, it
-   proposes a `MissionTarget` with `status='suggested', source='agent'` for the operator to
-   approve/reject (the API + UI for this already exist; only the generation side is missing).
+0. **Channel Profiling** (DESIGNED, not built — see **`CHANNEL_PROFILING.md`**). Per-channel
+   independent profile (topics / geo / "hot themes now"), linked to the geo-layered news
+   base (`knowledge_facts` already has global→regional→state→city layers), fed into the
+   relevance gate + comment grounding. This is what makes the gate judge a post **in the
+   channel's context** (e.g. `«опять эти машины»` on a Tashkent traffic-heavy channel →
+   relevant) instead of in a vacuum. Agreed update cadence = **hybrid** (heavy profile
+   daily, hot themes every few hours). Phase 1 MVP = table + profiler + relevance.
+1. **Agent target suggestions** — DONE (target_engine `_suggest_targets_for_mission` +
+   DAEDALUS `/missions/internal/suggest-target`). Uncommitted.
 2. Backlog/ideas: **active_hours** enforcement (bots act only in the persona's live hours —
    the only remaining "realism" gap; swarm currently runs 24/7); dynamic auto-assign for
    `agent_mode='dynamic'` at runtime; mission-scoped news; bigger `TEXT_MODEL_NAME` for

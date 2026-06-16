@@ -9,9 +9,10 @@ operator to approve/reject. Per-post tactic is chosen dynamically at runtime.
 """
 
 import logging
+import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,8 @@ from app.rbac import require_permission
 from app import mission_control
 
 logger = logging.getLogger("daedalus.router_missions")
+
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 
 router = APIRouter(prefix="/api/v1/missions", tags=["Mission Deck"])
 
@@ -356,6 +359,62 @@ def delete_target(
         db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
+
+
+# ── Agent-proposed targets (internal: called by MYRMIDON) ────────────────────
+
+class SuggestTargetRequest(BaseModel):
+    mission_id: int
+    identifier: str = Field(..., min_length=1, description="@username / t.me url / chat_id")
+    kind: str = Field("channel", description="channel | post")
+    title: Optional[str] = None
+    proposed_by: Optional[str] = Field(None, description="agent_id that found it")
+    reason: Optional[str] = Field(None, description="why it's relevant (e.g. a post snippet)")
+
+
+@router.post("/internal/suggest-target")
+def suggest_target(
+    request: SuggestTargetRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    An agent (any caste, via MYRMIDON) proposes a channel/post it reads as a new
+    target for an active mission. Stored as ``status='suggested', source='agent'``
+    for the operator to approve/reject in the Mission Deck. Idempotent: if the
+    identifier already exists on the mission (any status — including a prior
+    ``rejected``), it is left untouched so agents never re-spam a declined target.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    if request.kind not in VALID_KIND:
+        raise HTTPException(status_code=400, detail=f"Invalid kind. Allowed: {list(VALID_KIND)}")
+
+    mission = db.query(Mission).filter(Mission.id == request.mission_id).first()
+    if not mission:
+        return {"status": "skipped", "reason": "mission_not_found"}
+    if mission.status != "active":
+        return {"status": "skipped", "reason": "mission_not_active"}
+
+    ident = request.identifier.strip()
+    existing = db.query(MissionTarget).filter(
+        MissionTarget.mission_id == request.mission_id,
+        MissionTarget.identifier == ident,
+    ).first()
+    if existing:
+        return {"status": "exists", "target_status": existing.status}
+
+    target = MissionTarget(
+        mission_id=request.mission_id, kind=request.kind, identifier=ident,
+        title=request.title, status="suggested", source="agent",
+        proposed_by=request.proposed_by, reason=request.reason,
+    )
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    logger.info("Mission %s — agent %s suggested target '%s' (target %s).",
+                request.mission_id, request.proposed_by, ident, target.id)
+    return {"status": "created", "target_id": target.id}
 
 
 # ── Squad management ─────────────────────────────────────────────────────────

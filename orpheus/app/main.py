@@ -65,6 +65,13 @@ MAX_REGENERATION_ATTEMPTS = 2
 # Mission/reply path retries more: a weak LLM needs several tries to stop echoing.
 MISSION_REGEN_ATTEMPTS = int(os.getenv("MISSION_REGEN_ATTEMPTS", "4"))
 
+# Anti-repeat: a short per-agent history of the comments it actually posted, so the
+# next generation can be told NOT to reuse the same openings / phrasing / talking
+# points (the main thing that makes the bot read as a canned robot).
+RECENT_OUTPUTS_KEY = "morpheus:recent_outputs:"
+RECENT_OUTPUTS_MAX = int(os.getenv("RECENT_OUTPUTS_MAX", "8"))
+RECENT_OUTPUTS_TTL = int(os.getenv("RECENT_OUTPUTS_TTL_SEC", str(7 * 24 * 3600)))
+
 # ── Graceful shutdown ─────────────────────────────────────────────────────
 
 _shutdown_requested = False
@@ -125,18 +132,24 @@ def connect_redis(max_retries: int = 10, retry_delay: float = 3.0) -> redis.Redi
 
 # ── Text Generation (LLM) ─────────────────────────────────────────────────
 
-def generate_text(prompt: str, max_tokens: Optional[int] = None) -> str:
+def generate_text(prompt: str, max_tokens: Optional[int] = None,
+                  temperature: Optional[float] = None, penalties: bool = True) -> str:
     """Sends the assembled prompt to Ollama's Text LLM with keep_alive=0.
-    ``max_tokens`` caps output length (used by the cheap beta 'lite' path)."""
+    ``max_tokens`` caps output length (used by the cheap beta 'lite' path);
+    ``temperature`` overrides the default. Set ``penalties=False`` for short
+    CLASSIFICATION calls (YES/NO relevance, tactic word): the anti-parroting
+    repeat/frequency penalties otherwise push the model OFF the clean answer tokens
+    ('да'/'нет') and produce garbled output like 'дятьнет'."""
     logger.info("Querying Text LLM (%s)...", TEXT_MODEL_NAME)
     try:
         options = {
-            "temperature": 0.8,
+            "temperature": 0.8 if temperature is None else temperature,
             "top_p": 0.9,
-            # Discourage the model from parroting the prompt / its own tokens.
-            "repeat_penalty": 1.3,
-            "frequency_penalty": 0.5,
         }
+        if penalties:
+            # Discourage the model from parroting the prompt / its own tokens.
+            options["repeat_penalty"] = 1.3
+            options["frequency_penalty"] = 0.5
         if max_tokens:
             options["num_predict"] = max_tokens
         payload = {
@@ -183,6 +196,27 @@ def _persist_dialog_memory(persona_engine, req: dict, final_text: str) -> None:
         logger.error("Failed to persist dialog memory: %s", exc)
 
 
+def _recent_outputs(redis_client, agent_id: str) -> list:
+    """The agent's last few posted comments (newest first) — for anti-repeat."""
+    try:
+        return redis_client.lrange(RECENT_OUTPUTS_KEY + agent_id, 0, RECENT_OUTPUTS_MAX - 1) or []
+    except Exception:
+        return []
+
+
+def _remember_output(redis_client, agent_id: str, text: str) -> None:
+    """Record a comment the agent just produced so it won't rehash it next time."""
+    if not (text or "").strip():
+        return
+    try:
+        k = RECENT_OUTPUTS_KEY + agent_id
+        redis_client.lpush(k, text.strip())
+        redis_client.ltrim(k, 0, RECENT_OUTPUTS_MAX - 1)
+        redis_client.expire(k, RECENT_OUTPUTS_TTL)
+    except Exception:
+        pass
+
+
 def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     """
     Cheap LLM relevance gate for the target engine: given the agent's mission +
@@ -202,11 +236,14 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
         if m_goal or m_stance:
             prompt = (
                 f"Миссия продвигает: {m_goal[:250]}\n"
-                f"Наша позиция: {m_stance[:250]}\n\n"
-                f"Пост в обсуждении: \"{post_text[:400]}\"\n\n"
-                "Касается ли пост темы миссии ИЛИ проблемы, которую миссия решает "
-                "(прямо или косвенно)? Если да и уместно высказаться в духе позиции — "
-                "ответь ДА. Если пост совсем о другом — НЕТ. Одно слово: ДА или НЕТ."
+                f"Позиция: {m_stance[:250]}\n\n"
+                f"Сообщение: \"{post_text[:400]}\"\n\n"
+                "Реши, стоит ли стороннику миссии вступить в обсуждение. Ответь ДА, если "
+                "сообщение хоть как-то связано с темой миссии, с проблемой, которую она решает, "
+                "или с её причинами/последствиями — даже косвенно, эмоционально, как жалоба, "
+                "мнение или новость. Ответь НЕТ, если сообщение про совершенно другую тему или "
+                "сферу (другой товар, книга, технология, программирование, еда, погода, спорт, "
+                "реклама, объявление, личное). Одно слово: ДА или НЕТ."
             )
         else:
             mission = profile.get("core_mission") or ""
@@ -222,7 +259,7 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
                 "исходя из своих интересов или профессии? Даже косвенная связь считается «да». "
                 "Ответь СТРОГО одним словом: ДА или НЕТ."
             )
-        answer = generate_text(prompt, max_tokens=5).strip().lower()
+        answer = generate_text(prompt, max_tokens=5, temperature=0.2, penalties=False).strip().lower()
         result["relevant"] = ("да" in answer) or ("yes" in answer) or answer.startswith("1")
         logger.info("Relevance %s agent=%s → %s (%r)", req.get("request_id"), agent_id,
                     result["relevant"], answer[:20])
@@ -256,7 +293,7 @@ def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
         return "soft_support"  # no signal to read → gentle default, skip the LLM call
     raw = generate_text(
         build_mood_prompt((req.get("stance") or "").strip(), thread, post_text),
-        max_tokens=6,
+        max_tokens=6, temperature=0.2, penalties=False,
     )
     return tactic_from_mood(raw, post_text, thread)
 
@@ -308,6 +345,12 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                        "тактика по настроению ветки: " + TACTIC_LABELS_RU.get(chosen_tactic, chosen_tactic),
                        status="info", target=req.get("target_url") or req.get("author") or "")
 
+        # Anti-repeat: load the agent's own recent comments, feed them into the
+        # prompt, and (alpha path) reject drafts that just rehash them.
+        lite = bool(req.get("lite"))
+        recent_self = [] if lite else _recent_outputs(redis_client, agent_id)
+        req["recent_self"] = recent_self
+
         prompt = persona_engine.assemble_mission_prompt(agent_id, req)
         if not prompt:
             result["reason"] = "profile_not_found"
@@ -315,7 +358,6 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
             # Echo references: reject replies that just parrot the human/post back.
             echo_refs = [req.get("incoming_text") or "", req.get("post_text") or ""]
             # Beta 'lite' = cheaper: shorter output, fewer retries.
-            lite = bool(req.get("lite"))
             attempts_cap = 2 if lite else MISSION_REGEN_ATTEMPTS
             gen_max_tokens = 90 if lite else None
             final_text = ""
@@ -324,6 +366,8 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                 ok, reason = guardrails.validate_output(generated)
                 if ok and guardrails.is_echo(generated, echo_refs):
                     ok, reason = False, "reply echoes/repeats the incoming message"
+                if ok and recent_self and guardrails.is_repeat(generated, recent_self):
+                    ok, reason = False, "repeats the agent's own recent comments"
                 if ok:
                     final_text = generated
                     logger.info("Mission-gen %s — validated on attempt %d (%d chars).", request_id, attempt, len(final_text))
@@ -348,6 +392,7 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                            ("готов ответ: " if is_reply else "готов комментарий: ") + final_text[:60],
                            status="ok", target=req.get("author") or "")
                 _persist_dialog_memory(persona_engine, req, final_text)
+                _remember_output(redis_client, agent_id, final_text)
             else:
                 result["reason"] = "guardrails_failed"
     except Exception as exc:

@@ -284,12 +284,14 @@ def _get_gen_redis() -> redis.Redis:
     return _gen_redis_client
 
 
-def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread_context: str = "") -> str:
+def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread_context: str = "",
+                                 media_context: str = "") -> str:
     """
     Ask ORPHEUS to write a real comment from the post context, the *mood of the
-    discussion thread*, and the mission's persona/role/tactic/objective (+
-    ORPHEUS-side RAG knowledge & memory). Blocking request/reply over Redis.
-    Returns '' on timeout/failure so the caller can fall back to deterministic text.
+    discussion thread*, the *media context* (what the post's photos show / audio
+    says), and the mission's persona/role/tactic/objective (+ ORPHEUS-side RAG
+    knowledge & memory). Blocking request/reply over Redis. Returns '' on
+    timeout/failure so the caller can fall back to deterministic text.
     """
     request_id = str(uuid.uuid4())
     reply_key = f"reply:missiongen:{request_id}"
@@ -303,6 +305,7 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "post_text": post_text or "",
         "author": author or "",
         "thread_context": thread_context or "",
+        "media_context": media_context or "",
         "narrative_goal": task.get("narrative_goal") or "",
         "stance": task.get("stance") or "",
         "tactic": task.get("tactic") or "soft_support",
@@ -440,8 +443,8 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
         gen_holder = {"text": ""}
         text_provider = None
         if task.get("generate"):
-            def text_provider(post_text, author, thread_context=""):
-                t = generate_comment_via_orpheus(task, post_text, author, thread_context)
+            def text_provider(post_text, author, thread_context="", media_context=""):
+                t = generate_comment_via_orpheus(task, post_text, author, thread_context, media_context)
                 gen_holder["text"] = t or ""
                 return t
 
@@ -454,7 +457,8 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
         }
 
         success = driver.execute_comment(
-            target_url, text_to_publish, text_provider=text_provider, watch_meta=watch_meta
+            target_url, text_to_publish, text_provider=text_provider, watch_meta=watch_meta,
+            pre_media_context=task.get("media_context") or "",
         )
 
         if success:

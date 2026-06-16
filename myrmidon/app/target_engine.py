@@ -24,6 +24,7 @@ Safety rails (anti-spam):
 import json
 import logging
 import os
+import random
 import threading
 import time
 import uuid
@@ -51,6 +52,14 @@ NEWS_MAX_PER_CYCLE = int(os.getenv("TARGET_NEWS_MAX_PER_CYCLE", "20"))
 # How many of the newest new posts per mission channel to LLM-relevance-check.
 MISSION_RELEVANCE_CHECK = int(os.getenv("MISSION_RELEVANCE_CHECK", "3"))
 
+# Agent-proposed targets: how many fresh candidate channels per mission to scan per
+# cycle, how many recent posts to relevance-check, and how long to wait before
+# re-scanning a candidate that didn't pan out (so it isn't re-read every tick).
+SUGGEST_MAX_CANDIDATES = int(os.getenv("SUGGEST_MAX_CANDIDATES_PER_MISSION", "3"))
+SUGGEST_POSTS_PER_CHANNEL = int(os.getenv("SUGGEST_POSTS_PER_CHANNEL", "3"))
+SUGGEST_RELEVANCE_CHECK = int(os.getenv("SUGGEST_RELEVANCE_CHECK", "2"))
+SUGGEST_RECHECK_SEC = int(os.getenv("SUGGEST_RECHECK_SEC", "21600"))  # 6h
+
 TARGET_POLL_INTERVAL_SEC = int(os.getenv("TARGET_POLL_INTERVAL_SEC", "300"))
 MAX_PER_CHANNEL_PER_HOUR = int(os.getenv("TARGET_MAX_PER_CHANNEL_PER_HOUR", "1"))
 # Global cap across ALL channels for one agent — so the swarm never looks like a
@@ -62,6 +71,7 @@ EXEC_DELAY_SEC = int(os.getenv("TARGET_EXEC_DELAY_SEC", "30"))
 
 LASTSEEN_KEY = "morpheus:target:lastseen"     # hash field "<agent>:<chat>" -> post id
 RATE_PREFIX = "morpheus:target:rate:"          # per agent:chat hourly counter
+SUGGEST_CHECKED_PREFIX = "morpheus:suggest:checked:"  # "<mid>:<ident>" -> recently scanned
 
 _redis: Optional[redis.Redis] = None
 _gen_redis: Optional[redis.Redis] = None
@@ -265,7 +275,8 @@ def _post_url(username: Optional[str], chat_id: str, post_id: int) -> str:
 
 
 def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
-                     stance: str, tactic: str, mission_id: int, channel_label: str) -> None:
+                     stance: str, tactic: str, mission_id: int, channel_label: str,
+                     media_context: str = "") -> None:
     task = {
         "task_id": str(uuid.uuid4()),
         "agent_id": agent_id,
@@ -279,6 +290,9 @@ def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
         "tactic": tactic or "soft_support",
         "role": "alpha",
         "mission_id": mission_id,
+        # Media already "read" at scan time (caption-less photo/voice posts) — passed
+        # through so the comment path doesn't re-analyze it.
+        "media_context": media_context or "",
         "execution_delay_sec": EXEC_DELAY_SEC,
         "source": "mission_engine",
         "swarm_seed": True,   # alpha seed → mission's beta/gamma amplify after it posts
@@ -348,19 +362,33 @@ def _process_mission(mission: dict, sf) -> None:
         # Check the few newest new posts (not just the latest) for one relevant to
         # the mission — bounded so the LLM relevance load stays small.
         chosen = None
+        chosen_media = ""
         for cand in posts[:MISSION_RELEVANCE_CHECK]:
-            v = _relevance_via_orpheus(seeder, cand["text"], goal=mission["goal"], stance=mission["stance"])
+            ctext = (cand.get("text") or "").strip()
+            media_ctx = ""
+            # Media-dominant post (caption-less or near-empty): "read" the photo/audio
+            # first, so relevance — and the comment — are grounded in the media content
+            # instead of the post being silently skipped.
+            if cand.get("has_media") and len(ctext) < 30:
+                media_ctx = driver.read_media_context(
+                    ident, cand["post_id"], _mission_post_url(ident, cand["post_id"]))
+            judge_text = (ctext + ("\n" + media_ctx if media_ctx else "")).strip()
+            if not judge_text:
+                continue  # unreadable media / download failed — nothing to judge on
+            v = _relevance_via_orpheus(seeder, judge_text, goal=mission["goal"], stance=mission["stance"])
             if v is None:
                 v = True  # mission target channel → engage if LLM unavailable
             if v:
                 chosen = cand
+                chosen_media = media_ctx
                 break
         if not chosen:
             continue
         if not _allow_rate(f"mission_{mid}", ident):
             continue
         _enqueue_comment(seeder, _mission_post_url(ident, chosen["post_id"]), chosen["text"],
-                         mission["goal"], mission["stance"], mission["tactic"], mid, label_by_id.get(ident, ident))
+                         mission["goal"], mission["stance"], mission["tactic"], mid,
+                         label_by_id.get(ident, ident), media_context=chosen_media)
 
 
 def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:
@@ -403,6 +431,154 @@ def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:
                        status="ok", target=channel.get("username") or cid)
 
 
+# ── Agent-proposed targets ───────────────────────────────────────────────────
+
+def _norm_ident(ident: str) -> str:
+    """Normalize a channel identifier for dedup comparison (@user / t.me url / id)."""
+    s = (ident or "").strip().lower()
+    for pref in ("https://t.me/", "http://t.me/", "t.me/"):
+        if s.startswith(pref):
+            s = s[len(pref):]
+            break
+    s = s.lstrip("@").strip("/")
+    if "/" in s and not s.startswith("c/"):
+        s = s.split("/")[0]  # drop a trailing /<post_id>, keep the channel part
+    return s
+
+
+def _suggest_target(mission_id: int, identifier: str, title: str, proposed_by: str,
+                    reason: str, kind: str = "channel") -> bool:
+    """POST an agent-proposed target to DAEDALUS (status=suggested). True if created."""
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                f"{DAEDALUS_URL}/api/v1/missions/internal/suggest-target",
+                json={"mission_id": mission_id, "identifier": identifier, "kind": kind,
+                      "title": title, "proposed_by": proposed_by, "reason": reason},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+            resp.raise_for_status()
+            return resp.json().get("status") == "created"
+    except Exception as exc:
+        logger.warning("suggest_engine: suggest-target failed: %s", exc)
+        return False
+
+
+def _mission_target_idents(sf, mid: int) -> set[str]:
+    """All identifiers already on the mission (any status) — normalized, for dedup."""
+    session = sf()
+    try:
+        rows = session.execute(
+            text("SELECT identifier FROM mission_targets WHERE mission_id=:m"), {"m": mid}
+        ).fetchall()
+    except Exception:
+        return set()
+    finally:
+        session.close()
+    return {_norm_ident(r[0]) for r in rows}
+
+
+def _roster_candidate_channels(sf, mid: int) -> list[dict]:
+    """Watching target/news channels of the mission roster's active agents."""
+    session = sf()
+    try:
+        rows = session.execute(text(
+            "SELECT DISTINCT p.agent_id, p.chat_id, p.username, p.title "
+            "FROM agent_channel_prefs p "
+            "JOIN mission_squads s ON s.agent_id = p.agent_id "
+            "JOIN agent_profiles a ON a.agent_id = p.agent_id "
+            "WHERE s.mission_id=:m AND p.watching=true AND p.role IN ('target','news') "
+            "AND a.status='active'"
+        ), {"m": mid}).fetchall()
+    except Exception as exc:
+        logger.error("suggest_engine: candidate query failed: %s", exc)
+        return []
+    finally:
+        session.close()
+    return [{"agent_id": a, "chat_id": str(c), "username": u, "title": t} for a, c, u, t in rows]
+
+
+def _suggest_targets_for_mission(mission: dict, sf) -> None:
+    """
+    Roster agents read their OWN channels; any channel relevant to the mission that
+    isn't already a target is proposed (status=suggested, source=agent) for the
+    operator to approve. Throttled: a few fresh candidates per cycle, each re-scanned
+    at most once per ``SUGGEST_RECHECK_SEC``; already-present/rejected channels are
+    skipped (the API also dedups, so a declined target is never re-spammed).
+    """
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+    from app import account_health
+
+    mid = mission["id"]
+    existing = _mission_target_idents(sf, mid)
+    r = _get_redis()
+
+    candidates = []
+    for ch in _roster_candidate_channels(sf, mid):
+        username = ch.get("username")
+        ident = f"@{username}" if username else ch["chat_id"]
+        norm = _norm_ident(ident)
+        if norm in existing:
+            continue
+        checked_key = f"{SUGGEST_CHECKED_PREFIX}{mid}:{norm}"
+        if r.get(checked_key):
+            continue
+        ch["ident"] = ident
+        ch["checked_key"] = checked_key
+        candidates.append(ch)
+
+    if not candidates:
+        return
+    random.shuffle(candidates)
+    candidates = candidates[:SUGGEST_MAX_CANDIDATES]
+
+    # Group by agent so each Telegram session opens once.
+    by_agent: dict[str, list[dict]] = defaultdict(list)
+    for c in candidates:
+        by_agent[c["agent_id"]].append(c)
+
+    for agent_id, chans in by_agent.items():
+        if account_health.in_cooldown(agent_id):
+            continue
+        creds = get_agent_credentials(sf, agent_id, "telegram")
+        if creds is None:
+            continue
+        emit_event(agent_id, "target_recon",
+                   f"ищет новые цели для «{mission['title'][:25]}»: {len(chans)} канал(ов)",
+                   status="info", target="telegram")
+        fetch_list = [{"chat_id": c["ident"], "username": c.get("username") or None} for c in chans]
+        since_map = {c["ident"]: 0 for c in chans}  # read the latest posts, not "new only"
+        driver = TelegramDriver(agent_id, creds)
+        results = driver.fetch_new_posts(fetch_list, since_map, SUGGEST_POSTS_PER_CHANNEL)
+        res_by_id = {res["chat_id"]: res for res in results}
+        for c in chans:
+            # Mark scanned regardless of outcome (anti-rescan / anti-spam).
+            r.set(c["checked_key"], "1", ex=SUGGEST_RECHECK_SEC)
+            res = res_by_id.get(c["ident"])
+            if not res or not res["posts"]:
+                continue
+            posts = sorted(res["posts"], key=lambda p: p["post_id"], reverse=True)
+            hit = None
+            for cand in posts[:SUGGEST_RELEVANCE_CHECK]:
+                # Conservative: only propose on a positive verdict (None/False → skip),
+                # since this channel is NOT yet a mission target.
+                if _relevance_via_orpheus(agent_id, cand["text"], goal=mission["goal"],
+                                          stance=mission["stance"]):
+                    hit = cand
+                    break
+            if not hit:
+                continue
+            title = c.get("title") or c["ident"]
+            reason = f"Свежий пост в тему миссии: «{hit['text'][:120]}»"
+            if _suggest_target(mid, c["ident"], title, agent_id, reason):
+                emit_event(agent_id, "target_suggest",
+                           f"предложил канал {title[:30]} в миссию «{mission['title'][:25]}»",
+                           status="ok", target=c["ident"])
+                logger.info("suggest_engine: agent=%s proposed %s for mission %s",
+                            agent_id, c["ident"], mid)
+
+
 def _poll_once(sf) -> None:
     # 1) Mission-driven commenting (missions are the primary driver).
     for mission in _active_missions(sf):
@@ -410,6 +586,12 @@ def _poll_once(sf) -> None:
             _process_mission(mission, sf)
         except Exception as exc:
             logger.error("mission_engine: mission %s failed: %s", mission.get("id"), exc)
+        # 1b) Agent-proposed targets: roster bots read their own channels and propose
+        # mission-relevant ones the operator hasn't added yet (status=suggested).
+        try:
+            _suggest_targets_for_mission(mission, sf)
+        except Exception as exc:
+            logger.error("suggest_engine: mission %s failed: %s", mission.get("id"), exc)
     # 2) News ingest (knowledge gathering, per agent).
     for agent_id, channels in _news_channels_by_agent(sf).items():
         try:
