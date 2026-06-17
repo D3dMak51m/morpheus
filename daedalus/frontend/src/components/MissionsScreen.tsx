@@ -1,0 +1,321 @@
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Box, Group, Stack, Title, Text, Badge, Button, Paper, Tabs, TextInput, Textarea, Select,
+  NumberInput, ActionIcon, SimpleGrid,
+} from '@mantine/core';
+import { Target, Plus, Play, Pause, Trash2, Check, X, Trash, Sparkles, UserPlus } from 'lucide-react';
+import { DataView, Col } from '../ui/DataView';
+import { DetailPage } from '../ui/DetailPage';
+import { EntityPicker } from '../ui/EntityPicker';
+
+interface SquadMember { id: number; agent_id: string; assigned_role: string; status: string; codename?: string | null; }
+interface MTarget { id: number; kind: string; identifier: string; title: string | null; status: string; source: string; proposed_by: string | null; reason: string | null; }
+interface Mission {
+  id: number; title: string; platform: string; narrative_goal: string | null; stance: string | null;
+  tactic: string; status: string; agent_mode: string; dynamic_count: number; forced_context: string | null;
+  squad: SquadMember[]; targets: MTarget[];
+  summary: { status_label: string; agents: Record<string, number>; targets: Record<string, number> };
+}
+interface EligibleAgent { agent_id: string; codename: string | null; caste: string; status: string; active_mission_load: number; at_capacity: boolean; already_enlisted: boolean; match_score: number; match_reasons: string[]; }
+
+export interface MissionPrefill { target_url: string; title: string; narrative_goal: string; }
+interface Props {
+  token: string; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void;
+  prefill?: MissionPrefill | null; onPrefillConsumed?: () => void;
+}
+
+const TACTICS = [
+  { value: 'dynamic', label: 'Динамическая (по ситуации)' },
+  { value: 'soft_support', label: 'Мягкая поддержка' },
+  { value: 'aggressive_displacement', label: 'Жёсткое вытеснение' },
+];
+const ROLE_COLOR: Record<string, string> = { alpha: 'red', beta: 'blue', gamma: 'green' };
+const inferKind = (id: string) => (/\/\d+\/?$/.test(id) ? 'post' : 'channel');
+
+export default function MissionsScreen({ token, selectedId, onOpen, onBack, prefill, onPrefillConsumed }: Props) {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const fetchMissions = useCallback(async () => {
+    setLoading(true);
+    try { const r = await fetch('/api/v1/missions', { headers }); if (r.ok) { setMissions(await r.json()); setError(''); } }
+    catch (e: any) { setError(e.message || 'Не удалось загрузить миссии'); }
+    finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { fetchMissions(); }, [fetchMissions]);
+
+  // ScoutingRadar "convert" prefill → open the create form prefilled.
+  useEffect(() => {
+    if (prefill) { onOpen('new'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
+
+  const setStatus = async (m: Mission, status: string) => {
+    const r = await fetch(`/api/v1/missions/${m.id}/status`, { method: 'POST', headers, body: JSON.stringify({ status }) });
+    if (r.ok) { const u = await r.json(); setMissions(prev => prev.map(x => x.id === u.id ? u : x)); }
+  };
+
+  if (selectedId === 'new') {
+    return <MissionCreate token={token} prefill={prefill || null} onCreated={() => { onPrefillConsumed?.(); fetchMissions(); }} onBack={() => { onPrefillConsumed?.(); onBack(); }} onOpen={onOpen} />;
+  }
+  if (selectedId) {
+    const m = missions.find(x => String(x.id) === selectedId);
+    if (!m) return <DetailPage onBack={onBack} title="Загрузка…" subtitle={selectedId}><Text c="dimmed">Миссия загружается…</Text></DetailPage>;
+    return <MissionDetail key={m.id} token={token} mission={m} onBack={onBack}
+      onChanged={(u) => setMissions(prev => prev.map(x => x.id === u.id ? u : x))}
+      onStatus={setStatus} onDeleted={() => { fetchMissions(); onBack(); }} />;
+  }
+
+  const columns: Col<Mission>[] = [
+    { key: 'title', header: 'Миссия', minWidth: 320, sortValue: m => m.title.toLowerCase(),
+      render: m => (<Stack gap={2}><Text fw={600}>{m.title}</Text>{m.narrative_goal && <Text size="xs" c="dimmed" lineClamp={1}>🎯 {m.narrative_goal}</Text>}</Stack>) },
+    { key: 'status', header: 'Статус', minWidth: 120, sortValue: m => m.status,
+      render: m => <Badge color={m.status === 'active' ? 'teal' : 'orange'} variant="light">{m.summary.status_label}</Badge> },
+    { key: 'agents', header: 'Агенты', minWidth: 90, align: 'right', sortValue: m => m.summary.agents.total || 0,
+      render: m => m.summary.agents.total || 0 },
+    { key: 'targets', header: 'Цели', minWidth: 120, align: 'right', sortValue: m => m.summary.targets.active || 0,
+      render: m => (<Group gap={6} justify="flex-end">{m.summary.targets.active || 0}
+        {(m.summary.targets.suggested || 0) > 0 && <Badge size="xs" color="yellow" variant="light">⏳{m.summary.targets.suggested}</Badge>}</Group>) },
+    { key: 'tactic', header: 'Тактика', minWidth: 160, render: m => TACTICS.find(t => t.value === m.tactic)?.label || m.tactic },
+  ];
+
+  return (
+    <Box p="lg">
+      <Group justify="space-between" mb="xs">
+        <div>
+          <Title order={2}><Target size={22} style={{ verticalAlign: -4 }} /> Миссии</Title>
+          <Text size="sm" c="dimmed">Постоянные цели роя — нажмите на строку, чтобы открыть карточку миссии (цели, агенты, параметры).</Text>
+        </div>
+        <Button leftSection={<Plus size={16} />} onClick={() => onOpen('new')}>Новая миссия</Button>
+      </Group>
+      {error && <Text c="red" mb="sm">{error}</Text>}
+      <DataView
+        columns={columns} rows={missions} rowKey={m => m.id} loading={loading}
+        searchText={m => `${m.title} ${m.narrative_goal || ''} ${m.stance || ''}`}
+        searchPlaceholder="🔍 Поиск по названию, цели, позиции…"
+        emptyText="Миссий пока нет — создайте новую."
+        onRowClick={m => onOpen(String(m.id))}
+      />
+    </Box>
+  );
+}
+
+// ── Create ──
+function MissionCreate({ token, prefill, onCreated, onBack, onOpen }: {
+  token: string; prefill: MissionPrefill | null; onCreated: () => void; onBack: () => void; onOpen: (id: string) => void;
+}) {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const [title, setTitle] = useState(prefill?.title || '');
+  const [goal, setGoal] = useState(prefill?.narrative_goal || '');
+  const [stance, setStance] = useState('');
+  const [tactic, setTactic] = useState('dynamic');
+  const [mode, setMode] = useState('manual');
+  const [count, setCount] = useState(3);
+  const [targets, setTargets] = useState(prefill?.target_url || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const create = async () => {
+    setSaving(true); setError('');
+    const tlist = targets.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).map(id => ({ identifier: id, kind: inferKind(id) }));
+    try {
+      const r = await fetch('/api/v1/missions', { method: 'POST', headers, body: JSON.stringify({ title, narrative_goal: goal, stance, tactic, agent_mode: mode, dynamic_count: count, targets: tlist }) });
+      if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.detail || `HTTP ${r.status}`); }
+      const m = await r.json();
+      onCreated();
+      onOpen(String(m.id));
+    } catch (e: any) { setError(e.message || 'Не удалось создать миссию'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <DetailPage onBack={onBack} title="Новая миссия"
+      footer={<>{error && <Text c="red" size="sm" mr="auto">{error}</Text>}<Button variant="default" onClick={onBack}>Отмена</Button><Button loading={saving} disabled={!title.trim()} onClick={create}>Создать</Button></>}>
+      <Stack gap="md" maw={720}>
+        <TextInput label="Название" value={title} onChange={e => setTitle(e.currentTarget.value)} placeholder="напр. Поддержка общественного транспорта" />
+        <Textarea label="Цель (что продвигать)" autosize minRows={2} value={goal} onChange={e => setGoal(e.currentTarget.value)} placeholder="Продвигать развитие и финансирование общественного транспорта." />
+        <Textarea label="«Правда» / сторона / видение" autosize minRows={3} value={stance} onChange={e => setStance(e.currentTarget.value)} placeholder="Мировоззрение миссии: за что стоим — этим агенты руководствуются в спорах." />
+        <Group grow>
+          <Select label="Тактика по умолчанию" data={TACTICS} value={tactic} onChange={v => v && setTactic(v)} />
+          <Select label="Набор агентов" data={[{ value: 'manual', label: 'вручную' }, { value: 'dynamic', label: 'динамически' }]} value={mode} onChange={v => v && setMode(v)} />
+          {mode === 'dynamic' && <NumberInput label="Сколько" min={0} max={50} value={count} onChange={v => setCount(Number(v) || 0)} />}
+        </Group>
+        <Textarea label="Цели (каналы/посты, по одному в строке)" autosize minRows={3} value={targets} onChange={e => setTargets(e.currentTarget.value)} placeholder={'@tashkent_news333\nhttps://t.me/somechannel/123'} />
+      </Stack>
+    </DetailPage>
+  );
+}
+
+// ── Detail ──
+function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted }: {
+  token: string; mission: Mission; onBack: () => void; onChanged: (m: Mission) => void;
+  onStatus: (m: Mission, s: string) => void; onDeleted: () => void;
+}) {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const [m, setM] = useState<Mission>(mission);
+  const [title, setTitle] = useState(m.title);
+  const [goal, setGoal] = useState(m.narrative_goal || '');
+  const [stance, setStance] = useState(m.stance || '');
+  const [tactic, setTactic] = useState(m.tactic);
+  const [newTarget, setNewTarget] = useState('');
+  const [eligible, setEligible] = useState<EligibleAgent[]>([]);
+  const [pickAgent, setPickAgent] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const apply = (u: Mission) => { setM(u); onChanged(u); };
+
+  const save = async () => {
+    setSaving(true);
+    const r = await fetch(`/api/v1/missions/${m.id}`, { method: 'PUT', headers, body: JSON.stringify({ title, narrative_goal: goal, stance, tactic }) });
+    if (r.ok) apply(await r.json());
+    setSaving(false);
+  };
+  const addTarget = async () => {
+    const id = newTarget.trim(); if (!id) return;
+    const r = await fetch(`/api/v1/missions/${m.id}/targets`, { method: 'POST', headers, body: JSON.stringify({ identifier: id, kind: inferKind(id) }) });
+    if (r.ok) { apply(await r.json()); setNewTarget(''); }
+  };
+  const decideTarget = async (tid: number, decision: string) => {
+    const r = await fetch(`/api/v1/missions/${m.id}/targets/${tid}/${decision}`, { method: 'POST', headers });
+    if (r.ok) apply(await r.json());
+  };
+  const deleteTarget = async (tid: number) => {
+    const r = await fetch(`/api/v1/missions/${m.id}/targets/${tid}`, { method: 'DELETE', headers });
+    if (r.ok) apply(await r.json());
+  };
+  const removeAgent = async (sid: number) => {
+    const r = await fetch(`/api/v1/missions/${m.id}/squad/${sid}`, { method: 'DELETE', headers });
+    if (r.ok) apply(await r.json());
+  };
+  const fetchEligible = useCallback(async () => {
+    const r = await fetch(`/api/v1/missions/${m.id}/eligible-agents`, { headers });
+    if (r.ok) setEligible(await r.json());
+  }, [m.id, token]);
+  useEffect(() => { fetchEligible(); }, [fetchEligible]);
+  const enlist = async (agent_id: string, role: string) => {
+    const r = await fetch(`/api/v1/missions/${m.id}/squad`, { method: 'POST', headers, body: JSON.stringify({ agent_id, assigned_role: role }) });
+    if (r.ok) { apply(await r.json()); fetchEligible(); }
+  };
+  const autoAssign = async () => {
+    const r = await fetch(`/api/v1/missions/${m.id}/auto-assign`, { method: 'POST', headers, body: JSON.stringify({ alpha: 1, beta: 2, gamma: 1 }) });
+    if (r.ok) apply(await r.json());
+  };
+  const remove = async () => {
+    if (!confirm(`Удалить миссию «${m.title}»?`)) return;
+    const r = await fetch(`/api/v1/missions/${m.id}`, { method: 'DELETE', headers });
+    if (r.ok) onDeleted();
+  };
+
+  const isActive = m.status === 'active';
+  const freeEligible = eligible.filter(e => !e.already_enlisted && !e.at_capacity);
+
+  return (
+    <DetailPage
+      onBack={onBack}
+      title={m.title}
+      subtitle={<Text span size="sm" c="dimmed">постоянная цель · {m.summary.agents.total || 0} агент(ов) · {m.summary.targets.active || 0} цел.</Text>}
+      headerRight={
+        <>
+          <Badge size="lg" color={isActive ? 'teal' : 'orange'} variant="light">{m.summary.status_label}</Badge>
+          {isActive
+            ? <Button variant="light" color="orange" leftSection={<Pause size={15} />} onClick={() => onStatus(m, 'paused')}>Пауза</Button>
+            : <Button variant="light" color="teal" leftSection={<Play size={15} />} onClick={() => onStatus(m, 'active')}>Возобновить</Button>}
+        </>
+      }
+    >
+      <Tabs defaultValue="overview" keepMounted={false}>
+        <Tabs.List mb="md">
+          <Tabs.Tab value="overview">Обзор</Tabs.Tab>
+          <Tabs.Tab value="targets">Цели ({m.summary.targets.active || 0}){(m.summary.targets.suggested || 0) > 0 ? ` · ⏳${m.summary.targets.suggested}` : ''}</Tabs.Tab>
+          <Tabs.Tab value="agents">Агенты ({m.summary.agents.total || 0})</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="overview">
+          <Stack gap="md" maw={720}>
+            <TextInput label="Название" value={title} onChange={e => setTitle(e.currentTarget.value)} />
+            <Textarea label="Цель" autosize minRows={2} value={goal} onChange={e => setGoal(e.currentTarget.value)} />
+            <Textarea label="«Правда» / сторона" autosize minRows={3} value={stance} onChange={e => setStance(e.currentTarget.value)} />
+            <Select label="Тактика по умолчанию" data={TACTICS} value={tactic} onChange={v => v && setTactic(v)} w={320} />
+            <Group>
+              <Button loading={saving} onClick={save}>Сохранить</Button>
+              <Button variant="subtle" color="red" leftSection={<Trash2 size={15} />} onClick={remove}>Удалить миссию</Button>
+            </Group>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="targets">
+          <Stack gap="md" maw={820}>
+            <Group align="flex-end">
+              <TextInput style={{ flex: 1 }} label="Добавить цель (@канал или ссылка на пост)" value={newTarget}
+                onChange={e => setNewTarget(e.currentTarget.value)} placeholder="@channel или https://t.me/.../123" />
+              <Button leftSection={<Plus size={15} />} onClick={addTarget}>Добавить</Button>
+            </Group>
+            {m.targets.length === 0 ? <Text c="dimmed" size="sm">Целей нет.</Text> : (
+              <Stack gap="xs">{m.targets.map(t => (
+                <Paper key={t.id} withBorder p="sm" radius="md">
+                  <Group justify="space-between" wrap="nowrap">
+                    <Box style={{ minWidth: 0 }}>
+                      <Text fw={600} size="sm">{t.kind === 'post' ? '📄' : '📢'} {t.title || t.identifier}</Text>
+                      <Text size="xs" c="dimmed">{t.identifier} · {t.source === 'agent' ? `предложил ${t.proposed_by || 'агент'}` : 'оператор'}{t.status === 'rejected' ? ' · отклонено' : ''}</Text>
+                      {t.reason && <Text size="xs" c="dimmed">{t.reason}</Text>}
+                    </Box>
+                    <Group gap={6} wrap="nowrap">
+                      {t.status === 'suggested' && <>
+                        <Button size="xs" variant="light" color="teal" leftSection={<Check size={13} />} onClick={() => decideTarget(t.id, 'approve')}>Принять</Button>
+                        <Button size="xs" variant="light" color="orange" leftSection={<X size={13} />} onClick={() => decideTarget(t.id, 'reject')}>Отклонить</Button>
+                      </>}
+                      <ActionIcon variant="subtle" color="red" onClick={() => deleteTarget(t.id)}><Trash size={15} /></ActionIcon>
+                    </Group>
+                  </Group>
+                </Paper>))}</Stack>
+            )}
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="agents">
+          <Stack gap="md" maw={760}>
+            <Group justify="space-between">
+              <Text fw={600}>Ростер миссии</Text>
+              <Group gap="xs">
+                <Button size="xs" variant="light" leftSection={<UserPlus size={14} />} onClick={() => setPickAgent(true)} disabled={freeEligible.length === 0}>Добавить агента</Button>
+                <Button size="xs" variant="default" leftSection={<Sparkles size={14} />} onClick={autoAssign}>Авто-набор (1α/2β/1γ)</Button>
+              </Group>
+            </Group>
+            {m.squad.length === 0 ? <Text c="dimmed" size="sm">Агенты не назначены.</Text> : (
+              <Stack gap="xs">{m.squad.map(s => (
+                <Paper key={s.id} withBorder p="sm" radius="md">
+                  <Group justify="space-between">
+                    <Group gap="sm"><Badge color={ROLE_COLOR[s.assigned_role] || 'gray'} variant="light">{s.assigned_role}</Badge><Text ff="monospace" size="sm">{s.codename || s.agent_id}</Text></Group>
+                    <ActionIcon variant="subtle" color="red" onClick={() => removeAgent(s.id)}><X size={15} /></ActionIcon>
+                  </Group>
+                </Paper>))}</Stack>
+            )}
+            <SimpleGrid cols={3} mt="xs">
+              {(['alpha', 'beta', 'gamma'] as const).map(c => (
+                <Paper key={c} withBorder p="xs" radius="md" ta="center">
+                  <Text size="xs" c="dimmed" tt="uppercase">{c}</Text>
+                  <Text fw={700} c={ROLE_COLOR[c]}>{m.squad.filter(s => s.assigned_role === c).length}</Text>
+                </Paper>))}
+            </SimpleGrid>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
+
+      <EntityPicker
+        opened={pickAgent} onClose={() => setPickAgent(false)} title="Добавить агента в миссию"
+        rows={freeEligible} rowKey={e => e.agent_id}
+        searchText={e => `${e.codename || ''} ${e.agent_id} ${e.caste}`}
+        emptyText="Нет доступных агентов."
+        columns={[
+          { key: 'agent', header: 'Агент', minWidth: 220, render: e => <Stack gap={0}><Text fw={600}>{e.codename || e.agent_id}</Text><Text size="xs" c="dimmed" ff="monospace">{e.agent_id}</Text></Stack> },
+          { key: 'caste', header: 'Каста', minWidth: 90, render: e => <Badge color={ROLE_COLOR[e.caste] || 'gray'} variant="light">{e.caste}</Badge> },
+          { key: 'match', header: 'Совпадение', minWidth: 120, align: 'right', sortValue: e => e.match_score, render: e => `${Math.round(e.match_score * 100)}%` },
+          { key: 'load', header: 'Загрузка', minWidth: 90, align: 'right', sortValue: e => e.active_mission_load, render: e => e.active_mission_load },
+        ]}
+        onPick={e => enlist(e.agent_id, e.caste)}
+      />
+    </DetailPage>
+  );
+}

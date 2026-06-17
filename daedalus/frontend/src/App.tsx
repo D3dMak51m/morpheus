@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import SoulsScreen from './components/SoulsScreen';
 import DeviceGrid from './components/DeviceGrid';
 import Login from './components/Login';
-import LandscapeManager from './components/LandscapeManager';
+import LandscapeScreen from './components/LandscapeScreen';
 import NewsHubInspector from './components/NewsHubInspector';
 import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
@@ -13,7 +13,7 @@ import { AuthFactory } from './components/AuthFactory';
 import { SoulGenesisView } from './components/SoulGenesisView';
 import AccountsScreen from './components/AccountsScreen';
 import SandboxConsole from './components/SandboxConsole';
-import MissionDeck from './components/MissionDeck';
+import MissionsScreen from './components/MissionsScreen';
 import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
 import MuninnExplorer from './components/MuninnExplorer';
 import ChannelProfiles from './components/ChannelProfiles';
@@ -28,6 +28,7 @@ import './App.css';
 // the old components doesn't strip those globals from the bundle.
 import './components/SoulsContext.css';
 import './components/AccountsManager.css';
+import './components/LandscapeManager.css'; // global .data-grid/.layer-pill/.tag-* used by un-migrated tables
 
 // Views are addressable via the URL hash (#/swarm, #/missions, …) so a page refresh
 // keeps you where you were, links are shareable, and browser back/forward work — instead
@@ -162,7 +163,7 @@ function App() {
         <div style={{ display: activeView === 'genesis' ? 'block' : 'none', height: '100%' }}><SoulGenesisView /></div>
         <div style={{ display: activeView === 'factory' ? 'block' : 'none', height: '100%' }}><CloneFactory token={token} /></div>
         <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory token={token} /></div>
-        <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeManager token={token} /></div>
+        <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeScreen token={token} selectedId={activeView === 'landscape' ? route.id : null} onOpen={(id) => navigate('landscape', id)} onBack={() => navigate('landscape')} /></div>
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
         <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><MuninnExplorer token={token} /></div>
         <div style={{ display: activeView === 'channelprofiles' ? 'block' : 'none', height: '100%' }}><ChannelProfiles token={token} /></div>
@@ -170,7 +171,7 @@ function App() {
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
         <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingRadar token={token} onConverted={handleConverted} /></div>
-        <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionDeck token={token} prefill={missionPrefill} onPrefillConsumed={() => setMissionPrefill(null)} /></div>
+        <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionsScreen token={token} selectedId={activeView === 'missions' ? route.id : null} onOpen={(id) => navigate('missions', id)} onBack={() => navigate('missions')} prefill={missionPrefill} onPrefillConsumed={() => setMissionPrefill(null)} /></div>
         <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityStream token={token} /></div>
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
