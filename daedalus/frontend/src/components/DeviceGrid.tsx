@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Shield, Smartphone, HardDrive, Cpu, Link, Unlink } from 'lucide-react';
+import { Badge, Text, Stack } from '@mantine/core';
+import { EntityPicker } from '../ui/EntityPicker';
 import './DeviceGrid.css';
 
 interface VirtualDevice {
@@ -54,7 +56,8 @@ const TelemetryCanvas: React.FC<{ value: number; max: number; color: string }> =
 const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
   const [devices, setDevices] = useState<VirtualDevice[]>([]);
   const [telemetry, setTelemetry] = useState<Record<string, TelemetryDevice>>({});
-  const [assignMap, setAssignMap] = useState<Record<number, string>>({});
+  const [souls, setSouls] = useState<{ agent_id: string; full_name: string; codename: string; caste: string; status: string }[]>([]);
+  const [pickerFor, setPickerFor] = useState<number | null>(null);
   const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({});
   const [toastMessage, setToastMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null);
   
@@ -104,10 +107,18 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
     }
   };
 
+  const fetchSouls = async () => {
+    try {
+      const res = await fetch('/api/v1/souls/profiles', { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setSouls(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
   useEffect(() => {
     fetchDevices();
     fetchTelemetry();
     fetchOrchestrator();
+    fetchSouls();
     const interval = setInterval(() => {
       fetchTelemetry();
       fetchOrchestrator();
@@ -341,15 +352,9 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
                       <button className="btn-icon text-danger" onClick={() => handleAssign(d.virtualId, null)}><Unlink size={14}/></button>
                     </div>
                   ) : (
-                    <div className="assign-inputs">
-                      <input
-                        type="text"
-                        placeholder="Привязать агента…"
-                        value={assignMap[d.virtualId] || ''}
-                        onChange={e => setAssignMap({...assignMap, [d.virtualId]: e.target.value})}
-                      />
-                      <button className="btn-icon text-success" onClick={() => handleAssign(d.virtualId, assignMap[d.virtualId])}><Link size={14}/></button>
-                    </div>
+                    <button className="btn-secondary text-xs w-full" onClick={() => setPickerFor(d.virtualId)}>
+                      <Link size={13} /> Привязать агента
+                    </button>
                   )}
                 </div>
               ) : (
@@ -407,6 +412,22 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
           );
         })}
       </div>
+
+      <EntityPicker
+        opened={pickerFor !== null}
+        onClose={() => setPickerFor(null)}
+        title="Привязать агента к устройству"
+        rows={souls}
+        rowKey={s => s.agent_id}
+        searchText={s => `${s.full_name} ${s.codename} ${s.agent_id} ${s.caste}`}
+        emptyText="Нет доступных агентов."
+        columns={[
+          { key: 'agent', header: 'Агент', minWidth: 220, render: s => <Stack gap={0}><Text fw={600}>{s.full_name || s.codename}</Text><Text size="xs" c="dimmed" ff="monospace">{s.agent_id}</Text></Stack> },
+          { key: 'caste', header: 'Каста', minWidth: 90, render: s => <Badge variant="light">{s.caste}</Badge> },
+          { key: 'status', header: 'Статус', minWidth: 110, render: s => <Badge size="sm" variant="light">{s.status}</Badge> },
+        ]}
+        onPick={s => { if (pickerFor !== null) handleAssign(pickerFor, s.agent_id); setPickerFor(null); }}
+      />
     </div>
   );
 };

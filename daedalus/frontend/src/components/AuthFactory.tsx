@@ -1,300 +1,150 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import {
+  Box, Group, Stack, Title, Text, Button, Tabs, TextInput, PasswordInput, Select, Alert, Stepper, Paper, Badge,
+} from '@mantine/core';
+import { Key, Send, ShieldCheck, CheckCircle2, Smartphone } from 'lucide-react';
 
-// Backend /telegram/request-code returns `phone_code_hash` (Pyrogram), which
-// /telegram/verify-code requires. Earlier this was mis-named `transaction_id`,
-// so the hash was lost and verify failed with a 422 before Pyrogram ran.
+interface Soul { agent_id: string; full_name: string; codename: string; }
+interface Device { id: number; device_id: string; }
 
 export function AuthFactory({ token }: { token: string | null }) {
-  const [activeTab, setActiveTab] = useState<'telegram' | 'mobile'>('telegram');
-  const [agentId, setAgentId] = useState('');
-  const [deviceId, setDeviceId] = useState('');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  // Telegram State
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [transactionId, setTransactionId] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [twoFaPassword, setTwoFaPassword] = useState('');
-  const [tgStep, setTgStep] = useState<1 | 2 | 3>(1); // 1: Request, 2: OTP, 3: Success
+  const [agentId, setAgentId] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [souls, setSouls] = useState<Soul[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
+
+  const [phone, setPhone] = useState('');
+  const [hash, setHash] = useState('');
+  const [otp, setOtp] = useState('');
+  const [twoFa, setTwoFa] = useState('');
+  const [tgStep, setTgStep] = useState<1 | 2 | 3>(1);
   const [tgLoading, setTgLoading] = useState(false);
 
-  // Mobile Session State (Stage 23 — autonomous extraction)
   const [mobilePlatform, setMobilePlatform] = useState('instagram');
   const [mobileUsername, setMobileUsername] = useState('');
   const [mobileLoading, setMobileLoading] = useState(false);
 
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [msg, setMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  const handleRequestCode = async () => {
-    setTgLoading(true);
-    setMessage(null);
+  useEffect(() => {
+    (async () => {
+      const sr = await fetch('/api/v1/souls/profiles', { headers }); if (sr.ok) setSouls(await sr.json());
+      const dr = await fetch('/api/v1/souls/devices', { headers }); if (dr.ok) setDevices(await dr.json());
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const requestCode = async () => {
+    setTgLoading(true); setMsg(null);
     try {
-      const res = await fetch('/api/v1/auth-factory/telegram/request-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: phoneNumber })
-      });
-      const data: any = await res.json();
-
-      if (!res.ok) throw new Error(data.detail || data.message || 'Request failed');
-
-      setTransactionId(data.phone_code_hash || '');
-      setTgStep(2);
-      setMessage({ text: data.message, type: 'success' });
-    } catch (err: any) {
-      setMessage({ text: err.message, type: 'error' });
-    } finally {
-      setTgLoading(false);
-    }
+      const r = await fetch('/api/v1/auth-factory/telegram/request-code', { method: 'POST', headers, body: JSON.stringify({ phone_number: phone }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.message || 'Не удалось запросить код');
+      setHash(d.phone_code_hash || ''); setTgStep(2); setMsg({ text: d.message || 'Код отправлен', type: 'success' });
+    } catch (e: any) { setMsg({ text: e.message, type: 'error' }); }
+    finally { setTgLoading(false); }
+  };
+  const verifyCode = async () => {
+    setTgLoading(true); setMsg(null);
+    try {
+      const payload: any = { phone_code_hash: hash, phone_number: phone, code: otp, agent_id: agentId, device_id: deviceId };
+      if (twoFa) payload.password = twoFa;
+      const r = await fetch('/api/v1/auth-factory/telegram/verify-code', { method: 'POST', headers, body: JSON.stringify(payload) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.message || 'Не удалось подтвердить код');
+      setTgStep(3); setMsg({ text: d.message || 'Аккаунт авторизован', type: 'success' });
+    } catch (e: any) { setMsg({ text: e.message, type: 'error' }); }
+    finally { setTgLoading(false); }
+  };
+  const autoExtract = async () => {
+    if (!deviceId || !mobileUsername) { setMsg({ text: 'Укажите устройство и username.', type: 'error' }); return; }
+    setMobileLoading(true); setMsg(null);
+    try {
+      const r = await fetch('/api/v1/auth-factory/mobile/extract-session', { method: 'POST', headers, body: JSON.stringify({ platform: mobilePlatform, device_id: deviceId, username: mobileUsername, agent_id: agentId || null }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.message || 'Извлечение не удалось');
+      setMsg({ text: d.message, type: 'success' });
+    } catch (e: any) { setMsg({ text: e.message, type: 'error' }); }
+    finally { setMobileLoading(false); }
   };
 
-  const handleVerifyCode = async () => {
-    if (!agentId || !deviceId) {
-      setMessage({ text: "Agent ID and Device ID are required.", type: 'error' });
-      return;
-    }
-    setTgLoading(true);
-    setMessage(null);
-    try {
-      const payload: any = {
-        phone_code_hash: transactionId,
-        phone_number: phoneNumber,
-        code: otpCode,
-        agent_id: agentId,
-        device_id: deviceId
-      };
-      if (twoFaPassword) payload.password = twoFaPassword;
+  const reset = () => { setTgStep(1); setPhone(''); setOtp(''); setTwoFa(''); setHash(''); setMsg(null); };
 
-      const res = await fetch('/api/v1/auth-factory/telegram/verify-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data: any = await res.json();
-
-      if (!res.ok) throw new Error(data.detail || data.message || 'Verification failed');
-
-      setTgStep(3);
-      setMessage({ text: data.message, type: 'success' });
-    } catch (err: any) {
-      setMessage({ text: err.message, type: 'error' });
-    } finally {
-      setTgLoading(false);
-    }
-  };
-
-  const handleAutoExtract = async () => {
-    if (!deviceId || !mobileUsername) {
-      setMessage({ text: "Device ID and Username are required.", type: 'error' });
-      return;
-    }
-    setMobileLoading(true);
-    setMessage(null);
-    try {
-      const res = await fetch('/api/v1/auth-factory/mobile/extract-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          platform: mobilePlatform,
-          device_id: deviceId,
-          username: mobileUsername,
-          // agent_id is optional — when supplied the account is bound immediately,
-          // otherwise it is stored floating ('unbound') for later binding.
-          agent_id: agentId || null,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || data.message || 'Extraction failed');
-      setMessage({ text: data.message, type: 'success' });
-    } catch (err: any) {
-      setMessage({ text: err.message, type: 'error' });
-    } finally {
-      setMobileLoading(false);
-    }
-  };
+  const soulData = souls.map(s => ({ value: s.agent_id, label: `${s.full_name || s.codename} (${s.agent_id})` }));
+  const deviceData = devices.map(d => ({ value: d.device_id, label: d.device_id }));
 
   return (
-    <div className="p-6 text-white max-w-4xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-500 mb-2">
-          Auth Factory
-        </h1>
-        <p className="text-gray-400 text-sm">Interactive platform onboarding and hardware containment wizard.</p>
-      </div>
-
-      <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 shadow-2xl">
-        <div className="flex space-x-4 border-b border-gray-800 mb-6 pb-2">
-          <button
-            onClick={() => { setActiveTab('telegram'); setMessage(null); }}
-            className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${activeTab === 'telegram' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-gray-400 hover:text-gray-200'}`}
-          >
-            Telegram (Pyrogram)
-          </button>
-          <button
-            onClick={() => { setActiveTab('mobile'); setMessage(null); }}
-            className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${activeTab === 'mobile' ? 'bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500' : 'text-gray-400 hover:text-gray-200'}`}
-          >
-            Mobile Session Import
-          </button>
+    <Box p="lg">
+      <Group justify="space-between" mb="md">
+        <div>
+          <Title order={2}><Key size={22} style={{ verticalAlign: -4 }} /> Фабрика авторизации</Title>
+          <Text size="sm" c="dimmed">Подключение реального аккаунта в рой: вход в Telegram (MTProto) или импорт мобильной сессии.</Text>
         </div>
+      </Group>
 
-        {message && (
-          <div className={`mb-6 p-4 rounded-lg flex items-center ${message.type === 'success' ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-red-900/30 text-red-400 border border-red-800'}`}>
-            <span>{message.text}</span>
-          </div>
-        )}
+      <Paper withBorder p="lg" radius="md" maw={860}>
+        <Group grow mb="lg">
+          <Select label="Привязать к душе (необязательно)" placeholder="оставьте пустым для свободного аккаунта"
+            searchable clearable data={soulData} value={agentId} onChange={setAgentId} />
+          <Select label="Устройство (необязательно)" placeholder="выберите устройство"
+            searchable clearable data={deviceData} value={deviceId} onChange={setDeviceId} />
+        </Group>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          <div>
-            <label className="block text-xs text-gray-500 uppercase font-semibold mb-2">Target Agent ID</label>
-            <input
-              type="text"
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-              placeholder="e.g. agent_alpha_01"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 uppercase font-semibold mb-2">Hardware Binding (Device ID)</label>
-            <input
-              type="text"
-              value={deviceId}
-              onChange={(e) => setDeviceId(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-              placeholder="e.g. emulator-5554"
-            />
-          </div>
-        </div>
+        {msg && <Alert color={msg.type === 'success' ? 'teal' : 'red'} variant="light" mb="lg">{msg.text}</Alert>}
 
-        {activeTab === 'telegram' && (
-          <div className="space-y-6 animate-fade-in">
-            {/* Step 1: Request */}
-            <div className={`p-4 rounded-lg border ${tgStep >= 1 ? 'border-gray-700 bg-gray-800/50' : 'border-gray-800 opacity-50'}`}>
-              <h3 className="text-lg font-medium mb-4 flex items-center">
-                <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs mr-3 ${tgStep > 1 ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'}`}>1</span>
-                Request OTP
-              </h3>
-              <div className="flex space-x-4">
-                <input
-                  type="text"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  disabled={tgStep > 1}
-                  className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                  placeholder="+1234567890"
-                />
-                <button
-                  onClick={handleRequestCode}
-                  disabled={tgLoading || tgStep > 1 || !phoneNumber}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center"
-                >
-                  {tgLoading && tgStep === 1 ? 'Requesting...' : 'Send Code'}
-                </button>
-              </div>
-            </div>
+        <Tabs defaultValue="telegram">
+          <Tabs.List mb="lg">
+            <Tabs.Tab value="telegram" leftSection={<Send size={14} />}>Telegram (Pyrogram)</Tabs.Tab>
+            <Tabs.Tab value="mobile" leftSection={<Smartphone size={14} />}>Импорт мобильной сессии</Tabs.Tab>
+          </Tabs.List>
 
-            {/* Step 2: Verify */}
-            <div className={`p-4 rounded-lg border ${tgStep >= 2 ? 'border-gray-700 bg-gray-800/50' : 'border-gray-800 opacity-50'}`}>
-              <h3 className="text-lg font-medium mb-4 flex items-center">
-                <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs mr-3 ${tgStep > 2 ? 'bg-green-500 text-white' : (tgStep === 2 ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-400')}`}>2</span>
-                Verify Code
-              </h3>
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <input
-                  type="text"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value)}
-                  disabled={tgStep !== 2}
-                  className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                  placeholder="OTP Code"
-                />
-                <input
-                  type="password"
-                  value={twoFaPassword}
-                  onChange={(e) => setTwoFaPassword(e.target.value)}
-                  disabled={tgStep !== 2}
-                  className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                  placeholder="2FA Password (Optional)"
-                />
-              </div>
-              <button
-                onClick={handleVerifyCode}
-                disabled={tgLoading || tgStep !== 2 || !otpCode}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
-              >
-                {tgLoading && tgStep === 2 ? 'Verifying...' : 'Authenticate & Save'}
-              </button>
-            </div>
-            
-            {tgStep === 3 && (
-              <div className="p-4 bg-green-900/20 border border-green-800 rounded-lg text-center">
-                <h3 className="text-green-400 font-bold text-lg mb-1">Authentication Complete</h3>
-                <p className="text-gray-400 text-sm">Session string securely exported and saved to database.</p>
-                <button 
-                  onClick={() => { setTgStep(1); setPhoneNumber(''); setOtpCode(''); setTwoFaPassword(''); setTransactionId(''); }}
-                  className="mt-4 text-sm text-blue-400 hover:text-blue-300"
-                >
-                  Authenticate another account
-                </button>
-              </div>
+          <Tabs.Panel value="telegram">
+            <Stepper active={tgStep - 1} size="sm" mb="lg">
+              <Stepper.Step label="Запрос кода" icon={<Send size={16} />} />
+              <Stepper.Step label="Подтверждение" icon={<ShieldCheck size={16} />} />
+              <Stepper.Step label="Готово" icon={<CheckCircle2 size={16} />} />
+            </Stepper>
+
+            {tgStep === 1 && (
+              <Group align="flex-end">
+                <TextInput style={{ flex: 1 }} label="Номер телефона" value={phone} onChange={e => setPhone(e.currentTarget.value)} placeholder="+998901234567" />
+                <Button leftSection={<Send size={15} />} loading={tgLoading} disabled={!phone} onClick={requestCode}>Отправить код</Button>
+              </Group>
             )}
-          </div>
-        )}
+            {tgStep === 2 && (
+              <Stack gap="md">
+                <Group grow>
+                  <TextInput label="Код из Telegram" value={otp} onChange={e => setOtp(e.currentTarget.value)} placeholder="12345" />
+                  <PasswordInput label="2FA пароль (если есть)" value={twoFa} onChange={e => setTwoFa(e.currentTarget.value)} placeholder="необязательно" />
+                </Group>
+                <Group><Button variant="default" onClick={reset}>Назад</Button><Button leftSection={<ShieldCheck size={15} />} loading={tgLoading} disabled={!otp} onClick={verifyCode}>Авторизовать и сохранить</Button></Group>
+              </Stack>
+            )}
+            {tgStep === 3 && (
+              <Alert color="teal" variant="light" icon={<CheckCircle2 size={18} />} title="Авторизация завершена">
+                <Text size="sm">Сессия безопасно сохранена в базу{agentId ? <> и привязана к <Badge variant="light">{agentId}</Badge></> : ' (свободный аккаунт)'}.</Text>
+                <Button variant="subtle" size="xs" mt="sm" onClick={reset}>Авторизовать ещё один аккаунт</Button>
+              </Alert>
+            )}
+          </Tabs.Panel>
 
-        {activeTab === 'mobile' && (
-          <div className="space-y-6 animate-fade-in">
-            <div className="grid grid-cols-2 gap-6">
-               <div>
-                 <label className="block text-xs text-gray-500 uppercase font-semibold mb-2">Platform</label>
-                 <select
-                   value={mobilePlatform}
-                   onChange={(e) => setMobilePlatform(e.target.value)}
-                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 text-white"
-                 >
-                   <option value="instagram">Instagram</option>
-                   <option value="twitter">X (Twitter)</option>
-                   <option value="threads">Threads</option>
-                   <option value="youtube">YouTube</option>
-                 </select>
-               </div>
-               <div>
-                 <label className="block text-xs text-gray-500 uppercase font-semibold mb-2">Username</label>
-                 <input
-                   type="text"
-                   value={mobileUsername}
-                   onChange={(e) => setMobileUsername(e.target.value)}
-                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500"
-                   placeholder="@username"
-                 />
-               </div>
-            </div>
-            
-            <div className="p-4 rounded-lg border border-indigo-900/50 bg-indigo-950/20">
-              <h3 className="text-indigo-300 font-medium mb-1">Autonomous Session Extraction</h3>
-              <p className="text-gray-400 text-sm mb-1">
-                MYRMIDON drives the emulator (<span className="font-mono text-gray-300">{deviceId || 'device'}</span>) and
-                dumps the live session directly — WebView cookies &amp; localStorage for hybrid apps, or rooted
-                <span className="font-mono"> shared_prefs</span> XML for native apps.
-              </p>
-              <p className="text-gray-500 text-xs">
-                Make sure the {mobilePlatform} app is logged in and foregrounded on the device. Leave Agent ID blank to
-                store the account floating (unbound); fill it to bind immediately.
-              </p>
-            </div>
-
-            <button
-              onClick={handleAutoExtract}
-              disabled={mobileLoading}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {mobileLoading ? 'Extracting from emulator…' : '⚡ Auto-Extract Session from Emulator'}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+          <Tabs.Panel value="mobile">
+            <Stack gap="md">
+              <Group grow>
+                <Select label="Платформа" data={[{ value: 'instagram', label: 'Instagram' }, { value: 'twitter', label: 'X (Twitter)' }, { value: 'threads', label: 'Threads' }, { value: 'youtube', label: 'YouTube' }]} value={mobilePlatform} onChange={v => v && setMobilePlatform(v)} />
+                <TextInput label="Username" value={mobileUsername} onChange={e => setMobileUsername(e.currentTarget.value)} placeholder="@username" />
+              </Group>
+              <Alert color="indigo" variant="light" title="Автономное извлечение сессии">
+                <Text size="sm">MYRMIDON управляет эмулятором ({deviceId || 'устройство'}) и выгружает живую сессию. Убедитесь, что приложение {mobilePlatform} залогинено и активно. (Мобильный стек вне scope — может не работать.)</Text>
+              </Alert>
+              <Button leftSection={<Smartphone size={15} />} loading={mobileLoading} onClick={autoExtract}>Извлечь сессию из эмулятора</Button>
+            </Stack>
+          </Tabs.Panel>
+        </Tabs>
+      </Paper>
+    </Box>
   );
 }

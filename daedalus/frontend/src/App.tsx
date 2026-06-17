@@ -6,7 +6,7 @@ import LandscapeScreen from './components/LandscapeScreen';
 import NewsHubScreen from './components/NewsHubScreen';
 import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
-import ActivityStream from './components/ActivityStream';
+import ActivityScreen from './components/ActivityScreen';
 import LiveOps from './components/LiveOps';
 import SwarmDashboard from './components/SwarmDashboard';
 import { AuthFactory } from './components/AuthFactory';
@@ -17,7 +17,7 @@ import MissionsScreen from './components/MissionsScreen';
 import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
 import KnowledgeScreen from './components/KnowledgeScreen';
 import ChannelProfilesScreen from './components/ChannelProfilesScreen';
-import DecisionLog from './components/DecisionLog';
+import DecisionsScreen from './components/DecisionsScreen';
 import CloneFactory from './components/CloneFactory';
 import { AppShell, ScrollArea } from '@mantine/core';
 import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks, type LucideIcon } from 'lucide-react';
@@ -160,19 +160,19 @@ function App() {
       <AppShell.Main style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg-base)' }}>
         <div style={{ display: activeView === 'accounts' ? 'block' : 'none', height: '100%' }}><AccountsScreen token={token} selectedId={activeView === 'accounts' ? route.id : null} onOpen={(id) => navigate('accounts', id)} onBack={() => navigate('accounts')} /></div>
         <div style={{ display: activeView === 'souls' ? 'block' : 'none', height: '100%' }}><SoulsScreen token={token} selectedId={activeView === 'souls' ? route.id : null} onOpen={(id) => navigate('souls', id)} onBack={() => navigate('souls')} /></div>
-        <div style={{ display: activeView === 'genesis' ? 'block' : 'none', height: '100%' }}><SoulGenesisView /></div>
+        <div style={{ display: activeView === 'genesis' ? 'block' : 'none', height: '100%' }}><SoulGenesisView token={token} /></div>
         <div style={{ display: activeView === 'factory' ? 'block' : 'none', height: '100%' }}><CloneFactory token={token} /></div>
         <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory token={token} /></div>
         <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeScreen token={token} selectedId={activeView === 'landscape' ? route.id : null} onOpen={(id) => navigate('landscape', id)} onBack={() => navigate('landscape')} /></div>
         <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubScreen token={token} selectedId={activeView === 'newshub' ? route.id : null} onOpen={(id) => navigate('newshub', id)} onBack={() => navigate('newshub')} /></div>
         <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><KnowledgeScreen token={token} selectedId={activeView === 'muninn' ? route.id : null} onOpen={(id) => navigate('muninn', id)} onBack={() => navigate('muninn')} /></div>
         <div style={{ display: activeView === 'channelprofiles' ? 'block' : 'none', height: '100%' }}><ChannelProfilesScreen token={token} selectedId={activeView === 'channelprofiles' ? route.id : null} onOpen={(id) => navigate('channelprofiles', id)} onBack={() => navigate('channelprofiles')} /></div>
-        <div style={{ display: activeView === 'decisions' ? 'block' : 'none', height: '100%' }}><DecisionLog token={token} /></div>
+        <div style={{ display: activeView === 'decisions' ? 'block' : 'none', height: '100%' }}><DecisionsScreen token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
         <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingRadar token={token} onConverted={handleConverted} /></div>
         <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionsScreen token={token} selectedId={activeView === 'missions' ? route.id : null} onOpen={(id) => navigate('missions', id)} onBack={() => navigate('missions')} prefill={missionPrefill} onPrefillConsumed={() => setMissionPrefill(null)} /></div>
-        <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityStream token={token} /></div>
+        <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityScreen token={token} /></div>
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
         <div style={{ display: activeView === 'live' ? 'block' : 'none', height: '100%' }}><LiveOps token={token} /></div>

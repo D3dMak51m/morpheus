@@ -24,7 +24,7 @@ export function EntityPicker<T>({
 }: EntityPickerProps<T>) {
   return (
     <Modal opened={opened} onClose={onClose} title={title} size="xl" centered
-      styles={{ body: { paddingTop: 8 } }}>
+      withinPortal={false} styles={{ body: { paddingTop: 8 } }}>
       <DataView
         columns={columns}
         rows={rows}
