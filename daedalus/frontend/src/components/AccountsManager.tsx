@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Users, History, Link, Unlink, Radio } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Users, History, Link, Unlink, Radio, RefreshCw } from 'lucide-react';
+import { DataTable, Column } from './DataTable';
 import './AccountsManager.css';
 import ChannelManager from './ChannelManager';
 
@@ -28,13 +29,15 @@ interface SoulProfile {
 export default function AccountsManager({ token }: { token: string | null }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [profiles, setProfiles] = useState<SoulProfile[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [bindAgentId, setBindAgentId] = useState('');
   const [channelAgent, setChannelAgent] = useState<{ agentId: string; label: string } | null>(null);
 
-  const fetchAccounts = async () => {
+  const fetchAccounts = useCallback(async () => {
     if (!token) return;
+    setLoading(true);
     try {
       const res = await fetch('/api/v1/souls/accounts', {
         headers: { Authorization: `Bearer ${token}` }
@@ -42,10 +45,12 @@ export default function AccountsManager({ token }: { token: string | null }) {
       if (res.ok) setAccounts(await res.json());
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [token]);
 
-  const fetchProfiles = async () => {
+  const fetchProfiles = useCallback(async () => {
     if (!token) return;
     try {
       const res = await fetch('/api/v1/souls/profiles', {
@@ -55,7 +60,7 @@ export default function AccountsManager({ token }: { token: string | null }) {
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [token]);
 
   const fetchLogs = async (accountId: number) => {
     if (!token) return;
@@ -72,7 +77,7 @@ export default function AccountsManager({ token }: { token: string | null }) {
   useEffect(() => {
     fetchAccounts();
     fetchProfiles();
-  }, [token]);
+  }, [fetchAccounts, fetchProfiles]);
 
   useEffect(() => {
     if (selectedAccount) {
@@ -123,59 +128,65 @@ export default function AccountsManager({ token }: { token: string | null }) {
     }
   };
 
+  const columns: Column<Account>[] = [
+    { key: 'username', header: 'Аккаунт',
+      render: a => <span className="am-username">{a.username}</span> },
+    { key: 'platform', header: 'Платформа', width: '120px',
+      render: a => <span className="platform-badge">{a.platform}</span> },
+    { key: 'status', header: 'Статус', width: '120px',
+      render: a => <span className={`status-badge ${a.status}`}>{a.status}</span> },
+    { key: 'agent_id', header: 'Привязка', sortValue: a => a.agent_id || '',
+      render: a => a.agent_id
+        ? <span className="assigned"><Link size={12} /> {a.agent_id}</span>
+        : <span className="unassigned"><Unlink size={12} /> Свободен</span> },
+  ];
+
   return (
-    <div className="accounts-manager">
-      <div className="header-panel">
-        <Users size={24} />
-        <h2>Accounts & Identity Vault</h2>
+    <div className="accounts-manager view-container">
+      <div className="header-row">
+        <div>
+          <h1><Users size={22} style={{ verticalAlign: '-4px' }} /> Аккаунты и привязки</h1>
+          <p className="subtitle">Реальные TG-аккаунты роя и их привязка к персонам («душам»). Выберите аккаунт, чтобы привязать/отвязать душу, посмотреть каналы и историю.</p>
+        </div>
+        <div className="header-actions">
+          <button className="btn-secondary" onClick={() => { fetchAccounts(); fetchProfiles(); }}>
+            <RefreshCw size={14} /> Обновить
+          </button>
+        </div>
       </div>
 
       <div className="accounts-layout">
         <div className="accounts-list">
-          <div className="list-header">
-            <h3>Registered Accounts</h3>
-          </div>
-          <div className="grid">
-            {accounts.map(acc => (
-              <div 
-                key={acc.id} 
-                className={`account-card ${selectedAccount?.id === acc.id ? 'selected' : ''}`}
-                onClick={() => setSelectedAccount(acc)}
-              >
-                <div className="acc-header">
-                  <span className="platform-badge">{acc.platform}</span>
-                  <span className={`status-dot ${acc.status}`} />
-                </div>
-                <h4>{acc.username}</h4>
-                <div className="assignment-status">
-                  {acc.agent_id ? (
-                    <span className="assigned"><Link size={12}/> {acc.agent_id}</span>
-                  ) : (
-                    <span className="unassigned"><Unlink size={12}/> Unassigned</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+          <DataTable
+            columns={columns}
+            rows={accounts}
+            rowKey={a => a.id}
+            loading={loading}
+            searchText={a => `${a.username} ${a.agent_id || ''} ${a.platform} ${a.status}`}
+            searchPlaceholder="🔍 Поиск по имени, платформе, статусу или привязке…"
+            emptyText="Аккаунтов нет. Добавьте их через «Фабрику авторизации»."
+            pageSize={25}
+            onRowClick={setSelectedAccount}
+          />
         </div>
 
         {selectedAccount && (
           <div className="account-details">
-            <h3>Account Details</h3>
+            <h3>Детали аккаунта</h3>
             <div className="detail-box">
-              <p><strong>Platform:</strong> {selectedAccount.platform}</p>
-              <p><strong>Username:</strong> {selectedAccount.username}</p>
-              <p><strong>Device:</strong> {selectedAccount.device_id || 'None'}</p>
-              <p><strong>Status:</strong> <span className={`status-badge ${selectedAccount.status}`}>{selectedAccount.status}</span></p>
+              <p><strong>Платформа:</strong> {selectedAccount.platform}</p>
+              <p><strong>Имя:</strong> {selectedAccount.username}</p>
+              <p><strong>Устройство:</strong> {selectedAccount.device_id || 'Нет'}</p>
+              <p><strong>Статус:</strong> <span className={`status-badge ${selectedAccount.status}`}>{selectedAccount.status}</span></p>
 
               <div className="assignment-control">
-                <h4>Soul Binding</h4>
+                <h4>Привязка души</h4>
                 {selectedAccount.agent_id ? (
                   <div className="assigned-view">
-                    <p>Bound to soul <strong>{selectedAccount.agent_id}</strong></p>
+                    <p>Привязан к душе <strong>{selectedAccount.agent_id}</strong></p>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <button onClick={() => handleUnbind(selectedAccount.id)} className="btn-danger">
-                        <Unlink size={16} /> Unbind Soul
+                        <Unlink size={16} /> Отвязать душу
                       </button>
                       {selectedAccount.platform === 'telegram' && (
                         <button
@@ -190,7 +201,7 @@ export default function AccountsManager({ token }: { token: string | null }) {
                 ) : (
                   <div className="assign-form">
                     <select value={bindAgentId} onChange={e => setBindAgentId(e.target.value)}>
-                      <option value="">Select a floating soul…</option>
+                      <option value="">Выберите свободную душу…</option>
                       {profiles.map(p => (
                         <option key={p.agent_id} value={p.agent_id}>
                           {p.full_name || p.codename} ({p.agent_id}) · {p.status}
@@ -198,7 +209,7 @@ export default function AccountsManager({ token }: { token: string | null }) {
                       ))}
                     </select>
                     <button onClick={() => handleBind(selectedAccount.id, bindAgentId)} className="btn-primary" disabled={!bindAgentId}>
-                      <Link size={16} /> Bind to Soul
+                      <Link size={16} /> Привязать душу
                     </button>
                   </div>
                 )}
@@ -206,12 +217,12 @@ export default function AccountsManager({ token }: { token: string | null }) {
             </div>
 
             <div className="audit-logs">
-              <h3><History size={18}/> Audit History</h3>
-              {logs.length === 0 ? <p className="text-muted">No history found.</p> : (
+              <h3><History size={18} /> История изменений</h3>
+              {logs.length === 0 ? <p className="text-muted">История пуста.</p> : (
                 <ul>
                   {logs.map(log => (
                     <li key={log.id}>
-                      <span className="time">{new Date(log.timestamp).toLocaleString()}</span>
+                      <span className="time">{new Date(log.timestamp).toLocaleString('ru-RU')}</span>
                       <span className="action">{log.action}</span>
                     </li>
                   ))}

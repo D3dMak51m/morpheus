@@ -51,3 +51,6 @@ backups/
 
 # Telegram / session credential files
 *.session
+
+# Playwright MCP session artifacts
+.playwright-mcp/

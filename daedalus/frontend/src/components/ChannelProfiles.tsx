@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Compass, RefreshCw, MapPin, Flame } from 'lucide-react';
+import { DataTable, Column } from './DataTable';
 import './ChannelProfiles.css';
 
 interface Theme { theme: string; count?: number; }
@@ -31,7 +32,6 @@ const ChannelProfiles: React.FC<Props> = ({ token }) => {
   const [profiles, setProfiles] = useState<ChannelProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
 
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
@@ -52,14 +52,49 @@ const ChannelProfiles: React.FC<Props> = ({ token }) => {
 
   useEffect(() => { fetchProfiles(); }, [fetchProfiles]);
 
-  const q = query.trim().toLowerCase();
-  const shown = q
-    ? profiles.filter(p =>
-        (p.title || '').toLowerCase().includes(q) ||
-        p.channel_ref.toLowerCase().includes(q) ||
-        (p.geo_label || '').toLowerCase().includes(q) ||
-        (p.topics || []).some(t => t.toLowerCase().includes(q)))
-    : profiles;
+  const columns: Column<ChannelProfile>[] = [
+    { key: 'channel', header: 'Канал', sortValue: p => (p.title || p.channel_ref).toLowerCase(),
+      render: p => (
+        <>
+          <div className="cp-title">{p.title || p.channel_ref}</div>
+          <div className="cp-ref">{p.channel_ref}{p.language ? ` · ${p.language}` : ''}</div>
+        </>
+      ) },
+    { key: 'geo', header: 'Регион', sortValue: p => (p.geo_label || '').toLowerCase(),
+      render: p => (
+        <>
+          {p.geo_label && <div className="cp-geo"><MapPin size={13} /> {p.geo_label}</div>}
+          <div className="cp-chip-row">
+            {(p.geo_layers || []).map(l => (
+              <span key={l} className="layer-pill" style={{ background: LAYER_COLORS[l] || '#475569' }}>{l}</span>
+            ))}
+          </div>
+        </>
+      ) },
+    { key: 'topics', header: 'Тематика', sortable: false,
+      render: p => (
+        <div className="cp-chip-row">
+          {(p.topics || []).map(t => <span key={t} className="cp-chip cp-chip-topic">{t}</span>)}
+        </div>
+      ) },
+    { key: 'themes', header: 'Сейчас обсуждают', sortable: false,
+      render: p => (
+        <div className="cp-chip-row">
+          {(p.recent_themes || []).map(t => (
+            <span key={t.theme} className="cp-chip cp-chip-hot"><Flame size={11} /> {t.theme}{t.count ? ` ·${t.count}` : ''}</span>
+          ))}
+        </div>
+      ) },
+    { key: 'summary', header: 'Чем является', sortable: false,
+      render: p => <span className="cp-summary">{p.summary || '—'}{p.audience_tone ? <div className="cp-tone">{p.audience_tone}</div> : null}</span> },
+    { key: 'last_profiled_at', header: 'Профиль обновлён', sortValue: p => p.last_profiled_at || '',
+      render: p => (
+        <span className="cp-date">
+          {p.last_profiled_at ? new Date(p.last_profiled_at).toLocaleString('ru-RU') : '—'}
+          <div className="cp-subdate">тем: {p.last_themes_at ? new Date(p.last_themes_at).toLocaleTimeString('ru-RU') : '—'} · {p.sample_count} постов</div>
+        </span>
+      ) },
+  ];
 
   return (
     <div className="channel-profiles view-container">
@@ -73,67 +108,18 @@ const ChannelProfiles: React.FC<Props> = ({ token }) => {
         </div>
       </div>
 
-      <div className="mx-searchbar">
-        <input className="mx-search" placeholder="🔍 Поиск по каналу, гео или теме…"
-          value={query} onChange={e => setQuery(e.target.value)} />
-        <span className="mx-result-count">{shown.length} канал(ов)</span>
-      </div>
-
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="data-grid-container">
-        {loading && profiles.length === 0 ? <p>Загрузка…</p> : (
-          <table className="data-grid">
-            <thead>
-              <tr>
-                <th>Канал</th>
-                <th>Регион</th>
-                <th>Тематика</th>
-                <th>Сейчас обсуждают</th>
-                <th>Чем является</th>
-                <th>Профиль обновлён</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.length === 0 ? (
-                <tr><td colSpan={6} className="empty-state">Профилей пока нет. Они строятся автоматически по целевым каналам активных миссий (раз в сутки, горячие темы — чаще).</td></tr>
-              ) : shown.map(p => (
-                <tr key={`${p.platform}:${p.channel_ref}`}>
-                  <td>
-                    <div className="cp-title">{p.title || p.channel_ref}</div>
-                    <div className="cp-ref">{p.channel_ref}{p.language ? ` · ${p.language}` : ''}</div>
-                  </td>
-                  <td>
-                    {p.geo_label && <div className="cp-geo"><MapPin size={13} /> {p.geo_label}</div>}
-                    <div className="cp-chip-row">
-                      {(p.geo_layers || []).map(l => (
-                        <span key={l} className="layer-pill" style={{ background: LAYER_COLORS[l] || '#475569' }}>{l}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="cp-chip-row">
-                      {(p.topics || []).map(t => <span key={t} className="cp-chip cp-chip-topic">{t}</span>)}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="cp-chip-row">
-                      {(p.recent_themes || []).map(t => (
-                        <span key={t.theme} className="cp-chip cp-chip-hot"><Flame size={11} /> {t.theme}{t.count ? ` ·${t.count}` : ''}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="cp-summary">{p.summary || '—'}{p.audience_tone ? <div className="cp-tone">{p.audience_tone}</div> : null}</td>
-                  <td className="cp-date">
-                    {p.last_profiled_at ? new Date(p.last_profiled_at).toLocaleString('ru-RU') : '—'}
-                    <div className="cp-subdate">тем: {p.last_themes_at ? new Date(p.last_themes_at).toLocaleTimeString('ru-RU') : '—'} · {p.sample_count} постов</div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <DataTable
+        columns={columns}
+        rows={profiles}
+        rowKey={p => `${p.platform}:${p.channel_ref}`}
+        loading={loading}
+        searchText={p => `${p.title || ''} ${p.channel_ref} ${p.geo_label || ''} ${(p.topics || []).join(' ')}`}
+        searchPlaceholder="🔍 Поиск по каналу, гео или теме…"
+        emptyText="Профилей пока нет. Они строятся автоматически по целевым каналам активных миссий (раз в сутки, горячие темы — чаще)."
+        pageSize={25}
+      />
     </div>
   );
 };

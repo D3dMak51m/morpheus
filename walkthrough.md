@@ -137,6 +137,17 @@ Everything below (Stages 23–35) was verified live on real data.
   the current tab + deep links + back/forward (no more snap-to-Dashboard). New reusable
   **`DataTable`** (search / sortable columns / pagination / states), applied to the "Решения"
   screen. (Next phases: migrate other lists to DataTable; de-modal editing; styling/sliders.)
+- **49 — UX/UI overhaul, Phase 2 (part 1): list migrations.** Migrated two more list screens
+  to the reusable `DataTable`: **`AccountsManager` ("Аккаунты")** — was a search-less card grid
+  with an English title; now a searchable/sortable/paginated table + unified `view-container`
+  header, the click-to-select detail pane (bind/unbind soul, account channels, history)
+  preserved, and the whole screen translated to Russian. **`ChannelProfiles` ("Профили
+  каналов")** — was a hand-rolled `<table>` with a manual filter; now `DataTable` (gains sort by
+  channel/region/date + pagination) with rich cells (geo pills, hot-theme chips, summaries)
+  preserved via `render`. Both verified live (1440px). **`MuninnExplorer` deliberately left as-is**
+  — it already has server-side search + layer filters + server pagination, so a client-side
+  `DataTable` would regress it. (Still to migrate in Phase 2: `LandscapeManager`, `ScoutingRadar`,
+  `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -146,15 +157,16 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 47** (runtime dynamic roster auto-assign) and **Stage 48 — UX/UI
-overhaul Phase 1** (HTTP 400 fix in Database, hash routing so refresh keeps the tab, a reusable
-`DataTable` applied to "Решения"). All verified live. **Now in progress: the UX/UI overhaul**
-(operator asked to bring the whole console to a real "mission center" standard). Phase 1 =
-foundation + critical bugs (done). **Next: Phase 2** — migrate the other list screens
-(Accounts, Знания роя, Профили каналов, Landscape, Рой drill-downs) to `DataTable` for uniform
-search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with non-blocking
-panels/routed edit views + pick-from-list instead of typing IDs), P4 styling/sliders, P5
-consolidate scattered data.
+Just finished **Stage 49 — UX/UI overhaul Phase 2 (part 1)**: migrated `AccountsManager`
+("Аккаунты") and `ChannelProfiles` ("Профили каналов") to the reusable `DataTable` (Stage 48's
+foundation), both verified live. `MuninnExplorer` was intentionally skipped (already has
+server-side search + filters + pagination — DataTable would regress it). **Now in progress: the
+UX/UI overhaul** (operator asked to bring the whole console to a real "mission center" standard).
+**Next: continue Phase 2** — migrate the remaining list screens (`LandscapeManager`,
+`ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs) to `DataTable`
+for uniform search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with
+non-blocking panels/routed edit views + pick-from-list instead of typing IDs), P4
+styling/sliders, P5 consolidate scattered data.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
