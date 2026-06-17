@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 76. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 77. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -206,8 +206,7 @@ The entire DAEDALUS console was rebuilt as a **professional command-and-control 
   ScoutingRadar, SwarmDashboard, DataTable, SidePanel) + their CSS + all legacy global CSS. Only
   `App.css` (theme vars/base) and `LiveOps.css` (bespoke real-time feed) remain.
 
-**Optional follow-ups (none blocking):** reskin `LiveOps` to Mantine (it keeps its bespoke feed by
-design); add more relationship cross-links / informativeness; the only remaining modals are
+**Optional follow-ups (none blocking):** add more relationship cross-links / informativeness; the only remaining modals are
 `EntityPicker` (selection) and the Swarm drill-down (read-only viewer) — both acceptable.
 
 Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
