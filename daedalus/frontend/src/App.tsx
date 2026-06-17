@@ -3,7 +3,7 @@ import SoulsScreen from './components/SoulsScreen';
 import DeviceGrid from './components/DeviceGrid';
 import Login from './components/Login';
 import LandscapeScreen from './components/LandscapeScreen';
-import NewsHubInspector from './components/NewsHubInspector';
+import NewsHubScreen from './components/NewsHubScreen';
 import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
 import ActivityStream from './components/ActivityStream';
@@ -15,8 +15,8 @@ import AccountsScreen from './components/AccountsScreen';
 import SandboxConsole from './components/SandboxConsole';
 import MissionsScreen from './components/MissionsScreen';
 import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
-import MuninnExplorer from './components/MuninnExplorer';
-import ChannelProfiles from './components/ChannelProfiles';
+import KnowledgeScreen from './components/KnowledgeScreen';
+import ChannelProfilesScreen from './components/ChannelProfilesScreen';
 import DecisionLog from './components/DecisionLog';
 import CloneFactory from './components/CloneFactory';
 import { AppShell, ScrollArea } from '@mantine/core';
@@ -164,9 +164,9 @@ function App() {
         <div style={{ display: activeView === 'factory' ? 'block' : 'none', height: '100%' }}><CloneFactory token={token} /></div>
         <div style={{ display: activeView === 'auth' ? 'block' : 'none', height: '100%' }}><AuthFactory token={token} /></div>
         <div style={{ display: activeView === 'landscape' ? 'block' : 'none', height: '100%' }}><LandscapeScreen token={token} selectedId={activeView === 'landscape' ? route.id : null} onOpen={(id) => navigate('landscape', id)} onBack={() => navigate('landscape')} /></div>
-        <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubInspector token={token} /></div>
-        <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><MuninnExplorer token={token} /></div>
-        <div style={{ display: activeView === 'channelprofiles' ? 'block' : 'none', height: '100%' }}><ChannelProfiles token={token} /></div>
+        <div style={{ display: activeView === 'newshub' ? 'block' : 'none', height: '100%' }}><NewsHubScreen token={token} selectedId={activeView === 'newshub' ? route.id : null} onOpen={(id) => navigate('newshub', id)} onBack={() => navigate('newshub')} /></div>
+        <div style={{ display: activeView === 'muninn' ? 'block' : 'none', height: '100%' }}><KnowledgeScreen token={token} selectedId={activeView === 'muninn' ? route.id : null} onOpen={(id) => navigate('muninn', id)} onBack={() => navigate('muninn')} /></div>
+        <div style={{ display: activeView === 'channelprofiles' ? 'block' : 'none', height: '100%' }}><ChannelProfilesScreen token={token} selectedId={activeView === 'channelprofiles' ? route.id : null} onOpen={(id) => navigate('channelprofiles', id)} onBack={() => navigate('channelprofiles')} /></div>
         <div style={{ display: activeView === 'decisions' ? 'block' : 'none', height: '100%' }}><DecisionLog token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
