@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 73. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 76. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -188,34 +188,27 @@ Do **NOT** stop+commit after every small change. **Batch** the redesign and keep
 coherent slice is done, then report. (This reverses the earlier per-screen "коммит. потом продолжим"
 cadence.)
 
-### Redesign progress (Stage 67 done) + next steps
-**DONE (Stage 67):** per-entity routing (`useHashRoute`, `#/<view>/<id>`); reusable **`src/ui/`**
-primitives — `DataView`, `DetailPage`, `EntityPicker`, `StatTile`; **`SoulsScreen`** (flagship
-full-screen 5-tab editor, replaces `SoulsContext`); **`AccountsScreen`** (full-screen + soul-bind via
-`EntityPicker`, replaces `AccountsManager`); **Dashboard v2** ("Центр управления", KPI tiles +
-sparklines). All verified live. The old `SoulsContext.css`/`AccountsManager.css` are imported in
-`App.tsx` to keep global classes (`.status-badge`/`.tabs`/`.modal-*`/`.header-row`) for un-migrated
-screens.
+### Redesign — ✅ COMPLETE (Stages 65–76)
+The entire DAEDALUS console was rebuilt as a **professional command-and-control center on Mantine 7**:
+- **Foundation:** Mantine `AppShell` (fixed navbar + ScrollArea + single content scroll → the
+  long-nav page-scroll bug is fixed); per-entity routing (`useHashRoute`, `#/<view>/<id>`); reusable
+  **`src/ui/`** primitives — `DataView` (Table: sticky header + horizontal scroll + sort/search/filter),
+  `DetailPage` (full-screen master-detail), `EntityPicker` (pick-from-list), `StatTile` (KPI+spark).
+- **All screens on Mantine:** Dashboard v2; Souls/Accounts/Missions/Landscape/NewsHub/Knowledge/
+  ChannelProfiles (**full-screen master→detail edit, all params**); Decisions/Activity (DataView);
+  Swarm (KPI hub + drill-downs); Scouting; Database (NavLink + SQL console + h-scroll table + inline
+  edit); CloneFactory; Sandbox; Genesis + AuthFactory (rebuilt from raw HTML, Auth = Stepper wizard);
+  Devices; **ChannelManager** (full-screen); Login; SystemDiagnostics.
+- **Pick-from-list everywhere** (Souls/Accounts binding, Missions roster, Devices/Sandbox/Auth
+  agent+device) — no more typed IDs. **Cross-links** account↔soul↔mission↔channel↔decisions.
+- **Cleanup done:** deleted all 13 pre-Mantine components (SoulsContext, AccountsManager, MissionDeck,
+  NewsHubInspector, MuninnExplorer, ChannelProfiles, LandscapeManager, DecisionLog, ActivityStream,
+  ScoutingRadar, SwarmDashboard, DataTable, SidePanel) + their CSS + all legacy global CSS. Only
+  `App.css` (theme vars/base) and `LiveOps.css` (bespoke real-time feed) remain.
 
-**Redesign core COMPLETE (Stages 67–70).** Migrated to full-screen `DataView`+`DetailPage`
-(+`EntityPicker`): **Souls, Accounts, Missions, Landscape, News Hub, Knowledge, Channel Profiles,
-Decisions, Activity**; **Dashboard v2**; **Genesis + Auth Factory** rebuilt from raw HTML
-(Auth = Mantine Stepper wizard); **Devices** binding via `EntityPicker`. All verified live.
-
-**Remaining (functional, low priority / optional):**
-1. `DatabaseExplorer` — h-scroll bug fixed; full Mantine-Table reskin is optional polish.
-2. `SwarmDashboard` / `ScoutingRadar` — still old `DataTable` (work); migrate to `DataView` +
-   full-screen detail for consistency if desired.
-3. `LiveOps` / `CloneFactory` / `SandboxConsole` — functional; reskin only if asked.
-4. **Relationship cross-links** — weave account↔soul↔mission↔channel↔decisions navigation into the
-   new detail pages for more informativeness.
-5. **Cleanup:** once all screens are migrated, delete the dead old components (`SoulsContext`,
-   `AccountsManager`, `MissionDeck`, `NewsHubInspector`, `MuninnExplorer`, `ChannelProfiles`,
-   `LandscapeManager`, `DecisionLog`, `ActivityStream`, `DataTable`, `SidePanel`) — but FIRST move
-   their **global** CSS (`.status-badge`, `.tabs/.tab-btn`, `.modal-*`, `.header-row`, `.data-grid`,
-   `.layer-pill`, `.tag-*`) into a shared stylesheet (they're re-imported in `App.tsx` for now).
-Templates: `SoulsScreen.tsx` / `AccountsScreen.tsx` / `MissionsScreen.tsx` + `src/ui/*`. Build
-`daedalus`, verify via Playwright.
+**Optional follow-ups (none blocking):** reskin `LiveOps` to Mantine (it keeps its bespoke feed by
+design); add more relationship cross-links / informativeness; the only remaining modals are
+`EntityPicker` (selection) and the Swarm drill-down (read-only viewer) — both acceptable.
 
 Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
 requires `docker compose build daedalus` (React SPA built inside the image; `npm install` runs in the
