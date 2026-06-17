@@ -296,6 +296,25 @@ Everything below (Stages 23–35) was verified live on real data.
   to other screens only) — added scoped h-scroll + nowrap cells + sticky header. Verified
   `scrollWidth>clientWidth`.
 
+- **67 — Redesign milestone: primitives + Souls/Accounts full-screen + Dashboard v2.** Built the
+  Mantine redesign foundation per `DAEDALUS_CAPABILITIES.md`: (a) **per-entity routing**
+  (`useHashRoute` → `#/<view>/<id>` opens a full-screen detail); (b) reusable **`src/ui/`** primitives —
+  `DataView` (Mantine Table: sticky header, **horizontal scroll**, sort, search, filter toolbar,
+  row→detail), `DetailPage` (full-screen master-detail scaffold: back + header/actions + body + sticky
+  save bar), `EntityPicker` (searchable/sortable **pick-from-list** modal — replaces typed IDs),
+  `StatTile` (KPI tile + inline SVG sparkline). (c) **`SoulsScreen`** — the flagship: list (`DataView`,
+  live status, caste/status filters) → **full-screen** 5-tab editor (Личность / Психология w/ Mantine
+  sliders / Миссия / Аккаунты — bind via `EntityPicker` / История w/ rollback) exposing **all** params;
+  replaces `SoulsContext` (grid+SidePanel). (d) **`AccountsScreen`** — list → full-screen account
+  detail; bind a soul via `EntityPicker` (no more typing IDs), channels, audit history; replaces
+  `AccountsManager`. (e) **Dashboard v2** ("Центр управления") — readiness alert + 8 KPI tiles with
+  live sparklines + radar-queue panel. All verified live (Souls list+detail+sliders, Accounts
+  detail+picker, Dashboard). Kept the old components' CSS imported in `App.tsx` (global classes
+  `.status-badge`/`.tabs`/`.modal-*`/`.header-row` still used by un-migrated screens) — verified
+  Missions etc. unaffected. **Next:** roll the `DataView`+`DetailPage`(+`EntityPicker`) pattern across
+  the remaining screens (Missions, Landscape, News Hub, Knowledge, Channel Profiles, Decisions/Activity,
+  Database→Mantine, Genesis/Auth rebuild, Devices pick-list) + relationship cross-links.
+
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
 content of this file's git versions.

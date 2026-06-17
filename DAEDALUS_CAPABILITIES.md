@@ -271,15 +271,27 @@ Captured so the redesign is anchored to explicit asks:
    theme + `AppShell`; layout/scroll bug fixed). Subsequent stages migrate screens onto Mantine
    (Table/Combobox/Tabs/Card/charts) + a routed master-detail pattern + a reusable EntityPicker.
 
-### Proposed redesign sequence (to confirm)
-1. ✅ Mantine foundation + AppShell (layout/scroll) — Stage 65.
-2. **Routing upgrade** — real per-entity routes (`#/souls/<id>`) so "edit" is a full screen, not a
-   drawer; keep the hash hook or add a tiny router.
-3. **Reusable patterns** — `DataView` (Mantine Table: sticky header, horizontal scroll, sort,
-   filter, density) and `EntityPicker` (searchable list + detail), `DetailPage` master-detail scaffold.
-4. **Dashboard v2** — KPI tiles with sparklines, queue depths, throughput, health timeline.
-5. **Per-domain migration** to full-screen detail/edit: Souls → Accounts → Missions → Landscape →
-   News Hub → Knowledge → Channel Profiles → Decisions/Activity (unify) → Database (fix h-scroll) →
-   Genesis/Auth (rebuild from raw HTML) → Devices/Sandbox/Factory (mobile, lighter pass).
+### Redesign sequence — progress
+1. ✅ **Mantine foundation + AppShell** (layout/scroll fixed) — Stage 65.
+2. ✅ **Per-entity routing** — `#/<view>/<id>` opens a full-screen detail (Stage 67, `App.tsx`
+   `useHashRoute`).
+3. ✅ **Reusable primitives** (`src/ui/`, Stage 67): `DataView` (Mantine Table — sticky header,
+   horizontal scroll via `Table.ScrollContainer`, sort, search, filter toolbar, row→detail);
+   `DetailPage` (full-screen master-detail scaffold: back, header + actions, body, sticky save bar);
+   `EntityPicker` (searchable/sortable list modal → pick-from-list, replaces typed IDs); `StatTile`
+   (KPI tile + inline SVG sparkline).
+4. ✅ **Dashboard v2** (Stage 67) — "Центр управления": readiness alert + 8 KPI tiles (live
+   sparklines from rolling poll history) + radar-queue panel; Diagnostics tab kept.
+5. **Per-domain migration to full-screen detail** — ✅ **Souls** (`SoulsScreen`, flagship: list →
+   full-screen 5-tab editor, Mantine sliders, account bind via `EntityPicker`, history rollback) +
+   ✅ **Accounts** (`AccountsScreen`: list → detail, soul-bind via `EntityPicker`, channels, audit).
+   **Remaining:** Missions → Landscape → News Hub → Knowledge → Channel Profiles → Decisions/Activity
+   (unify) → Database (Mantine Table) → Genesis/Auth (rebuild from raw HTML) → Devices/Sandbox/Factory
+   (mobile, lighter). Each = apply the `DataView` + `DetailPage` (+ `EntityPicker`) pattern.
 6. **Cross-links & informativeness** — relationship navigation everywhere (account↔soul↔mission↔
-   channel↔decisions↔activity).
+   channel↔decisions↔activity). To weave in as each screen migrates.
+
+> **Note:** the old `SoulsContext`/`AccountsManager` (DataTable+SidePanel) are superseded by
+> `SoulsScreen`/`AccountsScreen`; their `.css` is still imported in `App.tsx` because it defines
+> GLOBAL classes (`.status-badge`, `.tabs`, `.modal-*`, `.header-row`) that un-migrated screens use.
+> Drop those imports only once every screen is migrated.

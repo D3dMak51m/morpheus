@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 66. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 67. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -188,20 +188,32 @@ Do **NOT** stop+commit after every small change. **Batch** the redesign and keep
 coherent slice is done, then report. (This reverses the earlier per-screen "коммит. потом продолжим"
 cadence.)
 
-### Immediate next steps (redesign build — continuous)
-1. **Per-entity routing** — extend the hash hook to `#/<view>/<id>` so "edit" opens a full screen.
-2. **Reusable primitives** — `DataView` (Mantine `Table`: sticky header, **horizontal scroll**, sort,
-   filter, density, row→detail) ; `DetailPage` (full-screen master-detail scaffold: back, header,
-   tabbed sections, sticky save bar) ; `EntityPicker` (searchable/filterable list + detail preview →
-   returns an id). Build on Mantine `@mantine/core`.
-3. **Dashboard v2** — Mantine KPI tiles + sparklines (simple inline SVG, or add `@mantine/charts`),
-   queue depths (`GET /analytics/queues`), throughput, health timeline.
-4. **Roll full-screen detail across screens**: Souls (reference, biggest) → Accounts → Missions →
-   Landscape → News Hub → Knowledge → Channel Profiles → Decisions/Activity → Database (Mantine Table)
-   → Genesis/AuthFactory (rebuild from raw HTML). Add relationship cross-links throughout.
-5. Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
-   requires `docker compose build daedalus` (the React SPA is built inside the image). `npm install`
-   runs in the build (network available) so adding Mantine deps to `package.json` is enough.
+### Redesign progress (Stage 67 done) + next steps
+**DONE (Stage 67):** per-entity routing (`useHashRoute`, `#/<view>/<id>`); reusable **`src/ui/`**
+primitives — `DataView`, `DetailPage`, `EntityPicker`, `StatTile`; **`SoulsScreen`** (flagship
+full-screen 5-tab editor, replaces `SoulsContext`); **`AccountsScreen`** (full-screen + soul-bind via
+`EntityPicker`, replaces `AccountsManager`); **Dashboard v2** ("Центр управления", KPI tiles +
+sparklines). All verified live. The old `SoulsContext.css`/`AccountsManager.css` are imported in
+`App.tsx` to keep global classes (`.status-badge`/`.tabs`/`.modal-*`/`.header-row`) for un-migrated
+screens.
+
+**NEXT — apply the same pattern to the rest** (`DataView` list → `DetailPage` full-screen, `EntityPicker`
+for any ID entry, Mantine components, cross-links):
+1. **Missions** (`MissionDeck`) — list → full-screen mission detail (Overview/Targets/Agents tabs);
+   the eligible-agent picker → `EntityPicker`.
+2. **Landscape**, **News Hub**, **Knowledge**, **Channel Profiles** — list → full-screen add/edit
+   (replace the SidePanels).
+3. **Decisions** + **Activity** — consider unifying into one timeline; add cross-links to
+   agent/channel/mission.
+4. **Database Explorer** → Mantine Table (the h-scroll bug is patched in CSS; Mantine Table does it natively).
+5. **Genesis** + **Auth Factory** — rebuild from raw HTML on Mantine (Auth = a guided wizard).
+6. **Devices** — fold the manual assign-agent input into `EntityPicker`.
+7. Weave **relationship cross-links** + more informativeness as each migrates.
+Templates: `SoulsScreen.tsx` / `AccountsScreen.tsx` + `src/ui/*`. Build `daedalus`, verify via Playwright.
+
+Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
+requires `docker compose build daedalus` (React SPA built inside the image; `npm install` runs in the
+build so adding Mantine deps to `package.json` is enough).
 
 ---
 
