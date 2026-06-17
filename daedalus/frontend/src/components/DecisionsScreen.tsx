@@ -7,9 +7,9 @@ interface Decision {
   id: number; agent_id: string | null; mission_id: number | null; channel_ref: string | null;
   post_url: string | null; kind: string; detail: string | null; verdict: boolean | null; created_at: string | null;
 }
-interface Props { token: string; }
+interface Props { token: string; goTo?: (view: string, id?: string) => void; }
 
-export default function DecisionsScreen({ token }: Props) {
+export default function DecisionsScreen({ token, goTo }: Props) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [rows, setRows] = useState<Decision[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,8 +36,12 @@ export default function DecisionsScreen({ token }: Props) {
   const columns: Col<Decision>[] = [
     { key: 'created_at', header: 'Время', minWidth: 150, sortValue: d => d.created_at || '',
       render: d => <Text size="xs" c="dimmed">{d.created_at ? new Date(d.created_at).toLocaleString('ru-RU') : '—'}</Text> },
-    { key: 'agent_id', header: 'Агент', minWidth: 180, render: d => <Text size="sm" ff="monospace">{d.agent_id || '—'}</Text> },
-    { key: 'channel_ref', header: 'Канал', minWidth: 160, render: d => <Text size="sm" c="blue">{d.channel_ref || '—'}</Text> },
+    { key: 'agent_id', header: 'Агент', minWidth: 180, render: d => d.agent_id
+      ? <Anchor size="sm" ff="monospace" onClick={goTo ? () => goTo('souls', d.agent_id!) : undefined}>{d.agent_id}</Anchor>
+      : <Text size="sm" c="dimmed">—</Text> },
+    { key: 'channel_ref', header: 'Канал', minWidth: 160, render: d => d.channel_ref
+      ? <Anchor size="sm" onClick={goTo ? () => goTo('channelprofiles', d.channel_ref!) : undefined}>{d.channel_ref}</Anchor>
+      : <Text size="sm" c="dimmed">—</Text> },
     { key: 'verdict', header: 'Вердикт', minWidth: 130, sortValue: d => d.kind === 'skip' ? 2 : d.verdict ? 1 : 0, render: verdict },
     { key: 'detail', header: 'Что распознал / причина', minWidth: 420, sortable: false,
       render: d => <Text size="sm" lineClamp={2} maw={520}>{d.detail || '—'}</Text> },

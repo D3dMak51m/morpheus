@@ -12,11 +12,11 @@ interface Account { id: number; agent_id: string | null; platform: string; usern
 interface SoulProfile { agent_id: string; codename: string; full_name: string; caste: string; status: string; }
 interface AuditLog { id: number; action: string; timestamp: string; }
 
-interface Props { token: string; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void; }
+interface Props { token: string; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void; goTo?: (view: string, id?: string) => void; }
 
 const STATUS_COLOR: Record<string, string> = { active: 'teal', banned: 'red', limited: 'yellow', unbound: 'gray', disabled: 'red', suspended: 'orange' };
 
-export default function AccountsScreen({ token, selectedId, onOpen, onBack }: Props) {
+export default function AccountsScreen({ token, selectedId, onOpen, onBack, goTo }: Props) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [profiles, setProfiles] = useState<SoulProfile[]>([]);
@@ -36,7 +36,7 @@ export default function AccountsScreen({ token, selectedId, onOpen, onBack }: Pr
 
   if (selectedId) {
     if (!selected) return <DetailPage onBack={onBack} title="Загрузка…" subtitle={selectedId}><Text c="dimmed">Аккаунт загружается…</Text></DetailPage>;
-    return <AccountDetail key={selected.id} token={token} account={selected} profiles={profiles} onBack={onBack} onChanged={() => { fetchAccounts(); fetchProfiles(); }} />;
+    return <AccountDetail key={selected.id} token={token} account={selected} profiles={profiles} onBack={onBack} onChanged={() => { fetchAccounts(); fetchProfiles(); }} goTo={goTo} />;
   }
 
   const columns: Col<Account>[] = [
@@ -48,7 +48,8 @@ export default function AccountsScreen({ token, selectedId, onOpen, onBack }: Pr
     { key: 'device_id', header: 'Устройство', minWidth: 140, render: a => a.device_id || '—' },
     { key: 'agent_id', header: 'Привязка', minWidth: 220, sortValue: a => a.agent_id || '',
       render: a => a.agent_id
-        ? <Badge variant="light" color="indigo" leftSection={<LinkIcon size={11} />}>{a.agent_id}</Badge>
+        ? <Badge variant="light" color="indigo" leftSection={<LinkIcon size={11} />} style={{ cursor: goTo ? 'pointer' : undefined }}
+            onClick={goTo ? (e) => { e.stopPropagation(); goTo('souls', a.agent_id!); } : undefined}>{a.agent_id}</Badge>
         : <Text size="sm" c="dimmed"><Unlink size={12} style={{ verticalAlign: -2 }} /> свободен</Text> },
   ];
 
@@ -71,8 +72,8 @@ export default function AccountsScreen({ token, selectedId, onOpen, onBack }: Pr
   );
 }
 
-function AccountDetail({ token, account, profiles, onBack, onChanged }: {
-  token: string; account: Account; profiles: SoulProfile[]; onBack: () => void; onChanged: () => void;
+function AccountDetail({ token, account, profiles, onBack, onChanged, goTo }: {
+  token: string; account: Account; profiles: SoulProfile[]; onBack: () => void; onChanged: () => void; goTo?: (view: string, id?: string) => void;
 }) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -120,7 +121,10 @@ function AccountDetail({ token, account, profiles, onBack, onChanged }: {
           <Text fw={600} mb="sm">Привязка к душе</Text>
           {account.agent_id ? (
             <Group justify="space-between">
-              <Group gap="xs"><Badge size="lg" variant="light" color="indigo" leftSection={<LinkIcon size={13} />}>{account.agent_id}</Badge></Group>
+              <Group gap="xs">
+                <Badge size="lg" variant="light" color="indigo" leftSection={<LinkIcon size={13} />}>{account.agent_id}</Badge>
+                {goTo && <Button size="xs" variant="subtle" onClick={() => goTo('souls', account.agent_id!)}>открыть душу →</Button>}
+              </Group>
               <Group gap="xs">
                 {isTg && <Button variant="default" leftSection={<Radio size={15} />} onClick={() => setChannelMgr(true)}>Каналы аккаунта</Button>}
                 <Button variant="light" color="red" leftSection={<Unlink size={15} />} onClick={unbind}>Отвязать душу</Button>

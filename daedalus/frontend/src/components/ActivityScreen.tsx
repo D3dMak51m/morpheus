@@ -7,12 +7,12 @@ interface Log {
   id: number; agent_id: string; platform: string; action_type: string;
   target_url: string; text_content: string | null; status: string; created_at: string;
 }
-interface Props { token: string; }
+interface Props { token: string; goTo?: (view: string, id?: string) => void; }
 
 const STATUS_COLOR: Record<string, string> = { SUCCESS: 'teal', FAILED: 'red', PENDING: 'yellow' };
 const PLATFORMS = ['telegram', 'instagram', 'twitter', 'threads'];
 
-export default function ActivityScreen({ token }: Props) {
+export default function ActivityScreen({ token, goTo }: Props) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [logs, setLogs] = useState<Log[]>([]);
   const [total, setTotal] = useState(0);
@@ -34,7 +34,7 @@ export default function ActivityScreen({ token }: Props) {
       render: l => <Badge color={STATUS_COLOR[l.status] || 'gray'} variant="light">{l.status}</Badge> },
     { key: 'created_at', header: 'Время', minWidth: 150, sortValue: l => l.created_at,
       render: l => <Text size="xs" c="dimmed">{new Date(l.created_at).toLocaleString('ru-RU')}</Text> },
-    { key: 'agent_id', header: 'Агент', minWidth: 180, render: l => <Text size="sm" ff="monospace">{l.agent_id}</Text> },
+    { key: 'agent_id', header: 'Агент', minWidth: 180, render: l => <Anchor size="sm" ff="monospace" onClick={goTo ? () => goTo('souls', l.agent_id) : undefined}>{l.agent_id}</Anchor> },
     { key: 'platform', header: 'Платформа', minWidth: 110, render: l => <Badge variant="outline">{l.platform}</Badge> },
     { key: 'action_type', header: 'Действие', minWidth: 120, sortValue: l => l.action_type, render: l => l.action_type },
     { key: 'text_content', header: 'Текст', minWidth: 360, sortable: false,

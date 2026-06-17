@@ -25,7 +25,7 @@ interface Profile {
 interface StancePair { topic: string; stance: string; }
 interface LiveStatus { agent_id: string; event: string; detail: string; status: string; ts: string; }
 
-interface Props { token: string; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void; }
+interface Props { token: string; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void; goTo?: (view: string, id?: string) => void; }
 
 const CASTES = ['alpha', 'beta', 'gamma'];
 const PLATFORMS = ['telegram', 'instagram', 'youtube', 'threads', 'web'];
@@ -53,7 +53,7 @@ function liveness(s: LiveStatus | undefined): 'working' | 'idle' | 'asleep' {
 }
 const LIVE_COLOR = { working: '#34c98b', idle: '#e0a23c', asleep: '#475569' } as const;
 
-export default function SoulsScreen({ token, selectedId, onOpen, onBack }: Props) {
+export default function SoulsScreen({ token, selectedId, onOpen, onBack, goTo }: Props) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -111,6 +111,7 @@ export default function SoulsScreen({ token, selectedId, onOpen, onBack }: Props
         onAccountsChanged={() => { fetchAccounts(); fetchProfiles(); }}
         onStatus={setAgentStatus}
         onDeleted={() => { fetchProfiles(); onBack(); }}
+        goTo={goTo}
       />
     );
   }
@@ -179,10 +180,10 @@ export default function SoulsScreen({ token, selectedId, onOpen, onBack }: Props
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChanged, onStatus, onDeleted }: {
+function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChanged, onStatus, onDeleted, goTo }: {
   token: string; profile: Profile; accounts: Account[];
   onBack: () => void; onSaved: () => void; onAccountsChanged: () => void;
-  onStatus: (id: string, s: 'active' | 'suspended') => void; onDeleted: () => void;
+  onStatus: (id: string, s: 'active' | 'suspended') => void; onDeleted: () => void; goTo?: (view: string, id?: string) => void;
 }) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [p, setP] = useState<Profile>(() => ({
@@ -397,7 +398,10 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
                 <Paper key={a.id} withBorder p="sm" radius="md">
                   <Group justify="space-between">
                     <Group gap="xs"><Badge variant="outline">{a.platform}</Badge><Text>{a.username}</Text><Badge size="sm" color={STATUS_COLOR[a.status] || 'gray'} variant="light">{a.status}</Badge></Group>
-                    <Button size="xs" variant="subtle" color="red" leftSection={<Unlink size={13} />} onClick={() => unbindAccount(a)}>Отвязать</Button>
+                    <Group gap="xs">
+                      {goTo && <Button size="xs" variant="subtle" onClick={() => goTo('accounts', String(a.id))}>открыть →</Button>}
+                      <Button size="xs" variant="subtle" color="red" leftSection={<Unlink size={13} />} onClick={() => unbindAccount(a)}>Отвязать</Button>
+                    </Group>
                   </Group>
                 </Paper>))}</Stack>
             )}

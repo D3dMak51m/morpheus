@@ -21,7 +21,7 @@ interface EligibleAgent { agent_id: string; codename: string | null; caste: stri
 export interface MissionPrefill { target_url: string; title: string; narrative_goal: string; }
 interface Props {
   token: string; selectedId: string | null; onOpen: (id: string) => void; onBack: () => void;
-  prefill?: MissionPrefill | null; onPrefillConsumed?: () => void;
+  prefill?: MissionPrefill | null; onPrefillConsumed?: () => void; goTo?: (view: string, id?: string) => void;
 }
 
 const TACTICS = [
@@ -32,7 +32,7 @@ const TACTICS = [
 const ROLE_COLOR: Record<string, string> = { alpha: 'red', beta: 'blue', gamma: 'green' };
 const inferKind = (id: string) => (/\/\d+\/?$/.test(id) ? 'post' : 'channel');
 
-export default function MissionsScreen({ token, selectedId, onOpen, onBack, prefill, onPrefillConsumed }: Props) {
+export default function MissionsScreen({ token, selectedId, onOpen, onBack, prefill, onPrefillConsumed, goTo }: Props) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [missions, setMissions] = useState<Mission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +65,7 @@ export default function MissionsScreen({ token, selectedId, onOpen, onBack, pref
     if (!m) return <DetailPage onBack={onBack} title="Загрузка…" subtitle={selectedId}><Text c="dimmed">Миссия загружается…</Text></DetailPage>;
     return <MissionDetail key={m.id} token={token} mission={m} onBack={onBack}
       onChanged={(u) => setMissions(prev => prev.map(x => x.id === u.id ? u : x))}
-      onStatus={setStatus} onDeleted={() => { fetchMissions(); onBack(); }} />;
+      onStatus={setStatus} onDeleted={() => { fetchMissions(); onBack(); }} goTo={goTo} />;
   }
 
   const columns: Col<Mission>[] = [
@@ -149,9 +149,9 @@ function MissionCreate({ token, prefill, onCreated, onBack, onOpen }: {
 }
 
 // ── Detail ──
-function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted }: {
+function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted, goTo }: {
   token: string; mission: Mission; onBack: () => void; onChanged: (m: Mission) => void;
-  onStatus: (m: Mission, s: string) => void; onDeleted: () => void;
+  onStatus: (m: Mission, s: string) => void; onDeleted: () => void; goTo?: (view: string, id?: string) => void;
 }) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [m, setM] = useState<Mission>(mission);
@@ -288,7 +288,10 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted 
                 <Paper key={s.id} withBorder p="sm" radius="md">
                   <Group justify="space-between">
                     <Group gap="sm"><Badge color={ROLE_COLOR[s.assigned_role] || 'gray'} variant="light">{s.assigned_role}</Badge><Text ff="monospace" size="sm">{s.codename || s.agent_id}</Text></Group>
-                    <ActionIcon variant="subtle" color="red" onClick={() => removeAgent(s.id)}><X size={15} /></ActionIcon>
+                    <Group gap="xs">
+                      {goTo && <Button size="xs" variant="subtle" onClick={() => goTo('souls', s.agent_id)}>душа →</Button>}
+                      <ActionIcon variant="subtle" color="red" onClick={() => removeAgent(s.id)}><X size={15} /></ActionIcon>
+                    </Group>
                   </Group>
                 </Paper>))}</Stack>
             )}
