@@ -151,7 +151,8 @@ See `walkthrough.md` for the staged log.
 Next: **DAEDALUS console UX overhaul** (in progress) — bringing the whole operator console to a
 "mission center" standard. Phase 1 (foundation): hash routing, a reusable `DataTable`, Database
 Explorer fix. Phase 2 (uniform lists): migrating the list screens to `DataTable` for consistent
-search/sort/pagination — `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `Landscape`,
-`ScoutingRadar`, `NewsHub` done; `Devices`, `Рой` drill-downs remaining. Then de-modal editing,
+search/sort/pagination — done across `DecisionLog`, `AccountsManager`, `ChannelProfiles`,
+`Landscape`, `ScoutingRadar`, `NewsHub`, and the `Рой` drill-downs (`MuninnExplorer` keeps its own
+server-side search; `Devices` stays a control dashboard). Next: de-modal editing,
 styling/sliders, and screen consolidation. The text model is small (`qwen2.5:3b`); a larger
 `TEXT_MODEL_NAME` sharpens comments/relevance — the prompts and guards are model-agnostic.

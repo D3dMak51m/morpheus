@@ -75,9 +75,9 @@ so any frontend change needs `docker compose build daedalus`.
 - React (`daedalus/frontend/src/`): **hash routing** — `App.tsx` keeps the active view in the
   URL hash (`#/view`) so refresh/deep-links/back-forward work. **`components/DataTable.tsx`** —
   reusable table (search / sortable columns / pagination / states); migrate list screens to it
-  (done so far: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
-  `ScoutingRadar`, `NewsHubInspector`; `MuninnExplorer` keeps its own server-side
-  search/pagination by design).
+  (Phase 2 done: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
+  `ScoutingRadar`, `NewsHubInspector`, `SwarmDashboard` drill-downs; `MuninnExplorer` keeps its
+  own server-side search/pagination and `DeviceGrid` is a control dashboard — both by design).
   `db_explorer` validates table reads against LIVE tables (not a stale whitelist). Components
   (`components/`): `LiveOps` (live activity), `SwarmDashboard`
   ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),

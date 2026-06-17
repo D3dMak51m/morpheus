@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { DataTable, Column } from './DataTable';
 import './SwarmDashboard.css';
 
 interface SwarmData {
@@ -87,6 +88,41 @@ const SwarmDashboard: React.FC<Props> = ({ token, onNavigate }) => {
   const all = d?.all_time || {};
   const agentsByCaste = (caste: string) => (d?.by_agent || []).filter(a => a.caste === caste).map(a => a.agent_id);
 
+  const activityColumns: Column<ActivityLog>[] = [
+    { key: 'created_at', header: 'Время', width: '160px', sortValue: l => l.created_at,
+      render: l => <span className="sd-drill-time">{new Date(l.created_at).toLocaleString('ru-RU')}</span> },
+    { key: 'agent_id', header: 'Агент', width: '170px', sortValue: l => l.agent_id,
+      render: l => <span className="font-mono sd-muted">{l.agent_id}</span> },
+    { key: 'action_type', header: 'Действие', width: '130px', sortValue: l => l.action_type,
+      render: l => <span className="sd-drill-act">{ACTION_LABEL[l.action_type] || l.action_type}</span> },
+    { key: 'status', header: 'Статус', width: '100px', sortValue: l => l.status,
+      render: l => <span className={`sd-status ${l.status === 'SUCCESS' ? 'active' : 'suspended'}`}>{l.status}</span> },
+    { key: 'text_content', header: 'Текст / ссылка', sortable: false,
+      render: l => (
+        <>
+          {l.text_content && <div className="sd-drill-text">«{l.text_content}»</div>}
+          {l.target_url && <a className="sd-drill-url" href={l.target_url} target="_blank" rel="noreferrer">{l.target_url}</a>}
+        </>
+      ) },
+  ];
+
+  const dialogueColumns: Column<Dialogue>[] = [
+    { key: 'agent_id', header: 'Агент', width: '170px', sortValue: dl => dl.agent_id,
+      render: dl => <span className="font-mono sd-muted">{dl.agent_id}</span> },
+    { key: 'channel', header: 'Канал', sortValue: dl => dl.channel,
+      render: dl => <span>📢 {dl.channel}</span> },
+    { key: 'depth', header: 'Глубина', width: '90px', align: 'right', sortValue: dl => dl.depth },
+    { key: 'opponent_id', header: 'Оппонент', sortValue: dl => dl.opponent_id || '',
+      render: dl => <span className="sd-muted">{dl.opponent_id || '—'}</span> },
+    { key: 'narrative_goal', header: 'Цель / ссылка', sortable: false,
+      render: dl => (
+        <>
+          {dl.narrative_goal && <div className="sd-drill-text">{dl.narrative_goal}</div>}
+          {dl.url && <a className="sd-drill-url" href={dl.url} target="_blank" rel="noreferrer">{dl.url}</a>}
+        </>
+      ) },
+  ];
+
   const card = (icon: string, label: string, today: number, total: number, onClick?: () => void) => (
     <div className={`sd-card ${onClick ? 'clickable' : ''}`} onClick={onClick}>
       <div className="sd-card-icon">{icon}</div>
@@ -173,39 +209,25 @@ const SwarmDashboard: React.FC<Props> = ({ token, onNavigate }) => {
             <div className="modal-header"><h2>{drill.title}</h2></div>
             <div className="modal-body">
               {drillLoading ? <p>Загрузка…</p> : drill.kind === 'activity' ? (
-                logs.length === 0 ? <p className="sd-muted">Записей нет.</p> : (
-                  <div className="sd-drill-list">
-                    {logs.map(l => (
-                      <div key={l.id} className={`sd-drill-row st-${l.status.toLowerCase()}`}>
-                        <div className="sd-drill-meta">
-                          <span className="sd-drill-time">{new Date(l.created_at).toLocaleString('ru-RU')}</span>
-                          <span className="font-mono sd-muted">{l.agent_id}</span>
-                          <span className="sd-drill-act">{ACTION_LABEL[l.action_type] || l.action_type}</span>
-                          <span className={`sd-status ${l.status === 'SUCCESS' ? 'active' : 'suspended'}`}>{l.status}</span>
-                        </div>
-                        {l.text_content && <div className="sd-drill-text">«{l.text_content}»</div>}
-                        {l.target_url && <a className="sd-drill-url" href={l.target_url} target="_blank" rel="noreferrer">{l.target_url}</a>}
-                      </div>
-                    ))}
-                  </div>
-                )
+                <DataTable
+                  columns={activityColumns}
+                  rows={logs}
+                  rowKey={l => l.id}
+                  searchText={l => `${l.agent_id} ${ACTION_LABEL[l.action_type] || l.action_type} ${l.text_content || ''} ${l.target_url || ''}`}
+                  searchPlaceholder="🔍 Поиск по агенту, тексту или каналу…"
+                  emptyText="Записей нет."
+                  pageSize={25}
+                />
               ) : (
-                dialogues.length === 0 ? <p className="sd-muted">Активных диалогов нет.</p> : (
-                  <div className="sd-drill-list">
-                    {dialogues.map((dl, i) => (
-                      <div key={i} className="sd-drill-row">
-                        <div className="sd-drill-meta">
-                          <span className="font-mono sd-muted">{dl.agent_id}</span>
-                          <span>📢 {dl.channel}</span>
-                          <span className="sd-muted">глубина {dl.depth}</span>
-                          {dl.opponent_id && <span className="sd-muted">↔ {dl.opponent_id}</span>}
-                        </div>
-                        {dl.narrative_goal && <div className="sd-drill-text">цель: {dl.narrative_goal}</div>}
-                        {dl.url && <a className="sd-drill-url" href={dl.url} target="_blank" rel="noreferrer">{dl.url}</a>}
-                      </div>
-                    ))}
-                  </div>
-                )
+                <DataTable
+                  columns={dialogueColumns}
+                  rows={dialogues}
+                  rowKey={dl => `${dl.agent_id}:${dl.channel}:${dl.post_id}:${dl.depth}`}
+                  searchText={dl => `${dl.agent_id} ${dl.channel} ${dl.opponent_id || ''} ${dl.narrative_goal || ''}`}
+                  searchPlaceholder="🔍 Поиск по агенту, каналу или цели…"
+                  emptyText="Активных диалогов нет."
+                  pageSize={25}
+                />
               )}
             </div>
             <div className="modal-actions"><button className="btn-secondary" onClick={() => setDrill(null)}>Закрыть</button></div>

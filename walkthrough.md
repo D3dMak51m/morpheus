@@ -175,6 +175,18 @@ Everything below (Stages 23–35) was verified live on real data.
   reflected the real layers — aligned to lowercase; (2) the `Processed` status (21 events) had no
   label/pill style/filter option — added it. Verified live (200 events, colored status pills,
   modal reflects data). (Still to migrate: `DeviceGrid`, `SwarmDashboard` drill-downs.)
+- **53 — UX/UI overhaul, Phase 2 (part 5, FINAL): SwarmDashboard drill-downs.** Migrated the
+  `SwarmDashboard` ("Дашборд роя") **drill-down modals** (the activity list — up to 150 rows/24 h —
+  and the dialogues list, both previously flat lists with no search/sort/pagination) to `DataTable`
+  inside the modal: search (agent/text/channel/goal) + sort (time/agent/action/status, depth/
+  channel) + pagination. Long comment text is clamped to 4 lines in-cell so rows don't stretch.
+  The modal is kept (de-modal is Phase 3). Verified live. **`DeviceGrid` deliberately NOT migrated**
+  — like `MuninnExplorer` it isn't a list: it's a control dashboard (per-card live telemetry on
+  `<canvas>`, VNC live-view, hardware controls, emulator provisioning) for the **out-of-scope,
+  broken mobile/Appium stack** (`analytics/devices` returns `total:0`); a `DataTable` would be a
+  regression. **Phase 2 (uniform lists) is now complete.** Done: `DecisionLog`, `AccountsManager`,
+  `ChannelProfiles`, `LandscapeManager`, `ScoutingRadar`, `NewsHubInspector`, `SwarmDashboard`
+  drill-downs. Intentionally excluded: `MuninnExplorer`, `DeviceGrid` (rationale above).
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -184,17 +196,17 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 52 — UX/UI overhaul Phase 2 (part 4)**: migrated `NewsHubInspector`
-("Центр HUGINN") to the reusable `DataTable` (removed a fake telemetry panel, raised the fetch
-limit 20→200, added a status filter; fixed the layer-checkbox key-case bug + the unlabeled
-`Processed` status) and fully Russified it, verified live. So far on `DataTable`: `DecisionLog`,
-`AccountsManager`, `ChannelProfiles`, `LandscapeManager`, `ScoutingRadar`, `NewsHubInspector`
-(`MuninnExplorer` intentionally left on its own server-side search). **Now in progress: the
-UX/UI overhaul** (operator asked to bring the whole console to a real "mission center" standard).
-**Next: continue Phase 2** — migrate the remaining list screens (`DeviceGrid`, `SwarmDashboard`
-drill-downs) to `DataTable` for uniform search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with
-non-blocking panels/routed edit views + pick-from-list instead of typing IDs), P4
-styling/sliders, P5 consolidate scattered data.
+Just finished **Stage 53 — UX/UI overhaul Phase 2 (part 5, FINAL)**: migrated the
+`SwarmDashboard` drill-down modals to `DataTable`, completing **Phase 2 (uniform lists)**. Done on
+`DataTable`: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
+`ScoutingRadar`, `NewsHubInspector`, `SwarmDashboard` drill-downs. Intentionally excluded:
+`MuninnExplorer` (own server-side search/pagination) and `DeviceGrid` (a control dashboard for the
+out-of-scope broken mobile stack, not a list). **Now in progress: the UX/UI overhaul** (operator
+asked to bring the whole console to a real "mission center" standard). **Next: Phase 3 — de-modal**
+(replace the blocking modal-overlay editors in `MissionDeck`, `SoulsContext`, `ChannelManager`,
+`LandscapeManager`, `NewsHubInspector`, `MuninnExplorer`, `SwarmDashboard` with non-blocking side
+panels / routed edit views + pick-from-list instead of typing IDs), then P4 styling/sliders, P5
+consolidate scattered data.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

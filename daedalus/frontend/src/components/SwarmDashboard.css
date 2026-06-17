@@ -60,6 +60,14 @@ tr.sd-clickable:hover { background: var(--bg-card, rgba(255,255,255,0.04)); }
 .sd-drill-time { font-family: ui-monospace, monospace; font-size: 0.72rem; color: var(--text-muted, #94a3b8); }
 .sd-drill-act { font-weight: 700; font-size: 0.74rem; text-transform: uppercase; }
 .sd-drill-text { margin-top: 5px; font-size: 0.85rem; font-style: italic; }
+/* Clamp long comment text inside the drill-down DataTable cells (Stage 53). */
+.dt-table .sd-drill-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 460px;
+}
 .sd-drill-url { display: inline-block; margin-top: 4px; font-size: 0.74rem; color: var(--accent, #818cf8); text-decoration: none; word-break: break-all; }
 
 .sd-status.banned { color: #ef4444; background: rgba(239,68,68,0.16); }
