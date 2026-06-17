@@ -72,31 +72,33 @@ so any frontend change needs `docker compose build daedalus`.
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
   GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal
   `/decisions/internal/log`; operator `GET /decisions` — the durable decision history).
-- React (`daedalus/frontend/src/`): **UI-framework migration IN PROGRESS** — adopting **Mantine 7**
-  (`MantineProvider` dark theme in `main.tsx`; app shell on Mantine `AppShell` with fixed navbar +
-  `ScrollArea` + single content scroll). The operator mandate is a **professional command-and-control
-  center**: full-screen master→detail edit per entity (NOT modals/drawers), pick-from-list everywhere,
-  serious Dashboard, relationship cross-links. **The full capability map + redesign plan is in
-  `DAEDALUS_CAPABILITIES.md` — read it before touching the UI.** The `DataTable`/`SidePanel` below are
-  the *previous* iteration being superseded by the Mantine redesign.
-  **hash routing** — `App.tsx` keeps the active view in the
-  URL hash (`#/view`) so refresh/deep-links/back-forward work. **`components/DataTable.tsx`** —
-  reusable table (search / sortable columns / pagination / states); migrate list screens to it
-  (Phase 2 done: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
-  `ScoutingRadar`, `NewsHubInspector`, `SwarmDashboard` drill-downs; `MuninnExplorer` keeps its
-  own server-side search/pagination and `DeviceGrid` is a control dashboard — both by design).
-  **`components/SidePanel.tsx`** — reusable non-blocking right-side editor (replaces blocking
-  modal-overlays so unsaved edits survive a tab switch); Phase 3 converts modal editors to it
-  (all editors done: `LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`, `ChannelManager`,
-  `MissionDeck`, `SoulsContext`; the read-only `SwarmDashboard` drill-down stays a modal).
-  `db_explorer` validates table reads against LIVE tables (not a stale whitelist). Components
-  (`components/`): `LiveOps` (live activity), `SwarmDashboard`
-  ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),
-  `ChannelManager` (account channels), `MissionDeck` (missions), `MuninnExplorer`
-  ("Знания роя", RAG facts), `ChannelProfiles` ("Профили каналов" — per-channel geo/topics/
-  hot-themes), `DecisionLog` ("Решения" — durable why-did/didn't-react history),
-  `LandscapeManager`, `ScoutingRadar`, `AccountsManager`,
-  `AuthFactory`, etc. Operator-facing screens are **in Russian**.
+- React SPA (`daedalus/frontend/src/`): **fully migrated to Mantine 7** (Stages 65–77 — the redesign
+  is DONE). `main.tsx` wraps the app in `MantineProvider` (forced dark theme). `App.tsx` = Mantine
+  **`AppShell`** (fixed navbar + `ScrollArea` nav + single scrolling `Main`) + a data-driven `NAV`
+  array + **hash routing with entity ids**: `useHashRoute` parses `#/<view>/<id>` so `#/souls/<id>`
+  opens that entity's **full-screen** detail (refresh/deep-link/back-forward all work).
+  - **Reusable primitives in `src/ui/`** (use these for any new screen): `DataView` (Mantine `Table`:
+    search, sortable cols, pagination, sticky header, **horizontal scroll** via `Table.ScrollContainer`,
+    row→detail), `DetailPage` (full-screen master-detail scaffold: back + header/actions + body +
+    sticky save footer), `EntityPicker` (searchable/sortable **pick-from-list** modal — used everywhere
+    instead of typing IDs), `StatTile` (KPI tile + inline SVG sparkline).
+  - **One `*Screen.tsx` per view** (`src/components/`): `Dashboard` ("Центр управления" — KPI tiles +
+    `SystemDiagnostics` tab), `LiveOps` ("Командный центр" live feed), `SwarmScreen` ("Рой" KPI hub +
+    drill-downs), `AccountsScreen`, `SoulsScreen` (5-tab full-screen persona editor), `SoulGenesisView`,
+    `CloneFactory`, `AuthFactory` (Stepper login wizard), `LandscapeScreen`, `NewsHubScreen`,
+    `KnowledgeScreen`, `ChannelProfilesScreen`, `ScoutingScreen`, `MissionsScreen`, `DeviceGrid`,
+    `SandboxConsole`, `DecisionsScreen`, `ActivityScreen`, `DatabaseExplorer`, `Login`, `ChannelManager`
+    (full-screen channel editor opened from Souls/Accounts). Editing a selected item is always a
+    **full-screen page**, never a modal/drawer; cross-links jump account↔soul↔mission↔channel↔decisions
+    via a global `goTo(view,id)`. **No per-component CSS** — only `App.css` (theme vars/base); style
+    with Mantine props.
+  - Operator-facing UI strings are **in Russian**. `db_explorer` validates table reads against LIVE
+    tables. **`DAEDALUS_CAPABILITIES.md` is the full screen↔endpoint↔data map** (read it for the UI).
+  - **The old pre-Mantine components are deleted** (`DataTable`, `SidePanel`, `SoulsContext`,
+    `AccountsManager`, `MissionDeck`, `NewsHubInspector`, `MuninnExplorer`, `ChannelProfiles`,
+    `LandscapeManager`, `DecisionLog`, `ActivityStream`, `ScoutingRadar`, `SwarmDashboard`) — don't
+    resurrect them. **The UI is considered complete; current focus is the functional/swarm side
+    (ORPHEUS/MYRMIDON/pipelines below).**
 
 ### ORPHEUS (`orpheus/app/`) — cognitive core (NO HTTP for generation)
 - `main.py` — Redis worker, multi-key `BRPOP` on `queue:raw_events` + `queue:mission_gen`.

@@ -148,11 +148,13 @@ reading photos & audio (STT + VLM + OCR), **Channel Profiling Phase 1** (posts j
 channel's topic/geo/hot-theme context, not in a vacuum), reliability, full operator console.
 See `walkthrough.md` for the staged log.
 
-Next: **DAEDALUS console UX overhaul** (in progress) — bringing the whole operator console to a
-"mission center" standard. Phase 1 (foundation): hash routing, a reusable `DataTable`, Database
-Explorer fix. Phase 2 (uniform lists): migrating the list screens to `DataTable` for consistent
-search/sort/pagination — done across `DecisionLog`, `AccountsManager`, `ChannelProfiles`,
-`Landscape`, `ScoutingRadar`, `NewsHub`, and the `Рой` drill-downs (`MuninnExplorer` keeps its own
-server-side search; `Devices` stays a control dashboard). Next: de-modal editing,
-styling/sliders, and screen consolidation. The text model is small (`qwen2.5:3b`); a larger
-`TEXT_MODEL_NAME` sharpens comments/relevance — the prompts and guards are model-agnostic.
+**DAEDALUS console redesign — ✅ COMPLETE** (Stages 65–77): the whole operator console is now a
+professional command-and-control center on **Mantine 7** — `AppShell` layout, entity routing
+(`#/<view>/<id>`), reusable `DataView`/`DetailPage`/`EntityPicker`/`StatTile`, **full-screen
+master→detail editing of every entity** (no modals/drawers), **pick-from-list everywhere**, a serious
+Dashboard, relationship cross-links, and h-scroll tables. See `DAEDALUS_CAPABILITIES.md` for the full
+screen↔endpoint map and `walkthrough.md` for the staged log.
+
+Next focus: the **functional / swarm logic** (ORPHEUS cognition, MYRMIDON engines, mission pipeline,
+RAG, channel profiling, conversations). The text model is small (`qwen2.5:3b`); a larger
+`TEXT_MODEL_NAME` would sharpen comments/relevance — the prompts and guards are model-agnostic.

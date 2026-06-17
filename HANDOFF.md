@@ -2,9 +2,13 @@
 
 > You are resuming work on MORPHEUS with **no prior chat memory**. Read this file fully,
 > then read **`CLAUDE.md`** (architecture + hard rules), **`README.md`** (overview),
-> **`walkthrough.md`** (per-stage log), and **`CHANNEL_PROFILING.md`** (the profiling
-> subsystem design). After reading, **reply to the operator in RUSSIAN** (code, logs, code
-> comments and git commit messages stay in English; the operator console UI is in Russian).
+> **`walkthrough.md`** (per-stage log), **`CHANNEL_PROFILING.md`** (the profiling subsystem
+> design), and **`DAEDALUS_CAPABILITIES.md`** (the console's full screen↔endpoint↔data map).
+> After reading, **reply to the operator in RUSSIAN** (code, logs, code comments and git commit
+> messages stay in English; the operator console UI is in Russian).
+>
+> **Current phase:** the DAEDALUS **UI redesign is COMPLETE** (Mantine 7, Stages 65–77) — the next
+> focus is the **functional / swarm logic** (ORPHEUS / MYRMIDON / pipelines). See §2.
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
 > HEAD at handoff time = Stage 77. Working tree is clean. Stages are tagged in
@@ -107,113 +111,53 @@ why-did/didn't-react: kind relevance|skip|comment, detail, verdict).
 
 ---
 
-## 2. Status of Stage 47 & 48
+## 2. Current status — UI is DONE; next focus is the FUNCTIONAL / swarm side
 
-### Stage 47 — Runtime dynamic roster auto-assign — ✅ DONE, committed (`c695241`)
-The DAEDALUS reconciler (8 s loop) now also fills the roster of every `active` mission with
-`agent_mode='dynamic'` up to its `dynamic_count`. `mission_control.reconcile_dynamic_rosters`
-(≥1 alpha + beta/gamma split via `_dynamic_role_counts`, best-match by caste↔role + topic
-overlap, additive only). Also fixed `ACTIVE_MISSION_STATES` to include `active` (the per-bot
-mission cap now counts permanent missions). **Verified live**: a dynamic mission with no squad
-auto-filled with caste-matched alpha/beta/gamma in ~16 s. Nothing broken.
+### DAEDALUS UI redesign — ✅ COMPLETE (Stages 65–77)
+The whole operator console was rebuilt as a professional command-and-control center on **Mantine 7**
+(see `CLAUDE.md` → DAEDALUS React section, and `walkthrough.md` for the per-stage log). Highlights:
+Mantine `AppShell` (fixed nav + single scroll), entity routing `#/<view>/<id>`, reusable `src/ui/`
+primitives (`DataView`/`DetailPage`/`EntityPicker`/`StatTile`), **full-screen master→detail editing of
+every entity** (no modals/drawers), **pick-from-list everywhere** (no typed IDs), Dashboard v2,
+relationship cross-links, h-scroll tables. Every screen is Mantine; **no per-component CSS remains**
+(only `App.css` theme vars). All 13 pre-Mantine components were deleted. `DAEDALUS_CAPABILITIES.md` is
+the authoritative screen↔endpoint↔data map. **Treat the UI as complete — only touch it for real
+operator-reported issues; do not re-litigate it.**
 
-### Stage 48 — UX/UI overhaul, Phase 1 (foundation + critical bugs) — ✅ DONE, committed (`22501c2`)
-The operator asked to bring the **whole Daedalus console** to a real "mission center" standard.
-This is a **multi-phase effort; only Phase 1 is done.** What Phase 1 delivered (all verified
-live, nothing broken):
-- **HTTP 400 in Database Explorer FIXED.** `db_explorer.py` `_validate_table_name(table, db)`
-  now validates against the **live** list of public tables (the same source the UI uses), not a
-  stale 8-table whitelist. Every table opens; bogus names still 400 (injection-safe).
-- **Refresh no longer snaps to Dashboard.** `App.tsx` now uses **hash routing** (`#/view`):
-  the active tab is in the URL, so refresh keeps it, links are shareable, back/forward work.
-  Deep-link example: `http://localhost:8000/#/database`.
-- **Reusable `components/DataTable.tsx` (+ css)**: search, sortable columns, pagination,
-  loading/empty states. **`DecisionLog` ("Решения") migrated to it** as the reference pattern.
+### ▶ NEXT FOCUS: the functional / swarm logic
+The operator's next phase is the **functional core**, not the UI. The architecture, data flow, the
+live mission pipeline, data model and Redis keys are all in **§1 above** — read it; that is the map for
+functional work. The functional code lives in:
+- **ORPHEUS** `orpheus/app/` — cognition (Redis worker; `main.py` handlers, `persona.py` prompt
+  assembly, `rag.py`, `guardrails.py`, `media_enricher.py`). NO HTTP for generation.
+- **MYRMIDON** `myrmidon/app/` — execution (`target_engine.py` primary driver, `dialogue_engine.py`,
+  `swarm.py`, `drivers/tg_client.py`, `media_reader.py`, `schedule.py`, `account_health.py`).
+- **DAEDALUS** `daedalus/app/` — APIs + engines feeding the swarm (`channel_profiler.py`,
+  `classifier.py`/`embeddings.py`, `genesis_engine.py`, `mission_control.py`, internal endpoints).
+- **HUGINN / MUNINN / HEIMDALL** — scrapers / dialog memory / STT.
 
-### Stage 49–53 — UX/UI overhaul Phase 2 (uniform lists) — ✅ COMPLETE, committed
-Migrated six list surfaces to `DataTable`: **`AccountsManager`** (search-less card grid + English
-title → searchable/sortable/paginated table, unified `view-container` header, detail pane preserved
-on row-click, fully Russified), **`ChannelProfiles`** (hand-rolled `<table>` → `DataTable`, gains
-sort + pagination, rich cells preserved via `render`), **`LandscapeManager`** (hand-rolled
-`<table>` → `DataTable`; sort by id/platform/type/status; layer pills + status toggle + edit/delete
-preserved; whole screen incl. its add/edit modal English → fully Russified — modal kept, only
-strings changed), **`ScoutingRadar`** (search-less card grid with **684 rows** → `DataTable` with
-search + sort by velocity/engagement/time + pagination; heat metaphor kept as a heat-colored
-"Скорость" badge column; convert/dismiss + toasts kept; English → fully Russified), and
-**`NewsHubInspector`** (card stream + a **fake telemetry panel** → full-width `DataTable` with
-search + sort + status filter; removed the dishonest panel with fabricated metrics, raised fetch
-20→200, kept live/pause + edit/reject/approve + edit modal; English → fully Russified; **also
-fixed** the modal layer-checkbox key-case bug (`Global`→`global`) and the unlabeled `Processed`
-status), and the **`SwarmDashboard` drill-down modals** (the activity list — up to 150 rows/24 h —
-and the dialogues list → `DataTable` inside the modal with search/sort/pagination; long comment
-text clamped to 4 lines in-cell). All verified live. **Two screens deliberately NOT migrated:**
-`MuninnExplorer` (already has server-side search + layer filters + pagination) and `DeviceGrid`
-(a control dashboard — per-card live telemetry on `<canvas>`, VNC, hardware controls, emulator
-provisioning — for the **out-of-scope broken mobile/Appium stack**, not a list). A `DataTable`
-would regress both. **Phase 2 (uniform lists) is COMPLETE.**
+**Known functional levers & open issues (candidates — confirm direction with the operator first):**
+- `qwen2.5:3b` is weak: parrots input + rehashes its own comments (mitigated by `guardrails.is_echo`/
+  `is_repeat` + `morpheus:recent_outputs`). A larger `TEXT_MODEL_NAME` would sharpen comments/relevance;
+  prompts and guards are model-agnostic. The single ~6 GB GPU runs ONE model at a time.
+- Relevance/tactic are short classification calls → MUST pass `generate_text(..., penalties=False)` or
+  the model emits garbled tokens (the `'дятьнет'` bug).
+- Channel Profiling is built (see `CHANNEL_PROFILING.md`); relevance is judged in channel context.
+- Conversations (`dialogue_engine`) are multi-turn; quality depends on persona + memory.
+- Mobile/Appium path is **broken & out of scope** (Devices/Sandbox/CloneFactory mobile bits).
 
-### Stage 54–58 — UX/UI overhaul Phase 3 (de-modal editors) — ✅ COMPLETE, committed
-Built the reusable **`components/SidePanel.tsx`** (+ css): a non-blocking editor that slides in from
-the right with NO dimming backdrop (rest of page + sidebar stay clickable; submit button goes in the
-footer, bound to the form via the HTML `form=` attribute — or plain `onClick` if the editor isn't a
-`<form>`). Verified live: unsaved edits survive a tab switch; the panel hides with its host view
-(`display:none`) so it doesn't bleed over other screens. **All editors converted:** `LandscapeManager`
-(add/edit source), `MuninnExplorer` (inject fact), `NewsHubInspector` (edit event), `ChannelManager`
-(account channels — wide 680px tabs/filters/bulk panel), `MissionDeck` (create form + tabbed
-`MissionDetail` editor — its agent roster is already a pick-from-list, nothing to replace),
-`SoulsContext` (the big 5-tab profile editor → wide panel). The only leftover `modal-overlay` is the
-read-only `SwarmDashboard` drill-down (activity/dialogue viewer — not an editor, so the unsaved-edits
-complaint doesn't apply; convert it only as an optional consistency pass).
-
-### ⚠️ MAJOR RE-SCOPE (operator, after Stage 64) — read `DAEDALUS_CAPABILITIES.md` first
-The Stages 49–64 work (DataTable migrations, SidePanel de-modal, Russification) was the **wrong
-focus**. The real mandate is a **professional command-and-control / monitoring center**:
-1. **Full UI-framework migration** → **Mantine 7** (adopted Stage 65: provider + dark theme + Mantine
-   `AppShell`; the long-nav page-scroll bug is fixed).
-2. **Full-screen master→detail edit per entity** (NOT modals, NOT drawers). The `SidePanel`s built in
-   Stages 54–58 are to be **replaced** by routed full-screen detail pages exposing **all** params of
-   the selected item — for accounts, souls, landscape, news hub, knowledge, channel profiles, AND all
-   others.
-3. **Pick-from-list everywhere** — every "type an ID" (device→agent, etc.) → searchable/filterable/
-   sortable list with detailed item data.
-4. **Dashboard v2** — serious, information-dense (trends/queues/throughput/health, drill-through).
-5. Far more **informativeness / interactivity** + relationship cross-links on every tab.
-6. Bug fixed (Stage 66): Database Explorer table now scrolls horizontally.
-
-`DAEDALUS_CAPABILITIES.md` is the authoritative inventory of all 20 screens + ~90 endpoints + the
-redesign mandate/sequence. **It is the source of truth for the redesign.**
-
-### Operator working mode (IMPORTANT)
-Do **NOT** stop+commit after every small change. **Batch** the redesign and keep working until a large
-coherent slice is done, then report. (This reverses the earlier per-screen "коммит. потом продолжим"
-cadence.)
-
-### Redesign — ✅ COMPLETE (Stages 65–76)
-The entire DAEDALUS console was rebuilt as a **professional command-and-control center on Mantine 7**:
-- **Foundation:** Mantine `AppShell` (fixed navbar + ScrollArea + single content scroll → the
-  long-nav page-scroll bug is fixed); per-entity routing (`useHashRoute`, `#/<view>/<id>`); reusable
-  **`src/ui/`** primitives — `DataView` (Table: sticky header + horizontal scroll + sort/search/filter),
-  `DetailPage` (full-screen master-detail), `EntityPicker` (pick-from-list), `StatTile` (KPI+spark).
-- **All screens on Mantine:** Dashboard v2; Souls/Accounts/Missions/Landscape/NewsHub/Knowledge/
-  ChannelProfiles (**full-screen master→detail edit, all params**); Decisions/Activity (DataView);
-  Swarm (KPI hub + drill-downs); Scouting; Database (NavLink + SQL console + h-scroll table + inline
-  edit); CloneFactory; Sandbox; Genesis + AuthFactory (rebuilt from raw HTML, Auth = Stepper wizard);
-  Devices; **ChannelManager** (full-screen); Login; SystemDiagnostics.
-- **Pick-from-list everywhere** (Souls/Accounts binding, Missions roster, Devices/Sandbox/Auth
-  agent+device) — no more typed IDs. **Cross-links** account↔soul↔mission↔channel↔decisions.
-- **Cleanup done:** deleted all 13 pre-Mantine components (SoulsContext, AccountsManager, MissionDeck,
-  NewsHubInspector, MuninnExplorer, ChannelProfiles, LandscapeManager, DecisionLog, ActivityStream,
-  ScoutingRadar, SwarmDashboard, DataTable, SidePanel) + their CSS + all legacy global CSS. Only
-  `App.css` (theme vars/base) and `LiveOps.css` (bespoke real-time feed) remain.
-
-**Optional follow-ups (none blocking):** add more relationship cross-links / informativeness; the only remaining modals are
-`EntityPicker` (selection) and the Swarm drill-down (read-only viewer) — both acceptable.
-
-Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
-requires `docker compose build daedalus` (React SPA built inside the image; `npm install` runs in the
-build so adding Mantine deps to `package.json` is enough).
-
----
+### How to run / verify (functional)
+- Deploy a change: `docker compose build <svc> && docker compose up -d <svc>`. ORPHEUS/MYRMIDON are
+  Redis workers / daemon threads — after restart the profile cache + loops take **~30 s** to warm;
+  wait before asserting failure. **Don't rebuild a service you didn't change.**
+- **Live swarm = real Telegram posts.** 3 real accounts: `clone_alpha_91eea738` (alpha),
+  `clone_alpha_bd35bcad` (beta), `clone_alpha_0e795b8d` (gamma). Test channel `@tashkent_news333`.
+  Mission **#10** ("Поддержка общественного транспорта") is **active** with a full roster — the engine
+  keeps working it (throttled ≤1 comment/channel/hr, ≤4/agent/hr, only in active hours 8–22 Tashkent).
+  Pause an agent/mission via the UI to stop it. Be considerate — every test comment is real.
+- Operator login: user `morpheus`, password from `.env` `SUPERADMIN_PASSWORD` (dev default
+  `CHANGE_ME_IMMEDIATELY`). For UI checks: `fetch('/api/v1/auth/login', form-encoded)` →
+  `localStorage.daedalus_token`, reload, resize ~1440px. Login endpoint is **form-encoded**, not JSON.
 
 ## 3. Constraints & Rules (HARD — do not violate)
 
@@ -275,6 +219,7 @@ build so adding Mantine deps to `package.json` is enough).
   `schedule.py` (active hours), `account_health.py`.
 - DAEDALUS: `models.py`, `database.py` (`init_tables`; new tables auto-create, columns migrate in
   `_STAGE23_COLUMNS`), `mission_control.py`, `router_channels.py`, `router_decisions.py`,
-  `channel_profiler.py`, `db_explorer.py`, `classifier.py`. React: `App.tsx` (hash routing),
-  `components/DataTable.tsx` (reusable table), plus one component per screen.
+  `channel_profiler.py`, `db_explorer.py`, `classifier.py`. React (Mantine): `App.tsx` (AppShell +
+  `useHashRoute` `#/<view>/<id>`), `src/ui/` primitives (`DataView`/`DetailPage`/`EntityPicker`/
+  `StatTile`), one `src/components/*Screen.tsx` per view. No per-component CSS (only `App.css`).
 - Design doc for the profiling subsystem: `CHANNEL_PROFILING.md` (Phase 1 + 2 fully done).
