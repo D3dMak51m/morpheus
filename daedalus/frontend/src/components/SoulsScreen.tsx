@@ -268,6 +268,8 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
     </Box>
   );
 
+  if (channelMgr) return <ChannelManager token={token} agentId={p.agent_id} label={p.full_name || p.agent_id} onClose={() => setChannelMgr(false)} />;
+
   return (
     <DetailPage
       onBack={onBack}
@@ -440,7 +442,6 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
         ]}
         onPick={bindAccount}
       />
-      {channelMgr && <ChannelManager token={token} agentId={p.agent_id} label={p.full_name || p.agent_id} onClose={() => setChannelMgr(false)} />}
     </DetailPage>
   );
 }

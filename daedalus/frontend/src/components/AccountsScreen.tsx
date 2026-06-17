@@ -100,6 +100,8 @@ function AccountDetail({ token, account, profiles, onBack, onChanged, goTo }: {
     <Box><Text size="xs" tt="uppercase" c="dimmed" fw={600}>{label}</Text><Text mt={2}>{value}</Text></Box>
   );
 
+  if (channelMgr && account.agent_id) return <ChannelManager token={token} agentId={account.agent_id} label={account.username} onClose={() => setChannelMgr(false)} />;
+
   return (
     <DetailPage
       onBack={onBack}
@@ -166,7 +168,6 @@ function AccountDetail({ token, account, profiles, onBack, onChanged, goTo }: {
         ]}
         onPick={s => bind(s.agent_id)}
       />
-      {channelMgr && account.agent_id && <ChannelManager token={token} agentId={account.agent_id} label={account.username} onClose={() => setChannelMgr(false)} />}
     </DetailPage>
   );
 }
