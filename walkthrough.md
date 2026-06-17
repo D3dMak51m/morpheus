@@ -266,6 +266,14 @@ Everything below (Stages 23–35) was verified live on real data.
   (Состояние роя, ГОТОВ/НЕ ГОТОВ badge, Блокеры, all 6 metric labels + subs), welcome text; numbers
   formatted `ru-RU`. Verified live. **Found:** the Диагностика tab (`SystemDiagnostics.tsx`) is still
   largely English — next sub-target so the whole dashboard is Russian.
+- **64 — UX/UI overhaul, Phase 4 (part 6): SystemDiagnostics cleanup + Russify.** Removed a fake
+  control — the "Global Cache Flush" button (`handleManualFlush`) only `setTimeout`-ed and showed
+  fabricated success messages without calling any real endpoint (misled the operator); deleted the
+  section + its unused state + the `RefreshCcw` import. Russified the rest ("Целостность системы и
+  метрики" + the 4 real latency cards from `/api/v1/analytics/latency`). Verified live — both
+  Dashboard tabs are now fully Russian. (Leftover dead CSS for the removed section is harmless.)
+  Remaining English is in secondary screens (`AuthFactory`, `SoulGenesisView`, `SandboxConsole`,
+  `ActivityStream`, `LiveOps`).
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -275,12 +283,12 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 63 — UX/UI overhaul Phase 4 (part 5, Dashboard)**: Russified the landing
-`Dashboard.tsx` (title, tabs, Swarm Overlord widget, metrics, welcome), verified live. **Now in
-progress: the UX/UI overhaul** (operator asked to bring the whole console to a real "mission center"
-standard). **Next: Russify `SystemDiagnostics.tsx`** (the Диагностика tab — still largely English),
-then convert the read-only `SwarmDashboard` drill-down modal to `SidePanel`, then **P5 — consolidate**
-(bring scattered related data/functions into unified screens).
+Just finished **Stage 64 — UX/UI overhaul Phase 4 (part 6, SystemDiagnostics)**: removed the fake
+"Global Cache Flush" control and Russified the Диагностика tab — both Dashboard tabs are now fully
+Russian. **Now in progress: the UX/UI overhaul** (operator asked to bring the whole console to a real
+"mission center" standard). **Next:** Russify the remaining secondary screens (`AuthFactory`,
+`SoulGenesisView`, `SandboxConsole`, `ActivityStream`, `LiveOps`), convert the read-only
+`SwarmDashboard` drill-down modal to `SidePanel`, then **P5 — consolidate** (unify scattered screens).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, RefreshCcw, Server, Zap } from 'lucide-react';
+import { Activity, Server, Zap } from 'lucide-react';
 import './SystemDiagnostics.css';
 
 interface DiagnosticsProps {
@@ -20,9 +20,6 @@ export default function SystemDiagnostics({ token }: DiagnosticsProps) {
     huginn_sync: 0,
     myrmidon_adb: 0,
   });
-  
-  const [isFlushing, setIsFlushing] = useState(false);
-  const [flushStatus, setFlushStatus] = useState<string | null>(null);
 
   // Poll real latency telemetry
   useEffect(() => {
@@ -47,28 +44,6 @@ export default function SystemDiagnostics({ token }: DiagnosticsProps) {
     return () => clearInterval(interval);
   }, [token]);
 
-  const handleManualFlush = async () => {
-    setIsFlushing(true);
-    setFlushStatus('Initiating global cache purge...');
-    
-    // Simulate network delay for the flush operation using token
-    console.log(`Authenticating manual flush with token: ${token.substring(0, 10)}...`);
-    
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setFlushStatus('ORPHEUS Profiles Cache... Cleared.');
-    
-    await new Promise(resolve => setTimeout(resolve, 800));
-    setFlushStatus('HUGINN Targets Synced... Verified.');
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setFlushStatus('Swarm caches successfully flushed. System synchronized.');
-    setIsFlushing(false);
-    
-    setTimeout(() => {
-      setFlushStatus(null);
-    }, 4000);
-  };
-
   const getLatencyClass = (value: number) => {
     if (value < 50) return 'healthy';
     if (value < 100) return 'warning';
@@ -78,8 +53,8 @@ export default function SystemDiagnostics({ token }: DiagnosticsProps) {
   return (
     <div className="diagnostics-panel">
       <div className="diagnostics-header">
-        <h2><Activity size={24} /> System Integrity & Metrics</h2>
-        <p>Real-time swarm synchronization latencies and cache controls.</p>
+        <h2><Activity size={24} /> Целостность системы и метрики</h2>
+        <p>Задержки синхронизации сервисов роя в реальном времени.</p>
       </div>
 
       <div className="metrics-grid">
@@ -94,7 +69,7 @@ export default function SystemDiagnostics({ token }: DiagnosticsProps) {
         <div className={`metric-card ${getLatencyClass(latency.orpheus_cache)}`}>
           <div className="metric-icon"><Zap /></div>
           <div className="metric-content">
-            <h4>ORPHEUS Async Cache</h4>
+            <h4>ORPHEUS · кэш</h4>
             <span className="value">{latency.orpheus_cache.toFixed(1)} ms</span>
           </div>
         </div>
@@ -102,7 +77,7 @@ export default function SystemDiagnostics({ token }: DiagnosticsProps) {
         <div className={`metric-card ${getLatencyClass(latency.huginn_sync)}`}>
           <div className="metric-icon"><Server /></div>
           <div className="metric-content">
-            <h4>HUGINN Sync Loop</h4>
+            <h4>HUGINN · цикл синхр.</h4>
             <span className="value">{latency.huginn_sync.toFixed(1)} ms</span>
           </div>
         </div>
@@ -110,33 +85,10 @@ export default function SystemDiagnostics({ token }: DiagnosticsProps) {
         <div className={`metric-card ${getLatencyClass(latency.myrmidon_adb)}`}>
           <div className="metric-icon"><Activity /></div>
           <div className="metric-content">
-            <h4>MYRMIDON ADB Proxy</h4>
+            <h4>MYRMIDON · ADB-прокси</h4>
             <span className="value">{latency.myrmidon_adb.toFixed(1)} ms</span>
           </div>
         </div>
-      </div>
-
-      <div className="controls-section">
-        <h3>Manual Overrides</h3>
-        <div className="override-panel">
-          <div className="override-info">
-            <h4>Global Cache Flush</h4>
-            <p>Force synchronizes all containers to DAEDALUS state immediately. Use to bypass the 30-60s async polling delays.</p>
-          </div>
-          <button 
-            className={`btn-danger ${isFlushing ? 'loading' : ''}`}
-            onClick={handleManualFlush}
-            disabled={isFlushing}
-          >
-            <RefreshCcw size={18} className={isFlushing ? 'spin' : ''} />
-            {isFlushing ? 'Flushing...' : 'Trigger Cache Flush'}
-          </button>
-        </div>
-        {flushStatus && (
-          <div className="flush-terminal">
-            <code>&gt; {flushStatus}</code>
-          </div>
-        )}
       </div>
     </div>
   );
