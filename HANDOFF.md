@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 57. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 58. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -152,36 +152,38 @@ text clamped to 4 lines in-cell). All verified live. **Two screens deliberately 
 provisioning — for the **out-of-scope broken mobile/Appium stack**, not a list). A `DataTable`
 would regress both. **Phase 2 (uniform lists) is COMPLETE.**
 
-### Stage 54–55 — UX/UI overhaul Phase 3 (de-modal) — ⏳ IN PROGRESS, committed
+### Stage 54–58 — UX/UI overhaul Phase 3 (de-modal editors) — ✅ COMPLETE, committed
 Built the reusable **`components/SidePanel.tsx`** (+ css): a non-blocking editor that slides in from
 the right with NO dimming backdrop (rest of page + sidebar stay clickable; submit button goes in the
 footer, bound to the form via the HTML `form=` attribute — or plain `onClick` if the editor isn't a
 `<form>`). Verified live: unsaved edits survive a tab switch; the panel hides with its host view
-(`display:none`) so it doesn't bleed over other screens. **Converted so far:** `LandscapeManager`
+(`display:none`) so it doesn't bleed over other screens. **All editors converted:** `LandscapeManager`
 (add/edit source), `MuninnExplorer` (inject fact), `NewsHubInspector` (edit event), `ChannelManager`
-(account channels — wide 680px tabs/filters/bulk panel), `MissionDeck` (both the create form and the
-tabbed `MissionDetail` editor — its agent roster is already a pick-from-list, nothing to replace).
+(account channels — wide 680px tabs/filters/bulk panel), `MissionDeck` (create form + tabbed
+`MissionDetail` editor — its agent roster is already a pick-from-list, nothing to replace),
+`SoulsContext` (the big 5-tab profile editor → wide panel). The only leftover `modal-overlay` is the
+read-only `SwarmDashboard` drill-down (activity/dialogue viewer — not an editor, so the unsaved-edits
+complaint doesn't apply; convert it only as an optional consistency pass).
 
-### What is MISSING — the rest of the UX overhaul (Phase 3 remainder + Phases 4–5)
+### What is MISSING — the rest of the UX overhaul (Phases 4–5)
 These come from the operator's explicit complaints. **This is the immediate work.**
-- **Phase 3 (remaining) — de-modal.** Convert the other **blocking modal-overlay** editors to
-  `SidePanel` (template: `LandscapeManager` / `MuninnExplorer` / `NewsHubInspector` /
-  `ChannelManager` / `MissionDeck`): `SoulsContext`, `SwarmDashboard` drill-down. Operator complaint:
-  after opening a modal you must close it (losing unsaved changes) to switch tabs — `SidePanel`
-  fixes that. Also
-  replace manual ID/name entry with **searchable pick-from-list** (e.g. the agent picker in
-  MissionDeck; the assign-agent input in DeviceGrid).
-- **Phase 4 — styling + controls.** Remove leftover **raw unstyled HTML**; fix the **range
-  sliders** that "behave unpredictably" (`SoulsContext.tsx`, `CloneFactory.tsx` — `type="range"`)
-  — replace with proper number inputs or well-behaved styled sliders.
+- **Phase 4 — styling + controls (NEXT).** Fix the **range sliders** that "behave unpredictably"
+  (`SoulsContext.tsx` psychology tab: tone/vocab/emoji/aggression `sliderRow`; `CloneFactory.tsx` —
+  `type="range"`) — replace with proper number inputs or well-behaved styled sliders. Remove leftover
+  **raw unstyled HTML** (`DeviceGrid.tsx` is full of dead Tailwind-style utility classes — this
+  project has no Tailwind — and is all English; it's also the out-of-scope mobile screen, so a light
+  cleanup/Russify is enough). Optionally fold the manual assign-agent text input in `DeviceGrid` into
+  a pick-from-list, and convert the `SwarmDashboard` drill-down modal to `SidePanel` for consistency.
 - **Phase 5 — consolidate.** Bring scattered related data/functions into unified screens.
 
 ### Immediate next steps (do these to continue)
-1. **Phase 2 COMPLETE; Phase 3 (de-modal) IN PROGRESS** (`SidePanel` + `LandscapeManager` +
-   `MuninnExplorer` + `NewsHubInspector` + `ChannelManager` + `MissionDeck` done). Operator's cadence
-   is "коммит. потом продолжим" per screen. Continue **Phase 3**: convert the last modal editor
-   `SoulsContext` (and the `SwarmDashboard` drill-down) to `SidePanel` (templates:
-   `LandscapeManager.tsx` / `MissionDeck.tsx` …). Pattern:
+1. **Phase 2 COMPLETE; Phase 3 (de-modal editors) COMPLETE.** Operator's cadence is "коммит. потом
+   продолжим" per screen. Start **Phase 4 — styling/controls**: replace the `type="range()"`
+   `sliderRow` sliders in `SoulsContext.tsx` (psychology tab) — and the `CloneFactory.tsx` range
+   sliders — with predictable controls (e.g. a number input + a styled track, or `<input
+   type="number">`); the operator says they "behave unpredictably". Then clean up `DeviceGrid.tsx`
+   (dead Tailwind utility classes, English strings). Build `daedalus`, verify with a Playwright
+   screenshot, repeat. Pattern reference for any remaining de-modal:
    `<SidePanel open=… title=… onClose=…
    footer={Cancel/Save}>` wrapping the form; submit button in the `footer`, bound with
    `form="<formId>"` (or plain `onClick` if not a `<form>`). Build `daedalus`, verify with a

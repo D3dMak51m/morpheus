@@ -378,7 +378,19 @@ input, textarea {
 .sc-btn-pause:hover { background: rgba(224,162,60,0.2); }
 .sc-btn-resume { background: rgba(52,201,139,0.12); color: #34c98b; border-color: rgba(52,201,139,0.3) !important; }
 .sc-btn-resume:hover { background: rgba(52,201,139,0.2); }
-.sc-hdr-btn { margin-left: 12px; padding: 4px 12px; font-size: 0.78rem; border-radius: 6px; vertical-align: middle; }
+.sc-hdr-btn { padding: 4px 12px; font-size: 0.78rem; border-radius: 6px; vertical-align: middle; }
+
+/* Stage 58: profile editor moved into a SidePanel — action bar + tabs. */
+.sc-detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle, #30363d);
+}
+.sc-detail-body { padding-top: 2px; }
 
 /* Status badges (active / suspended / unbound) */
 .status-badge {

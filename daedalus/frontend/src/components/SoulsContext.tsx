@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import './SoulsContext.css';
 import ChannelManager from './ChannelManager';
+import { SidePanel } from './SidePanel';
 
 // ── Strict client-side persona shapes (mirror Daedalus Pydantic schemas) ──
 interface CommunicationStyle {
@@ -425,15 +426,22 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
       )}
 
       {selectedProfile && (
-        <div className="modal-overlay" onClick={() => setSelectedProfile(null)}>
-          <div className="modal-content large" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>
-                Редактирование: {selectedProfile.full_name} ({selectedProfile.agent_id})
-                {selectedProfile.status === 'suspended'
-                  ? <button className="sc-btn-resume sc-hdr-btn" onClick={() => setAgentStatus(selectedProfile.agent_id, 'active')}>▶ Запустить</button>
-                  : <button className="sc-btn-pause sc-hdr-btn" onClick={() => setAgentStatus(selectedProfile.agent_id, 'suspended')}>⏸ Пауза</button>}
-              </h2>
+        <SidePanel
+          open
+          title={`Редактирование: ${selectedProfile.full_name} (${selectedProfile.agent_id})`}
+          onClose={() => setSelectedProfile(null)}
+          width={680}
+          footer={
+            <>
+              <button className="btn-secondary" onClick={() => setSelectedProfile(null)}>Отмена</button>
+              <button className="btn-primary" onClick={handleSave}>Сохранить</button>
+            </>
+          }
+        >
+            <div className="sc-detail-bar">
+              {selectedProfile.status === 'suspended'
+                ? <button className="sc-btn-resume sc-hdr-btn" onClick={() => setAgentStatus(selectedProfile.agent_id, 'active')}>▶ Запустить</button>
+                : <button className="sc-btn-pause sc-hdr-btn" onClick={() => setAgentStatus(selectedProfile.agent_id, 'suspended')}>⏸ Пауза</button>}
               <div className="tabs">
                 <button className={`tab-btn ${activeTab === 'identity' ? 'active' : ''}`} onClick={() => setActiveTab('identity')}>Личность</button>
                 <button className={`tab-btn ${activeTab === 'psychology' ? 'active' : ''}`} onClick={() => setActiveTab('psychology')}>Психология и стиль</button>
@@ -443,7 +451,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
               </div>
             </div>
 
-            <div className="modal-body">
+            <div className="sc-detail-body">
               {saveError && <div className="error-banner">{saveError}</div>}
 
               {activeTab === 'identity' && (
@@ -629,13 +637,7 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
                 </div>
               )}
             </div>
-
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setSelectedProfile(null)}>Отмена</button>
-              <button className="btn-primary" onClick={handleSave}>Сохранить</button>
-            </div>
-          </div>
-        </div>
+        </SidePanel>
       )}
     </div>
   );

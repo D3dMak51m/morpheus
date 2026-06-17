@@ -221,6 +221,14 @@ Everything below (Stages 23–35) was verified live on real data.
   auto-assign — no manual agent-ID entry), so nothing to replace there. (Phase 3 done:
   `LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`, `ChannelManager`, `MissionDeck`.
   Remaining: `SoulsContext` (also has the Phase 4 range sliders), `SwarmDashboard` drill-down.)
+- **58 — UX/UI overhaul, Phase 3 (part 5): SoulsContext de-modal.** Converted the big agent
+  profile editor (5 tabs: Личность/Психология/Миссия/Аккаунты/История) from a modal to a wide
+  (680px) `SidePanel`: pause/resume + tabs → a `.sc-detail-bar`, Отмена/Сохранить in the footer
+  (`ChannelManager` opened from here is already a `SidePanel`). Verified live. **Phase 3 editor
+  de-modalization is COMPLETE** (`LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`,
+  `ChannelManager`, `MissionDeck`, `SoulsContext`). The only remaining modal is the `SwarmDashboard`
+  drill-down — but it's a read-only viewer (activity/dialogue lists), not an editor, so the
+  "lose unsaved edits" complaint doesn't apply; left as-is (optional consistency pass later).
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -230,13 +238,16 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 57 — UX/UI overhaul Phase 3 (part 4)**: converted both `MissionDeck` modals
-(create mission + the tabbed `MissionDetail` editor) to `SidePanel`, verified live. Phase 3 done so
-far: `LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`, `ChannelManager`, `MissionDeck`.
-**Now in progress: the UX/UI overhaul** (operator asked to bring the whole console to a real
-"mission center" standard). **Next: continue Phase 3 — de-modal** the last editor `SoulsContext`
-with `SidePanel`, and the `SwarmDashboard` drill-down. Then P4 styling/sliders (the `SoulsContext` /
-`CloneFactory` range sliders that "behave unpredictably", leftover raw HTML), P5 consolidate.
+Just finished **Stage 58 — UX/UI overhaul Phase 3 (part 5, editors COMPLETE)**: converted the big
+`SoulsContext` agent-profile editor (5 tabs) to `SidePanel`, verified live. **Phase 3 editor
+de-modalization is done** (`LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`,
+`ChannelManager`, `MissionDeck`, `SoulsContext`); the only leftover modal is the read-only
+`SwarmDashboard` drill-down (not an editor — optional later). **Now in progress: the UX/UI
+overhaul** (operator asked to bring the whole console to a real "mission center" standard).
+**Next: Phase 4 — styling/controls**: replace the `type="range"` sliders in `SoulsContext`
+(psychology tab: tone/vocab/emoji/aggression) and `CloneFactory` that "behave unpredictably" with
+predictable controls; remove leftover raw unstyled HTML (`DeviceGrid` dead Tailwind classes + it's
+all English). Then P5 consolidate.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
