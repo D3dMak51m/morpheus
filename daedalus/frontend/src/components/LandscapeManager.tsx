@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Map, RefreshCw, Plus, RotateCw } from 'lucide-react';
 import { DataTable, Column } from './DataTable';
+import { SidePanel } from './SidePanel';
 import './LandscapeManager.css';
 
 interface LandscapeTarget {
@@ -220,11 +221,18 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
         pageSize={25}
       />
 
-      {showModal && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>{editId === null ? 'Добавить источник' : 'Изменить источник'}</h2>
-            <form onSubmit={handleSubmit}>
+      <SidePanel
+        open={showModal}
+        title={editId === null ? 'Добавить источник' : 'Изменить источник'}
+        onClose={closeModal}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" onClick={closeModal}>Отмена</button>
+            <button type="submit" form="landscape-form" className="btn-primary">{editId === null ? 'Сохранить' : 'Обновить'}</button>
+          </>
+        }
+      >
+            <form id="landscape-form" onSubmit={handleSubmit}>
               <div className="form-group">
                 <label>Платформа</label>
                 <select value={newPlatform} onChange={e => setNewPlatform(e.target.value)}>
@@ -274,14 +282,8 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
                   placeholder="крипто, политика, технологии"
                 />
               </div>
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={closeModal}>Отмена</button>
-                <button type="submit" className="btn-primary">{editId === null ? 'Сохранить' : 'Обновить'}</button>
-              </div>
             </form>
-          </div>
-        </div>
-      )}
+      </SidePanel>
     </div>
   );
 };

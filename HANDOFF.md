@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 53. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 54. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -152,28 +152,36 @@ text clamped to 4 lines in-cell). All verified live. **Two screens deliberately 
 provisioning — for the **out-of-scope broken mobile/Appium stack**, not a list). A `DataTable`
 would regress both. **Phase 2 (uniform lists) is COMPLETE.**
 
-### What is MISSING — the rest of the UX overhaul (Phases 3–5, NOT started)
+### Stage 54 — UX/UI overhaul Phase 3 (part 1: de-modal foundation) — ✅ DONE, committed
+Built the reusable **`components/SidePanel.tsx`** (+ css): a non-blocking editor that slides in from
+the right with NO dimming backdrop (rest of page + sidebar stay clickable). Converted
+`LandscapeManager`'s add/edit modal → `SidePanel` as the reference (submit button in the footer,
+tied to the form via the HTML `form=` attribute). Verified live: unsaved edits survive a tab switch;
+the panel hides with its host view (`display:none`) so it doesn't bleed over other screens. **This
+is the template for the rest of Phase 3.**
+
+### What is MISSING — the rest of the UX overhaul (Phase 3 remainder + Phases 4–5)
 These come from the operator's explicit complaints. **This is the immediate work.**
-- **Phase 3 — de-modal (NEXT).** Replace the **blocking modal-overlay** editors (in `MissionDeck`,
-  `SoulsContext`, `ChannelManager`, `LandscapeManager`, `NewsHubInspector`, `MuninnExplorer`,
-  `SwarmDashboard`) with non-blocking side panels / routed edit views. Operator complaint: after
-  opening a modal you must close it (losing unsaved changes) to switch tabs. Also replace
-  manual ID/name entry with **searchable pick-from-list** (e.g. the agent picker in MissionDeck).
+- **Phase 3 (remaining) — de-modal.** Convert the other **blocking modal-overlay** editors to
+  `SidePanel` (template: `LandscapeManager`): `NewsHubInspector` (edit event), `MuninnExplorer`
+  (inject fact), `SoulsContext`, `ChannelManager`, `MissionDeck`, `SwarmDashboard` drill-down.
+  Operator complaint: after opening a modal you must close it (losing unsaved changes) to switch
+  tabs — `SidePanel` fixes that. Also replace manual ID/name entry with **searchable
+  pick-from-list** (e.g. the agent picker in MissionDeck; the assign-agent input in DeviceGrid).
 - **Phase 4 — styling + controls.** Remove leftover **raw unstyled HTML**; fix the **range
   sliders** that "behave unpredictably" (`SoulsContext.tsx`, `CloneFactory.tsx` — `type="range"`)
   — replace with proper number inputs or well-behaved styled sliders.
 - **Phase 5 — consolidate.** Bring scattered related data/functions into unified screens.
 
 ### Immediate next steps (do these to continue)
-1. **Phase 2 (uniform lists) is COMPLETE.** Operator's cadence is "коммит. потом продолжим" per
-   screen. Start **Phase 3 — de-modal**: pick one modal editor (a good first target is
-   `LandscapeManager` or `NewsHubInspector` — both already migrated to `DataTable`, so only the
-   edit modal remains) and convert its blocking `modal-overlay` into a non-blocking side panel or
-   routed edit view, so switching tabs doesn't force closing it. Replace any manual ID/name entry
-   with a searchable pick-from-list. Build `daedalus`, verify with a Playwright screenshot, repeat.
-   `DataTable` migration templates (for reference): `DecisionLog.tsx`, `AccountsManager.tsx`,
-   `ChannelProfiles.tsx`, `LandscapeManager.tsx`, `ScoutingRadar.tsx`, `NewsHubInspector.tsx`,
-   `SwarmDashboard.tsx` (drill-downs).
+1. **Phase 2 COMPLETE; Phase 3 (de-modal) STARTED** (`SidePanel` + `LandscapeManager` done).
+   Operator's cadence is "коммит. потом продолжим" per screen. Continue **Phase 3**: convert the
+   next modal editor to `SidePanel` using `LandscapeManager.tsx` as the template — good next
+   targets are `NewsHubInspector` (edit-event modal) and `MuninnExplorer` (inject-fact modal),
+   both already on `DataTable`. Pattern: `<SidePanel open=… title=… onClose=… footer={Cancel/Save}>`
+   wrapping the form; put the submit button in the `footer` and bind it with `form="<formId>"`.
+   Build `daedalus`, verify with a Playwright screenshot (open editor → switch tab → return →
+   edits intact), repeat per screen.
 2. Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend
    change requires `docker compose build daedalus` (the React SPA is built inside the image).
 

@@ -187,6 +187,16 @@ Everything below (Stages 23–35) was verified live on real data.
   regression. **Phase 2 (uniform lists) is now complete.** Done: `DecisionLog`, `AccountsManager`,
   `ChannelProfiles`, `LandscapeManager`, `ScoutingRadar`, `NewsHubInspector`, `SwarmDashboard`
   drill-downs. Intentionally excluded: `MuninnExplorer`, `DeviceGrid` (rationale above).
+- **54 — UX/UI overhaul, Phase 3 (part 1): de-modal foundation + LandscapeManager.** Built a
+  reusable **`components/SidePanel.tsx`** (+ css): a non-blocking editor that slides in from the
+  right with NO dimming backdrop, so the rest of the page and the sidebar stay visible/clickable.
+  Header (title/subtitle + ✕), scrollable body, sticky footer for actions. Converted
+  `LandscapeManager`'s add/edit **modal → SidePanel** as the reference (submit button moved to the
+  footer, tied to the form via the HTML `form=` attribute). **Solves the operator's core complaint**:
+  verified live that you can open the editor, type an unsaved value, switch tabs via the sidebar,
+  and come back with the panel + edits intact (the panel hides with its host view via `display:none`
+  so it doesn't bleed over other screens — its React state survives). This is the template for the
+  remaining Phase 3 conversions.
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -196,17 +206,14 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 53 — UX/UI overhaul Phase 2 (part 5, FINAL)**: migrated the
-`SwarmDashboard` drill-down modals to `DataTable`, completing **Phase 2 (uniform lists)**. Done on
-`DataTable`: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
-`ScoutingRadar`, `NewsHubInspector`, `SwarmDashboard` drill-downs. Intentionally excluded:
-`MuninnExplorer` (own server-side search/pagination) and `DeviceGrid` (a control dashboard for the
-out-of-scope broken mobile stack, not a list). **Now in progress: the UX/UI overhaul** (operator
-asked to bring the whole console to a real "mission center" standard). **Next: Phase 3 — de-modal**
-(replace the blocking modal-overlay editors in `MissionDeck`, `SoulsContext`, `ChannelManager`,
-`LandscapeManager`, `NewsHubInspector`, `MuninnExplorer`, `SwarmDashboard` with non-blocking side
-panels / routed edit views + pick-from-list instead of typing IDs), then P4 styling/sliders, P5
-consolidate scattered data.
+Just finished **Stage 54 — UX/UI overhaul Phase 3 (part 1)**: built the reusable `SidePanel`
+(non-blocking right-side editor, no dimming backdrop) and converted `LandscapeManager`'s add/edit
+modal to it as the reference — verified live that unsaved edits survive a tab switch (the operator's
+core de-modal complaint). **Now in progress: the UX/UI overhaul** (operator asked to bring the
+whole console to a real "mission center" standard). **Next: continue Phase 3 — de-modal** the
+remaining editors with `SidePanel`: `NewsHubInspector` (edit event), `MuninnExplorer` (inject fact),
+then `SoulsContext`, `ChannelManager`, `MissionDeck`, `SwarmDashboard` drill-down — and replace
+manual ID/name entry with searchable pick-from-list. Then P4 styling/sliders, P5 consolidate.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
