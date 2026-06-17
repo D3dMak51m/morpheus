@@ -248,6 +248,13 @@ Everything below (Stages 23–35) was verified live on real data.
   like `text-xs`/`mt-*` left on elements that already carry real component CSS classes.) Phase 4
   remaining is optional: Russify `CloneFactory`; convert the read-only `SwarmDashboard` drill-down
   to `SidePanel`.
+- **61 — UX/UI overhaul, Phase 4 (part 3): CloneFactory Russified.** Translated the whole "Фабрика
+  клонов" screen: header/subtitle, the provision form (Число ботов / Каста / Платформа / Вектор
+  фокуса + placeholder), the launch button (Создать N ботов), and the execution monitor (steps
+  Персона/Регистрация/Привязка/Готово, stage labels, summary, log, soul/avd/phone meta). Verified
+  live. **Found:** the sidebar nav in `App.tsx` is a mix of English + Russian (Dashboard, Accounts,
+  Clone Factory, Landscape, News Hub, Mission Deck, Devices… are English) — flagged as the next
+  high-visibility Russification fix.
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -257,13 +264,12 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 60 — UX/UI overhaul Phase 4 (part 2, DeviceGrid)**: fixed the unstyled toast
-(it relied only on non-existent Tailwind classes), cleaned the VNC modal's dead classes, and fully
-Russified the DeviceGrid screen; verified live. **Phase 4 core is done** (sliders + DeviceGrid).
-**Now in progress: the UX/UI overhaul** (operator asked to bring the whole console to a real
-"mission center" standard). **Next (optional Phase 4 tail / then Phase 5):** Russify `CloneFactory`
-(still English); convert the read-only `SwarmDashboard` drill-down modal to `SidePanel` for
-consistency; then **P5 — consolidate** (bring scattered related data/functions into unified screens).
+Just finished **Stage 61 — UX/UI overhaul Phase 4 (part 3, CloneFactory)**: fully Russified the
+"Фабрика клонов" screen, verified live. **Now in progress: the UX/UI overhaul** (operator asked to
+bring the whole console to a real "mission center" standard). **Next: Russify the sidebar nav in
+`App.tsx`** (it's a mix of English + Russian — high-visibility), then convert the read-only
+`SwarmDashboard` drill-down modal to `SidePanel`, then **P5 — consolidate** (bring scattered related
+data/functions into unified screens).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

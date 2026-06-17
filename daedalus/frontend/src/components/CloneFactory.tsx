@@ -30,7 +30,7 @@ const CASTES = ['alpha', 'beta', 'gamma'];
 const PLATFORMS = ['instagram', 'telegram', 'twitter', 'threads', 'youtube'];
 
 // Pipeline steps for the per-bot progress stepper.
-const STEPS = ['Persona', 'Register', 'Bind', 'Done'];
+const STEPS = ['Персона', 'Регистрация', 'Привязка', 'Готово'];
 const STAGE_TO_STEP: Record<string, number> = {
   queued: 0,
   generating_persona: 0,
@@ -41,12 +41,12 @@ const STAGE_TO_STEP: Record<string, number> = {
 };
 
 const STAGE_LABEL: Record<string, string> = {
-  queued: 'Queued',
-  generating_persona: 'Generating Persona…',
-  registering: 'Registering · SMS/OTP…',
-  binding: 'Binding to Soul…',
-  bound: 'Bound ✓',
-  failed: 'Failed',
+  queued: 'В очереди',
+  generating_persona: 'Генерация персоны…',
+  registering: 'Регистрация · SMS/OTP…',
+  binding: 'Привязка к душе…',
+  bound: 'Привязан ✓',
+  failed: 'Сбой',
 };
 
 const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
@@ -83,7 +83,7 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
   };
 
   const handleLaunch = async () => {
-    if (!vectorFocus.trim()) { setError('Vector Focus is required.'); return; }
+    if (!vectorFocus.trim()) { setError('Укажите вектор фокуса.'); return; }
     setLaunching(true);
     setError('');
     try {
@@ -97,7 +97,7 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
       setJob({ job_id: data.job_id, status: data.status, params: { count, caste, target_platform: platform, vector_focus: vectorFocus }, log: [], bots: data.bots });
       pollJob(data.job_id);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to launch factory run');
+      setError(e instanceof Error ? e.message : 'Не удалось запустить фабрику');
     } finally {
       setLaunching(false);
     }
@@ -109,8 +109,8 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
     <div className="clone-factory view-container">
       <div className="header-row">
         <div>
-          <h1><Factory size={22} style={{ verticalAlign: '-4px' }} /> Clone Factory</h1>
-          <p className="subtitle">Autonomous mass provisioning — boot AVDs, synthesize souls, register accounts &amp; bind, hands-free.</p>
+          <h1><Factory size={22} style={{ verticalAlign: '-4px' }} /> Фабрика клонов</h1>
+          <p className="subtitle">Автономное массовое создание ботов — запуск AVD, синтез душ, регистрация аккаунтов и привязка, без ручного участия. (Мобильный стек вне scope.)</p>
         </div>
       </div>
 
@@ -120,7 +120,7 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
       <div className="cf-builder">
         <div className="cf-field">
           <div className="slider-head">
-            <label>Number of Bots</label>
+            <label>Число ботов</label>
             <input
               type="number" className="slider-num" min={1} max={20} value={count}
               onChange={e => setCount(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
@@ -136,25 +136,25 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
         </div>
         <div className="cf-row">
           <div className="cf-field">
-            <label>Caste</label>
+            <label>Каста</label>
             <select value={caste} onChange={e => setCaste(e.target.value)} disabled={!!jobRunning}>
               {CASTES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="cf-field">
-            <label>Platform</label>
+            <label>Платформа</label>
             <select value={platform} onChange={e => setPlatform(e.target.value)} disabled={!!jobRunning}>
               {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
         </div>
         <div className="cf-field">
-          <label>Vector Focus</label>
+          <label>Вектор фокуса</label>
           <input value={vectorFocus} onChange={e => setVectorFocus(e.target.value)} disabled={!!jobRunning}
-            placeholder="e.g. Civic activist, Tashkent, urban development" />
+            placeholder="напр. гражданский активист, Ташкент, городское развитие" />
         </div>
         <button className="btn-primary cf-launch" onClick={handleLaunch} disabled={launching || !!jobRunning}>
-          <Rocket size={16} /> {jobRunning ? 'Provisioning…' : launching ? 'Launching…' : `Provision ${count} Bot${count > 1 ? 's' : ''}`}
+          <Rocket size={16} /> {jobRunning ? 'Создание…' : launching ? 'Запуск…' : `Создать ${count} ${count > 1 ? 'ботов' : 'бота'}`}
         </button>
       </div>
 
@@ -162,10 +162,10 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
       {job && (
         <div className="cf-monitor">
           <div className="cf-monitor-head">
-            <h2><Cpu size={18} /> Execution Monitor</h2>
+            <h2><Cpu size={18} /> Монитор выполнения</h2>
             <span className={`cf-job-status ${job.status}`}>{job.status.replace(/_/g, ' ')}</span>
             {job.summary && (
-              <span className="cf-summary">{job.summary.bound} bound · {job.summary.failed} failed / {job.summary.total}</span>
+              <span className="cf-summary">{job.summary.bound} привязано · {job.summary.failed} сбой / {job.summary.total}</span>
             )}
           </div>
 
@@ -177,7 +177,7 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
               return (
                 <div key={bot.index} className={`cf-bot ${failed ? 'failed' : done ? 'done' : 'active'}`}>
                   <div className="cf-bot-head">
-                    <span className="cf-bot-title"><Bot size={14} /> Bot {bot.index}</span>
+                    <span className="cf-bot-title"><Bot size={14} /> Бот {bot.index}</span>
                     {done && <CheckCircle2 size={16} className="cf-ok" />}
                     {failed && <XCircle size={16} className="cf-bad" />}
                   </div>
@@ -193,9 +193,9 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
 
                   <div className="cf-bot-meta">
                     <div className="cf-stage-label">{STAGE_LABEL[bot.stage] || bot.stage}</div>
-                    {bot.agent_id && <div className="cf-meta-row">soul: <span>{bot.agent_id}</span></div>}
+                    {bot.agent_id && <div className="cf-meta-row">душа: <span>{bot.agent_id}</span></div>}
                     {bot.device_id && <div className="cf-meta-row">avd: <span>{bot.device_id}</span></div>}
-                    {bot.phone && <div className="cf-meta-row">phone: <span>{bot.phone}</span></div>}
+                    {bot.phone && <div className="cf-meta-row">телефон: <span>{bot.phone}</span></div>}
                     {bot.error && <div className="cf-error">{bot.error}</div>}
                   </div>
                 </div>
@@ -205,7 +205,7 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
 
           {job.log.length > 0 && (
             <div className="cf-log">
-              <h3>Factory Log</h3>
+              <h3>Журнал фабрики</h3>
               {job.log.map((line, i) => <div key={i} className="cf-log-line">{line}</div>)}
             </div>
           )}
