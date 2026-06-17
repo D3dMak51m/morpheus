@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { SidePanel } from './SidePanel';
 import './MissionDeck.css';
 
 interface SquadMember { id: number; agent_id: string; assigned_role: string; status: string; codename?: string | null; }
@@ -128,10 +129,17 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillCons
         })}
       </div>
 
-      {showCreate && (
-        <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>Новая миссия</h2>
+      <SidePanel
+        open={showCreate}
+        title="Новая миссия"
+        onClose={() => setShowCreate(false)}
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setShowCreate(false)}>Отмена</button>
+            <button className="btn-primary" disabled={!cTitle.trim()} onClick={createMission}>Создать</button>
+          </>
+        }
+      >
             <div className="form-group"><label>Название</label>
               <input value={cTitle} onChange={e => setCTitle(e.target.value)} placeholder="напр. Поддержка общественного транспорта" /></div>
             <div className="form-group"><label>Цель (что продвигать)</label>
@@ -148,13 +156,7 @@ const MissionDeck: React.FC<MissionDeckProps> = ({ token, prefill, onPrefillCons
             </div>
             <div className="form-group"><label>Цели (каналы/посты, по одному в строке)</label>
               <textarea rows={3} value={cTargets} onChange={e => setCTargets(e.target.value)} placeholder={"@tashkent_news333\nhttps://t.me/somechannel/123"} /></div>
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Отмена</button>
-              <button className="btn-primary" disabled={!cTitle.trim()} onClick={createMission}>Создать</button>
-            </div>
-          </div>
-        </div>
-      )}
+      </SidePanel>
 
       {selected && (
         <MissionDetail token={token} mission={selected} onClose={() => setSelected(null)}
@@ -219,14 +221,17 @@ const MissionDetail: React.FC<{
   useEffect(() => { if (tab === 'agents') fetchEligible(); }, [tab, fetchEligible]);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content large" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>{m.title}
-            {m.status === 'active'
-              ? <button className="sc-btn-pause md-hdr-btn" onClick={() => setStatus(m, 'paused')}>⏸ Пауза</button>
-              : <button className="sc-btn-resume md-hdr-btn" onClick={() => setStatus(m, 'active')}>▶ Возобновить</button>}
-          </h2>
+    <SidePanel
+      open
+      title={m.title}
+      onClose={onClose}
+      width={680}
+      footer={<button className="btn-secondary" onClick={onClose}>Закрыть</button>}
+    >
+        <div className="md-detail-bar">
+          {m.status === 'active'
+            ? <button className="sc-btn-pause md-hdr-btn" onClick={() => setStatus(m, 'paused')}>⏸ Пауза</button>
+            : <button className="sc-btn-resume md-hdr-btn" onClick={() => setStatus(m, 'active')}>▶ Возобновить</button>}
           <div className="tabs">
             <button className={`tab-btn ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Обзор</button>
             <button className={`tab-btn ${tab === 'targets' ? 'active' : ''}`} onClick={() => setTab('targets')}>
@@ -235,7 +240,7 @@ const MissionDetail: React.FC<{
             <button className={`tab-btn ${tab === 'agents' ? 'active' : ''}`} onClick={() => setTab('agents')}>Агенты ({m.summary.agents.total})</button>
           </div>
         </div>
-        <div className="modal-body">
+        <div className="md-detail-body">
           {tab === 'overview' && (
             <div className="form-grid">
               <div className="form-group full-width"><label>Название</label>
@@ -316,9 +321,7 @@ const MissionDetail: React.FC<{
             </>
           )}
         </div>
-        <div className="modal-actions"><button className="btn-secondary" onClick={onClose}>Закрыть</button></div>
-      </div>
-    </div>
+    </SidePanel>
   );
 };
 

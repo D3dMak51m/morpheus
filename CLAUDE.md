@@ -80,7 +80,7 @@ so any frontend change needs `docker compose build daedalus`.
   own server-side search/pagination and `DeviceGrid` is a control dashboard — both by design).
   **`components/SidePanel.tsx`** — reusable non-blocking right-side editor (replaces blocking
   modal-overlays so unsaved edits survive a tab switch); Phase 3 converts modal editors to it
-  (done: `LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`, `ChannelManager`).
+  (done: `LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`, `ChannelManager`, `MissionDeck`).
   `db_explorer` validates table reads against LIVE tables (not a stale whitelist). Components
   (`components/`): `LiveOps` (live activity), `SwarmDashboard`
   ("Рой", interactive drill-down), `SoulsContext` ("Агенты" editor: pause/resume, channels),

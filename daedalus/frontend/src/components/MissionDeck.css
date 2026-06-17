@@ -471,7 +471,19 @@
 .md-card-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.74rem; color: var(--text-muted, #94a3b8); margin-top: 2px; }
 .md-sug-badge { color: #e0a23c; font-weight: 700; }
 
-.md-hdr-btn { margin-left: 12px; padding: 4px 12px; font-size: 0.78rem; border-radius: 6px; vertical-align: middle; }
+.md-hdr-btn { padding: 4px 12px; font-size: 0.78rem; border-radius: 6px; vertical-align: middle; }
+
+/* Stage 57: MissionDetail moved into a SidePanel — action bar + tabs. */
+.md-detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle, #30363d);
+}
+.md-detail-body { padding-top: 2px; }
 
 .md-target-list { display: flex; flex-direction: column; gap: 6px; }
 .md-target { display: flex; align-items: center; justify-content: space-between; gap: 10px;
