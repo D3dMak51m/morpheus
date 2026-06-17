@@ -119,8 +119,19 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
       {/* ── Provision form ── */}
       <div className="cf-builder">
         <div className="cf-field">
-          <label>Number of Bots: <strong>{count}</strong></label>
-          <input type="range" min={1} max={20} value={count} onChange={e => setCount(parseInt(e.target.value))} disabled={!!jobRunning} />
+          <div className="slider-head">
+            <label>Number of Bots</label>
+            <input
+              type="number" className="slider-num" min={1} max={20} value={count}
+              onChange={e => setCount(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+              disabled={!!jobRunning}
+            />
+          </div>
+          <input
+            type="range" className="styled-range" min={1} max={20} value={count}
+            style={{ ['--pct' as string]: `${((count - 1) / 19) * 100}%` }}
+            onChange={e => setCount(parseInt(e.target.value))} disabled={!!jobRunning}
+          />
           <div className="cf-slider-ends"><span>1</span><span>20</span></div>
         </div>
         <div className="cf-row">

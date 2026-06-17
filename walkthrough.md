@@ -229,6 +229,14 @@ Everything below (Stages 23–35) was verified live on real data.
   `ChannelManager`, `MissionDeck`, `SoulsContext`). The only remaining modal is the `SwarmDashboard`
   drill-down — but it's a read-only viewer (activity/dialogue lists), not an editor, so the
   "lose unsaved edits" complaint doesn't apply; left as-is (optional consistency pass later).
+- **59 — UX/UI overhaul, Phase 4 (part 1): predictable sliders.** The "unpredictable" range
+  sliders were bare native `input[type=range]` with no styling — no filled track (you couldn't see
+  the value) and no way to set an exact number. Added a shared `.styled-range` + `.slider-num`
+  (App.css): a slider with a value-proportional **filled track** (via a `--pct` CSS var) + a paired
+  **number input** for precise entry (two-way synced, clamped). Applied to `SoulsContext`
+  (psychology tab: tone/emoji/vocab/aggression 1–10) and `CloneFactory` (bot count 1–20). Verified
+  live (typing 9 moves the slider + fill to 88.9%). (Phase 4 remaining: clean up `DeviceGrid` dead
+  Tailwind classes + English; optionally Russify `CloneFactory`.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -238,16 +246,14 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 58 — UX/UI overhaul Phase 3 (part 5, editors COMPLETE)**: converted the big
-`SoulsContext` agent-profile editor (5 tabs) to `SidePanel`, verified live. **Phase 3 editor
-de-modalization is done** (`LandscapeManager`, `MuninnExplorer`, `NewsHubInspector`,
-`ChannelManager`, `MissionDeck`, `SoulsContext`); the only leftover modal is the read-only
-`SwarmDashboard` drill-down (not an editor — optional later). **Now in progress: the UX/UI
-overhaul** (operator asked to bring the whole console to a real "mission center" standard).
-**Next: Phase 4 — styling/controls**: replace the `type="range"` sliders in `SoulsContext`
-(psychology tab: tone/vocab/emoji/aggression) and `CloneFactory` that "behave unpredictably" with
-predictable controls; remove leftover raw unstyled HTML (`DeviceGrid` dead Tailwind classes + it's
-all English). Then P5 consolidate.
+Just finished **Stage 59 — UX/UI overhaul Phase 4 (part 1, sliders)**: replaced the bare native
+range sliders in `SoulsContext` (psychology tab) and `CloneFactory` with a shared `.styled-range`
+(value-proportional filled track) + paired `.slider-num` number input (precise, two-way synced),
+verified live. **Now in progress: the UX/UI overhaul** (operator asked to bring the whole console
+to a real "mission center" standard). **Next: continue Phase 4 — styling/controls**: clean up
+`DeviceGrid.tsx` (dead Tailwind-style utility classes — no Tailwind in this project — and all
+English; it's the out-of-scope mobile screen, so a light cleanup/Russify is enough); optionally
+Russify `CloneFactory`. Then P5 consolidate (unify scattered related screens).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

@@ -309,13 +309,27 @@ const SoulsContext: React.FC<SoulsContextProps> = ({ token }) => {
   const addStance = () => setStancePairs([...stancePairs, { topic: '', stance: 'support' }]);
   const removeStance = (idx: number) => setStancePairs(stancePairs.filter((_, i) => i !== idx));
 
-  const sliderRow = (label: string, key: keyof CommunicationStyle, lo: string, hi: string) => (
-    <div className="slider-group">
-      <label>{label}: <strong>{comm()[key] as number}</strong></label>
-      <input type="range" min="1" max="10" value={comm()[key] as number} onChange={e => setComm(key, parseInt(e.target.value))} />
-      <div className="slider-ends"><span>{lo}</span><span>{hi}</span></div>
-    </div>
-  );
+  const sliderRow = (label: string, key: keyof CommunicationStyle, lo: string, hi: string) => {
+    const val = comm()[key] as number;
+    const clamp = (n: number) => Math.max(1, Math.min(10, n));
+    return (
+      <div className="slider-group">
+        <div className="slider-head">
+          <label>{label}</label>
+          <input
+            type="number" className="slider-num" min={1} max={10} value={val}
+            onChange={e => setComm(key, clamp(parseInt(e.target.value) || 1))}
+          />
+        </div>
+        <input
+          type="range" className="styled-range" min={1} max={10} value={val}
+          style={{ ['--pct' as string]: `${((val - 1) / 9) * 100}%` }}
+          onChange={e => setComm(key, parseInt(e.target.value))}
+        />
+        <div className="slider-ends"><span>{lo}</span><span>{hi}</span></div>
+      </div>
+    );
+  };
 
   // ── Filtering ──
   const visible = profiles.filter(p => {

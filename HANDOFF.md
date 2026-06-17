@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 58. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 59. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -167,23 +167,24 @@ complaint doesn't apply; convert it only as an optional consistency pass).
 
 ### What is MISSING — the rest of the UX overhaul (Phases 4–5)
 These come from the operator's explicit complaints. **This is the immediate work.**
-- **Phase 4 — styling + controls (NEXT).** Fix the **range sliders** that "behave unpredictably"
-  (`SoulsContext.tsx` psychology tab: tone/vocab/emoji/aggression `sliderRow`; `CloneFactory.tsx` —
-  `type="range"`) — replace with proper number inputs or well-behaved styled sliders. Remove leftover
-  **raw unstyled HTML** (`DeviceGrid.tsx` is full of dead Tailwind-style utility classes — this
-  project has no Tailwind — and is all English; it's also the out-of-scope mobile screen, so a light
-  cleanup/Russify is enough). Optionally fold the manual assign-agent text input in `DeviceGrid` into
-  a pick-from-list, and convert the `SwarmDashboard` drill-down modal to `SidePanel` for consistency.
+- **Phase 4 — styling + controls (IN PROGRESS).** ✅ **Sliders done** (Stage 59): the bare native
+  `type=range` sliders in `SoulsContext` (psychology tab) and `CloneFactory` now use a shared
+  `.styled-range` (filled track via `--pct`) + a paired `.slider-num` number input (precise, two-way
+  synced) — defined in `App.css`. **Remaining:** remove leftover **raw unstyled HTML** (`DeviceGrid.tsx`
+  is full of dead Tailwind-style utility classes — this project has no Tailwind — and is all English;
+  it's the out-of-scope mobile screen, so a light cleanup/Russify is enough); optionally Russify
+  `CloneFactory`, fold the manual assign-agent text input in `DeviceGrid` into a pick-from-list, and
+  convert the read-only `SwarmDashboard` drill-down modal to `SidePanel` for consistency.
 - **Phase 5 — consolidate.** Bring scattered related data/functions into unified screens.
 
 ### Immediate next steps (do these to continue)
-1. **Phase 2 COMPLETE; Phase 3 (de-modal editors) COMPLETE.** Operator's cadence is "коммит. потом
-   продолжим" per screen. Start **Phase 4 — styling/controls**: replace the `type="range()"`
-   `sliderRow` sliders in `SoulsContext.tsx` (psychology tab) — and the `CloneFactory.tsx` range
-   sliders — with predictable controls (e.g. a number input + a styled track, or `<input
-   type="number">`); the operator says they "behave unpredictably". Then clean up `DeviceGrid.tsx`
-   (dead Tailwind utility classes, English strings). Build `daedalus`, verify with a Playwright
-   screenshot, repeat. Pattern reference for any remaining de-modal:
+1. **Phase 2 + Phase 3 (de-modal editors) COMPLETE; Phase 4 IN PROGRESS** (sliders done, Stage 59).
+   Operator's cadence is "коммит. потом продолжим" per screen. Continue **Phase 4 — styling/controls**:
+   clean up `DeviceGrid.tsx` — it's full of dead Tailwind-style utility classes (no Tailwind in this
+   project, so they render as raw unstyled HTML) and is all English; do a light cleanup + Russify (it's
+   the out-of-scope mobile screen, don't over-invest). Then optionally Russify `CloneFactory` and
+   convert the read-only `SwarmDashboard` drill-down modal to `SidePanel`. Build `daedalus`, verify
+   with a Playwright screenshot, repeat. Pattern reference for any remaining de-modal:
    `<SidePanel open=… title=… onClose=…
    footer={Cancel/Save}>` wrapping the form; submit button in the `footer`, bound with
    `form="<formId>"` (or plain `onClick` if not a `<form>`). Build `daedalus`, verify with a
