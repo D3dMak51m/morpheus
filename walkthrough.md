@@ -148,6 +148,14 @@ Everything below (Stages 23–35) was verified live on real data.
   — it already has server-side search + layer filters + server pagination, so a client-side
   `DataTable` would regress it. (Still to migrate in Phase 2: `LandscapeManager`, `ScoutingRadar`,
   `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs.)
+- **50 — UX/UI overhaul, Phase 2 (part 2): LandscapeManager.** Migrated `LandscapeManager`
+  ("Ландшафт скрапинга") to `DataTable`: hand-rolled `<table>` → searchable/sortable/paginated
+  table (sort by id/platform/type/status), rich cells preserved via `render` (layer pills, the
+  status toggle switch, edit/delete actions). The whole screen — header, action buttons, the
+  add/edit modal, placeholders and every error string — was **English → fully Russified** (the
+  console must be Russian). The modal was kept (de-modal is Phase 3); only its strings changed.
+  Verified live (1440px): 8 sources render, modal opens & is Russian. (Still to migrate:
+  `ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -157,13 +165,13 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 49 — UX/UI overhaul Phase 2 (part 1)**: migrated `AccountsManager`
-("Аккаунты") and `ChannelProfiles` ("Профили каналов") to the reusable `DataTable` (Stage 48's
-foundation), both verified live. `MuninnExplorer` was intentionally skipped (already has
-server-side search + filters + pagination — DataTable would regress it). **Now in progress: the
-UX/UI overhaul** (operator asked to bring the whole console to a real "mission center" standard).
-**Next: continue Phase 2** — migrate the remaining list screens (`LandscapeManager`,
-`ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs) to `DataTable`
+Just finished **Stage 50 — UX/UI overhaul Phase 2 (part 2)**: migrated `LandscapeManager`
+("Ландшафт скрапинга") to the reusable `DataTable` and fully Russified it (was English),
+verified live. So far on `DataTable`: `DecisionLog`, `AccountsManager`, `ChannelProfiles`,
+`LandscapeManager` (`MuninnExplorer` intentionally left on its own server-side search). **Now in
+progress: the UX/UI overhaul** (operator asked to bring the whole console to a real "mission
+center" standard). **Next: continue Phase 2** — migrate the remaining list screens
+(`ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs) to `DataTable`
 for uniform search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with
 non-blocking panels/routed edit views + pick-from-list instead of typing IDs), P4
 styling/sliders, P5 consolidate scattered data.

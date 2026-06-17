@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 49. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 50. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -130,21 +130,24 @@ live, nothing broken):
 - **Reusable `components/DataTable.tsx` (+ css)**: search, sortable columns, pagination,
   loading/empty states. **`DecisionLog` ("Решения") migrated to it** as the reference pattern.
 
-### Stage 49 — UX/UI overhaul Phase 2 (part 1: list migrations) — ✅ DONE, committed
-Migrated two more list screens to `DataTable`: **`AccountsManager`** (was a search-less card grid
-+ English title → searchable/sortable/paginated table, unified `view-container` header, detail
-pane preserved on row-click, fully Russified) and **`ChannelProfiles`** (hand-rolled `<table>` →
-`DataTable`, gains sort + pagination, rich cells preserved via `render`). Both verified live.
-**`MuninnExplorer` deliberately NOT migrated** — it already has server-side search + layer
-filters + server pagination; a client-side `DataTable` would regress it. Leave it.
+### Stage 49–50 — UX/UI overhaul Phase 2 (parts 1 & 2: list migrations) — ✅ DONE, committed
+Migrated three list screens to `DataTable`: **`AccountsManager`** (search-less card grid + English
+title → searchable/sortable/paginated table, unified `view-container` header, detail pane preserved
+on row-click, fully Russified), **`ChannelProfiles`** (hand-rolled `<table>` → `DataTable`, gains
+sort + pagination, rich cells preserved via `render`), and **`LandscapeManager`** (hand-rolled
+`<table>` → `DataTable`; sort by id/platform/type/status; layer pills + status toggle + edit/delete
+preserved; the whole screen incl. its add/edit modal was English → fully Russified — modal kept,
+only strings changed). All verified live. **`MuninnExplorer` deliberately NOT migrated** — it
+already has server-side search + layer filters + server pagination; a client-side `DataTable` would
+regress it. Leave it.
 
 ### What is MISSING — the rest of the UX overhaul (Phase 2 remainder + Phases 3–5)
 These come from the operator's explicit complaints. **This is the immediate work.**
-- **Phase 2 (remaining) — uniform lists.** Still to migrate to `DataTable`: `LandscapeManager`,
-  `SwarmDashboard` drill-downs, `NewsHubInspector`, `ScoutingRadar`, `DeviceGrid`. (Done:
-  `DecisionLog`, `AccountsManager`, `ChannelProfiles`. Skip `MuninnExplorer` — already good.)
+- **Phase 2 (remaining) — uniform lists.** Still to migrate to `DataTable`: `ScoutingRadar`,
+  `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs. (Done: `DecisionLog`,
+  `AccountsManager`, `ChannelProfiles`, `LandscapeManager`. Skip `MuninnExplorer` — already good.)
   Many remaining screens show data without search/sort, or force the operator to type IDs/names
-  instead of picking from a list.
+  instead of picking from a list. Several are also still partly in English — Russify as you go.
 - **Phase 3 — de-modal.** Replace the **blocking modal-overlay** editors (in `MissionDeck`,
   `SoulsContext`, `ChannelManager`, `LandscapeManager`, `NewsHubInspector`, `MuninnExplorer`,
   `SwarmDashboard`) with non-blocking side panels / routed edit views. Operator complaint: after
@@ -157,11 +160,11 @@ These come from the operator's explicit complaints. **This is the immediate work
 
 ### Immediate next steps (do these to continue)
 1. Operator's last instruction was "continue with the next screen." Continue **Phase 2**: pick
-   the next remaining list screen (`LandscapeManager`, `ScoutingRadar`, `NewsHubInspector`,
-   `DeviceGrid`, or `SwarmDashboard` drill-downs) and migrate its table to `DataTable` (see the
-   `DecisionLog.tsx` / `AccountsManager.tsx` / `ChannelProfiles.tsx` migrations as templates):
-   add `searchText` + sortable columns + a `toolbar` for existing filters. Build `daedalus`,
-   verify with a Playwright screenshot, repeat per screen.
+   the next remaining list screen (`ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, or
+   `SwarmDashboard` drill-downs) and migrate its table to `DataTable` (see the `DecisionLog.tsx` /
+   `AccountsManager.tsx` / `ChannelProfiles.tsx` / `LandscapeManager.tsx` migrations as templates):
+   add `searchText` + sortable columns + a `toolbar` for existing filters; Russify any English
+   strings. Build `daedalus`, verify with a Playwright screenshot, repeat per screen.
 2. Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend
    change requires `docker compose build daedalus` (the React SPA is built inside the image).
 

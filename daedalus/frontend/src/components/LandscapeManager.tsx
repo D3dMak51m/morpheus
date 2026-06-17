@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Map, RefreshCw, Plus, RotateCw } from 'lucide-react';
+import { DataTable, Column } from './DataTable';
 import './LandscapeManager.css';
 
 interface LandscapeTarget {
@@ -56,7 +58,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
       const data = await res.json();
       setTargets(Array.isArray(data) ? data : []);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch targets');
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить источники');
     } finally {
       setLoading(false);
     }
@@ -72,12 +74,12 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setTargets(targets.map(t => t.id === target.id ? { ...t, is_active: !target.is_active } : t));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to toggle status');
+      setError(e instanceof Error ? e.message : 'Не удалось переключить статус');
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this target?')) return;
+    if (!confirm('Удалить этот источник?')) return;
     try {
       const res = await fetch(`/api/v1/landscape/${id}`, {
         method: 'DELETE',
@@ -86,7 +88,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setTargets(targets.filter(t => t.id !== id));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to delete target');
+      setError(e instanceof Error ? e.message : 'Не удалось удалить источник');
     }
   };
 
@@ -97,9 +99,9 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
         headers,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      alert("Force sync signal sent to HUGINN network.");
+      alert('Сигнал принудительной синхронизации отправлен в сеть HUGINN.');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to force sync');
+      setError(e instanceof Error ? e.message : 'Не удалось запустить синхронизацию');
     }
   };
 
@@ -121,10 +123,48 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
 
   const closeModal = () => { setShowModal(false); setEditId(null); };
 
+  const columns: Column<LandscapeTarget>[] = [
+    { key: 'id', header: 'ID', width: '60px', sortValue: t => t.id },
+    { key: 'platform', header: 'Платформа', width: '110px',
+      render: t => <span className={`badge ${t.platform}`}>{t.platform}</span> },
+    { key: 'type', header: 'Тип', width: '90px',
+      sortValue: t => t.type || 'channel',
+      render: t => <span className="badge-type">{t.type || 'channel'}</span> },
+    { key: 'default_layers', header: 'Слои', sortable: false,
+      render: t => (
+        <div className="tag-list">
+          {(t.default_layers || ['global']).map(l => <span key={l} className={`layer-pill layer-${l}`}>{l}</span>)}
+        </div>
+      ) },
+    { key: 'target_identifier', header: 'Источник',
+      render: t => <span className="font-mono">{t.target_identifier}</span> },
+    { key: 'tags', header: 'Теги', sortable: false,
+      render: t => (
+        <div className="tag-list">
+          {(t.associated_tags || []).map(tag => <span key={tag} className="tag-pill">{tag}</span>)}
+        </div>
+      ) },
+    { key: 'is_active', header: 'Статус', width: '90px',
+      sortValue: t => (t.is_active ? 1 : 0),
+      render: t => (
+        <label className="toggle-switch">
+          <input type="checkbox" checked={t.is_active} onChange={() => toggleActive(t)} />
+          <span className="slider round"></span>
+        </label>
+      ) },
+    { key: 'actions', header: 'Действия', sortable: false, width: '150px',
+      render: t => (
+        <>
+          <button className="btn-secondary" onClick={() => openEdit(t)} style={{ marginRight: 6 }}>Изм.</button>
+          <button className="btn-danger-text" onClick={() => handleDelete(t.id)}>Удалить</button>
+        </>
+      ) },
+  ];
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newLayers.length === 0) {
-      setError('Select at least one default landscape layer.');
+      setError('Выберите хотя бы один слой.');
       return;
     }
     const tags = newTagsString.split(',').map(t => t.trim()).filter(t => t.length > 0);
@@ -149,7 +189,7 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
       closeModal();
       fetchTargets();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save target');
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить источник');
     }
   };
 
@@ -157,96 +197,48 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
     <div className="landscape-manager view-container">
       <div className="header-row">
         <div>
-          <h1>Scraping Landscape</h1>
-          <p className="subtitle">Manage target channels, feeds, and websites for intelligence gathering.</p>
+          <h1><Map size={22} style={{ verticalAlign: '-4px' }} /> Ландшафт скрапинга</h1>
+          <p className="subtitle">Источники сбора данных: каналы, ленты и сайты, из которых рой собирает новости в базу знаний.</p>
         </div>
         <div className="header-actions">
-          <button className="btn-secondary" onClick={handleForceSync}>Force Sync HUGINN</button>
-          <button className="btn-secondary" onClick={fetchTargets}>Refresh</button>
-          <button className="btn-primary" onClick={openAdd}>+ Add Target</button>
+          <button className="btn-secondary" onClick={handleForceSync}><RotateCw size={14} /> Синхр. HUGINN</button>
+          <button className="btn-secondary" onClick={fetchTargets}><RefreshCw size={14} /> Обновить</button>
+          <button className="btn-primary" onClick={openAdd}><Plus size={14} /> Добавить источник</button>
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="data-grid-container">
-        {loading ? <p>Loading targets...</p> : (
-          <table className="data-grid">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Platform</th>
-                <th>Type</th>
-                <th>Default Layers</th>
-                <th>Target Identifier</th>
-                <th>Tags</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {targets.length === 0 ? (
-                <tr><td colSpan={8} className="empty-state">No scraping targets found.</td></tr>
-              ) : targets.map(target => (
-                <tr key={target.id}>
-                  <td>{target.id}</td>
-                  <td><span className={`badge ${target.platform}`}>{target.platform}</span></td>
-                  <td><span className={`badge-type`}>{target.type || 'channel'}</span></td>
-                  <td>
-                    <div className="tag-list">
-                      {(target.default_layers || ['global']).map(l => (
-                        <span key={l} className={`layer-pill layer-${l}`}>{l}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="font-mono">{target.target_identifier}</td>
-                  <td>
-                    <div className="tag-list">
-                      {(target.associated_tags || []).map(tag => (
-                        <span key={tag} className="tag-pill">{tag}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td>
-                    <label className="toggle-switch">
-                      <input 
-                        type="checkbox" 
-                        checked={target.is_active} 
-                        onChange={() => toggleActive(target)} 
-                      />
-                      <span className="slider round"></span>
-                    </label>
-                  </td>
-                  <td>
-                    <button className="btn-secondary" onClick={() => openEdit(target)} style={{ marginRight: 6 }}>Edit</button>
-                    <button className="btn-danger-text" onClick={() => handleDelete(target.id)}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <DataTable
+        columns={columns}
+        rows={targets}
+        rowKey={t => t.id}
+        loading={loading}
+        searchText={t => `${t.platform} ${t.type || ''} ${t.target_identifier} ${(t.associated_tags || []).join(' ')}`}
+        searchPlaceholder="🔍 Поиск по источнику, платформе, типу или тегу…"
+        emptyText="Источников нет. Добавьте канал, ленту или сайт кнопкой «Добавить источник»."
+        pageSize={25}
+      />
 
       {showModal && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>{editId === null ? 'Add Scraping Target' : 'Edit Scraping Target'}</h2>
+            <h2>{editId === null ? 'Добавить источник' : 'Изменить источник'}</h2>
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label>Platform</label>
+                <label>Платформа</label>
                 <select value={newPlatform} onChange={e => setNewPlatform(e.target.value)}>
                   {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label>Type</label>
+                <label>Тип</label>
                 <select value={newType} onChange={e => setNewType(e.target.value)}>
                   {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label>Default Layers <span style={{ color: '#ef4444' }}>*</span> <span style={{ color: '#94a3b8', fontWeight: 400 }}>(select one or more)</span></label>
+                <label>Слои по умолчанию <span style={{ color: '#ef4444' }}>*</span> <span style={{ color: '#94a3b8', fontWeight: 400 }}>(один или больше)</span></label>
                 <div className="layer-checkbox-group">
                   {LAYERS.map(l => (
                     <button
@@ -260,31 +252,31 @@ const LandscapeManager: React.FC<LandscapeManagerProps> = ({ token }) => {
                   ))}
                 </div>
                 <p className="help-text" style={{ fontSize: '0.8em', color: '#888', marginTop: '4px' }}>
-                  Facts from this source are seeded with these layers; the LLM auto-classifier may add more.
+                  Факты из этого источника получают эти слои; LLM-классификатор может добавить ещё.
                 </p>
               </div>
               <div className="form-group">
-                <label>Target Identifier</label>
-                <input 
-                  type="text" 
-                  value={newTargetIdentifier} 
-                  onChange={e => setNewTargetIdentifier(e.target.value)} 
-                  placeholder="e.g. @username or channel_id or url"
-                  required 
+                <label>Идентификатор источника</label>
+                <input
+                  type="text"
+                  value={newTargetIdentifier}
+                  onChange={e => setNewTargetIdentifier(e.target.value)}
+                  placeholder="напр. @username, channel_id или url"
+                  required
                 />
               </div>
               <div className="form-group">
-                <label>Associated Tags (comma-separated)</label>
-                <input 
-                  type="text" 
-                  value={newTagsString} 
-                  onChange={e => setNewTagsString(e.target.value)} 
-                  placeholder="crypto, politics, tech"
+                <label>Теги (через запятую)</label>
+                <input
+                  type="text"
+                  value={newTagsString}
+                  onChange={e => setNewTagsString(e.target.value)}
+                  placeholder="крипто, политика, технологии"
                 />
               </div>
               <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={closeModal}>Cancel</button>
-                <button type="submit" className="btn-primary">{editId === null ? 'Save Target' : 'Update Target'}</button>
+                <button type="button" className="btn-secondary" onClick={closeModal}>Отмена</button>
+                <button type="submit" className="btn-primary">{editId === null ? 'Сохранить' : 'Обновить'}</button>
               </div>
             </form>
           </div>
