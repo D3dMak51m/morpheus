@@ -19,7 +19,8 @@ import MuninnExplorer from './components/MuninnExplorer';
 import ChannelProfiles from './components/ChannelProfiles';
 import DecisionLog from './components/DecisionLog';
 import CloneFactory from './components/CloneFactory';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks } from 'lucide-react';
+import { AppShell, ScrollArea } from '@mantine/core';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks, type LucideIcon } from 'lucide-react';
 import './App.css';
 
 // Views are addressable via the URL hash (#/swarm, #/missions, …) so a page refresh
@@ -34,6 +35,40 @@ function readHashView(): View {
   const h = window.location.hash.replace(/^#\/?/, '');
   return (VIEWS as readonly string[]).includes(h) ? (h as View) : 'dashboard';
 }
+
+// Data-driven sidebar — grouped nav items (label '' = the top, ungrouped block).
+interface NavItem { view: View; label: string; Icon: LucideIcon; }
+const NAV: { label: string; items: NavItem[] }[] = [
+  { label: '', items: [
+    { view: 'dashboard', label: 'Дашборд', Icon: LayoutDashboard },
+    { view: 'live', label: 'Лента событий', Icon: Activity },
+    { view: 'swarm', label: 'Рой', Icon: Users },
+  ] },
+  { label: 'ПЕРСОНЫ', items: [
+    { view: 'accounts', label: 'Аккаунты', Icon: Users },
+    { view: 'souls', label: 'Души (хранилище)', Icon: Shield },
+    { view: 'genesis', label: 'Генезис душ', Icon: Dna },
+    { view: 'factory', label: 'Фабрика клонов', Icon: Factory },
+    { view: 'auth', label: 'Фабрика авторизации', Icon: Key },
+  ] },
+  { label: 'СБОР', items: [
+    { view: 'landscape', label: 'Ландшафт', Icon: Map },
+    { view: 'newshub', label: 'Центр новостей', Icon: Radio },
+    { view: 'muninn', label: 'Знания роя', Icon: Brain },
+    { view: 'channelprofiles', label: 'Профили каналов', Icon: Compass },
+  ] },
+  { label: 'ИСПОЛНЕНИЕ', items: [
+    { view: 'scouting', label: 'Радар разведки', Icon: Radar },
+    { view: 'missions', label: 'Миссии', Icon: Target },
+    { view: 'devices', label: 'Устройства', Icon: HardDrive },
+    { view: 'sandbox', label: 'Песочница', Icon: TerminalSquare },
+    { view: 'decisions', label: 'Решения', Icon: ListChecks },
+    { view: 'activity', label: 'Журнал (лог)', Icon: Activity },
+  ] },
+  { label: 'СИСТЕМА', items: [
+    { view: 'database', label: 'База данных', Icon: Database },
+  ] },
+];
 
 function useHashView(): [View, (v: View) => void] {
   const [view, setView] = useState<View>(readHashView);
@@ -71,144 +106,40 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <nav className="sidebar">
-        <div className="sidebar-header">
-          <h2>DAEDALUS</h2>
-          <span className="subtitle">MORPHEUS CONTROL</span>
+    <AppShell navbar={{ width: 248, breakpoint: 0 }} padding={0}>
+      <AppShell.Navbar style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border-subtle)' }}>
+        <div className="sidebar-inner">
+          <div className="sidebar-header">
+            <h2>DAEDALUS</h2>
+            <span className="subtitle">MORPHEUS CONTROL</span>
+          </div>
+          <ScrollArea style={{ flex: 1 }} type="hover" scrollbarSize={8}>
+            <div className="sidebar-nav">
+              {NAV.map(group => (
+                <div key={group.label || 'top'} className="nav-group">
+                  {group.label && <div className="sidebar-group-label">{group.label}</div>}
+                  {group.items.map(({ view, label, Icon }) => (
+                    <button
+                      key={view}
+                      className={`nav-item ${activeView === view ? 'active' : ''}`}
+                      onClick={() => setActiveView(view)}
+                    >
+                      <Icon size={18} /> {label}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+          <div className="sidebar-footer">
+            <button className="nav-item logout" onClick={handleLogout}>
+              <LogOut size={18} /> Выход
+            </button>
+          </div>
         </div>
-        <div className="sidebar-nav">
-          <button
-            className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setActiveView('dashboard')}
-          >
-            <LayoutDashboard size={18} /> Дашборд
-          </button>
-          <button
-            className={`nav-item ${activeView === 'live' ? 'active' : ''}`}
-            onClick={() => setActiveView('live')}
-          >
-            <Activity size={18} /> Лента событий
-          </button>
-          <button
-            className={`nav-item ${activeView === 'swarm' ? 'active' : ''}`}
-            onClick={() => setActiveView('swarm')}
-          >
-            <Users size={18} /> Рой
-          </button>
+      </AppShell.Navbar>
 
-          <div className="sidebar-group-label">ПЕРСОНЫ</div>
-          <button
-            className={`nav-item ${activeView === 'accounts' ? 'active' : ''}`}
-            onClick={() => setActiveView('accounts')}
-          >
-            <Users size={18} /> Аккаунты
-          </button>
-          <button
-            className={`nav-item ${activeView === 'souls' ? 'active' : ''}`}
-            onClick={() => setActiveView('souls')}
-          >
-            <Shield size={18} /> Души (хранилище)
-          </button>
-          <button
-            className={`nav-item ${activeView === 'genesis' ? 'active' : ''}`}
-            onClick={() => setActiveView('genesis')}
-          >
-            <Dna size={18} /> Генезис душ
-          </button>
-          <button
-            className={`nav-item ${activeView === 'factory' ? 'active' : ''}`}
-            onClick={() => setActiveView('factory')}
-          >
-            <Factory size={18} /> Фабрика клонов
-          </button>
-          <button
-            className={`nav-item ${activeView === 'auth' ? 'active' : ''}`}
-            onClick={() => setActiveView('auth')}
-          >
-            <Key size={18} /> Фабрика авторизации
-          </button>
-
-          <div className="sidebar-group-label">СБОР</div>
-          <button
-            className={`nav-item ${activeView === 'landscape' ? 'active' : ''}`}
-            onClick={() => setActiveView('landscape')}
-          >
-            <Map size={18} /> Ландшафт
-          </button>
-          <button
-            className={`nav-item ${activeView === 'newshub' ? 'active' : ''}`}
-            onClick={() => setActiveView('newshub')}
-          >
-            <Radio size={18} /> Центр новостей
-          </button>
-          <button
-            className={`nav-item ${activeView === 'muninn' ? 'active' : ''}`}
-            onClick={() => setActiveView('muninn')}
-          >
-            <Brain size={18} /> Знания роя
-          </button>
-          <button
-            className={`nav-item ${activeView === 'channelprofiles' ? 'active' : ''}`}
-            onClick={() => setActiveView('channelprofiles')}
-          >
-            <Compass size={18} /> Профили каналов
-          </button>
-
-          <div className="sidebar-group-label">ИСПОЛНЕНИЕ</div>
-          <button
-            className={`nav-item ${activeView === 'scouting' ? 'active' : ''}`}
-            onClick={() => setActiveView('scouting')}
-          >
-            <Radar size={18} /> Радар разведки
-          </button>
-          <button
-            className={`nav-item ${activeView === 'missions' ? 'active' : ''}`}
-            onClick={() => setActiveView('missions')}
-          >
-            <Target size={18} /> Миссии
-          </button>
-          <button
-            className={`nav-item ${activeView === 'devices' ? 'active' : ''}`}
-            onClick={() => setActiveView('devices')}
-          >
-            <HardDrive size={18} /> Устройства
-          </button>
-          <button
-            className={`nav-item ${activeView === 'sandbox' ? 'active' : ''}`}
-            onClick={() => setActiveView('sandbox')}
-          >
-            <TerminalSquare size={18} /> Песочница
-          </button>
-          <button
-            className={`nav-item ${activeView === 'decisions' ? 'active' : ''}`}
-            onClick={() => setActiveView('decisions')}
-          >
-            <ListChecks size={18} /> Решения
-          </button>
-          <button
-            className={`nav-item ${activeView === 'activity' ? 'active' : ''}`}
-            onClick={() => setActiveView('activity')}
-          >
-            <Activity size={18} /> Журнал (лог)
-          </button>
-          
-          <div className="sidebar-group-label">СИСТЕМА</div>
-          <button
-            className={`nav-item ${activeView === 'database' ? 'active' : ''}`}
-            onClick={() => setActiveView('database')}
-          >
-            <Database size={18} /> База данных
-          </button>
-        </div>
-        <div className="sidebar-footer">
-          <button className="nav-item logout" onClick={handleLogout}>
-            <LogOut size={18} /> Выход
-          </button>
-        </div>
-      </nav>
-
-      <main className="main-content">
+      <AppShell.Main style={{ height: '100vh', overflowY: 'auto', background: 'var(--bg-base)' }}>
         <div style={{ display: activeView === 'accounts' ? 'block' : 'none', height: '100%' }}><AccountsManager token={token} /></div>
         <div style={{ display: activeView === 'souls' ? 'block' : 'none', height: '100%' }}><SoulsContext token={token} /></div>
         <div style={{ display: activeView === 'genesis' ? 'block' : 'none', height: '100%' }}><SoulGenesisView /></div>
@@ -228,8 +159,8 @@ function App() {
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
         <div style={{ display: activeView === 'live' ? 'block' : 'none', height: '100%' }}><LiveOps token={token} /></div>
         <div style={{ display: activeView === 'swarm' ? 'block' : 'none', height: '100%' }}><SwarmDashboard token={token} onNavigate={(v) => setActiveView(v as typeof activeView)} /></div>
-      </main>
-    </div>
+      </AppShell.Main>
+    </AppShell>
   );
 }
 

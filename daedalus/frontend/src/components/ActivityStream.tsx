@@ -56,7 +56,7 @@ const ActivityStream: React.FC<ActivityStreamProps> = ({ token }) => {
       setTotal(data.total || 0);
       setError('');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch activity logs');
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить журнал активности');
     } finally {
       setLoading(false);
     }
@@ -78,8 +78,8 @@ const ActivityStream: React.FC<ActivityStreamProps> = ({ token }) => {
     <div className="activity-stream view-container">
       <div className="header-row">
         <div>
-          <h1>Activity Stream</h1>
-          <p className="subtitle">Real-time execution logs across all Swarm workers. ({total} total records)</p>
+          <h1>Журнал активности</h1>
+          <p className="subtitle">Логи действий всех воркеров роя в реальном времени. (всего записей: {total})</p>
         </div>
       </div>
 
@@ -87,17 +87,17 @@ const ActivityStream: React.FC<ActivityStreamProps> = ({ token }) => {
 
       <div className="filters-section">
         <div className="filter-group">
-          <label>Agent ID:</label>
-          <input 
-            type="text" 
-            placeholder="e.g. 001" 
-            value={agentIdFilter} 
+          <label>ID агента:</label>
+          <input
+            type="text"
+            placeholder="напр. clone_alpha_91eea738"
+            value={agentIdFilter}
             onChange={e => setAgentIdFilter(e.target.value)}
             className="agent-input"
           />
         </div>
         <div className="filter-group">
-          <label>Platforms:</label>
+          <label>Платформы:</label>
           <div className="pill-group">
             {PLATFORMS.map(p => (
               <button 
@@ -109,15 +109,15 @@ const ActivityStream: React.FC<ActivityStreamProps> = ({ token }) => {
               </button>
             ))}
             {selectedPlatforms.length > 0 && (
-              <button className="btn-danger-text" onClick={() => setSelectedPlatforms([])}>Clear</button>
+              <button className="btn-danger-text" onClick={() => setSelectedPlatforms([])}>Сброс</button>
             )}
           </div>
         </div>
       </div>
 
       <div className="stream-container">
-        {loading && logs.length === 0 ? <p>Loading stream...</p> : (
-          logs.length === 0 ? <p className="empty-state">No activity logs found matching the criteria.</p> : (
+        {loading && logs.length === 0 ? <p>Загрузка ленты…</p> : (
+          logs.length === 0 ? <p className="empty-state">Записей по заданным фильтрам не найдено.</p> : (
             <div className="log-list">
               {logs.map(log => (
                 <div key={log.id} className="log-card">
@@ -127,7 +127,7 @@ const ActivityStream: React.FC<ActivityStreamProps> = ({ token }) => {
                   </div>
                   <div className="log-body">
                     <div className="log-meta">
-                      <span className="font-mono">Agent {log.agent_id}</span>
+                      <span className="font-mono">Агент {log.agent_id}</span>
                       <span className={`badge ${log.platform}`}>{log.platform}</span>
                       <span className="action-type">{log.action_type.toUpperCase()}</span>
                     </div>

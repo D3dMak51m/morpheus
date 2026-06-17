@@ -114,7 +114,7 @@ const LiveOps: React.FC<LiveOpsProps> = ({ token }) => {
       }
     } catch (e: unknown) {
       setConnected(false);
-      setError(e instanceof Error ? e.message : 'stream error');
+      setError(e instanceof Error ? e.message : 'ошибка потока');
     }
   }, [token]);
 
@@ -148,7 +148,7 @@ const LiveOps: React.FC<LiveOpsProps> = ({ token }) => {
         <div className="lo-title">
           <h1>Командный центр</h1>
           <span className={`lo-live ${connected && !paused ? 'on' : 'off'}`}>
-            <span className="lo-live-dot" /> {paused ? 'ПАУЗА' : connected ? 'LIVE' : 'НЕТ СВЯЗИ'}
+            <span className="lo-live-dot" /> {paused ? 'ПАУЗА' : connected ? 'В ЭФИРЕ' : 'НЕТ СВЯЗИ'}
           </span>
         </div>
         <div className="lo-actions">
