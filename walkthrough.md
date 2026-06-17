@@ -164,6 +164,17 @@ Everything below (Stages 23–35) was verified live on real data.
   (yellow→red by velocity); convert/dismiss actions + toasts kept. Whole screen English → fully
   Russified. Verified live: 684 rows, pager 1/28, top badge 640 104/ч matches the top target.
   (Still to migrate: `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs.)
+- **52 — UX/UI overhaul, Phase 2 (part 4): NewsHubInspector.** Migrated `NewsHubInspector`
+  ("Центр HUGINN") from a card stream + a **fake telemetry panel** to a full-width `DataTable`
+  (search by text/source/platform, sort by source/time/status, pagination, status filter in the
+  toolbar). Removed the dishonest right panel (it showed fabricated numbers — "intercepted today"
+  = `events.length × 15`, hardcoded "ONLINE"); the fetch limit was raised 20 → 200. Kept the
+  live/pause toggle, edit/reject/approve actions, and the edit modal. Whole screen English → fully
+  Russified. **Also fixed 2 bugs:** (1) the modal's layer checkboxes used capitalized keys
+  (`Global/Region/…`) while the stored data uses lowercase (`global/region/…`) so they never
+  reflected the real layers — aligned to lowercase; (2) the `Processed` status (21 events) had no
+  label/pill style/filter option — added it. Verified live (200 events, colored status pills,
+  modal reflects data). (Still to migrate: `DeviceGrid`, `SwarmDashboard` drill-downs.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -173,15 +184,15 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 51 — UX/UI overhaul Phase 2 (part 3)**: migrated `ScoutingRadar`
-("Радар разведки") to the reusable `DataTable` (684 rows now searchable/sortable/paginated; heat
-metaphor kept as a velocity-badge column) and fully Russified it, verified live. So far on
-`DataTable`: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
-`ScoutingRadar` (`MuninnExplorer` intentionally left on its own server-side search). **Now in
-progress: the UX/UI overhaul** (operator asked to bring the whole console to a real "mission
-center" standard). **Next: continue Phase 2** — migrate the remaining list screens
-(`NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs) to `DataTable`
-for uniform search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with
+Just finished **Stage 52 — UX/UI overhaul Phase 2 (part 4)**: migrated `NewsHubInspector`
+("Центр HUGINN") to the reusable `DataTable` (removed a fake telemetry panel, raised the fetch
+limit 20→200, added a status filter; fixed the layer-checkbox key-case bug + the unlabeled
+`Processed` status) and fully Russified it, verified live. So far on `DataTable`: `DecisionLog`,
+`AccountsManager`, `ChannelProfiles`, `LandscapeManager`, `ScoutingRadar`, `NewsHubInspector`
+(`MuninnExplorer` intentionally left on its own server-side search). **Now in progress: the
+UX/UI overhaul** (operator asked to bring the whole console to a real "mission center" standard).
+**Next: continue Phase 2** — migrate the remaining list screens (`DeviceGrid`, `SwarmDashboard`
+drill-downs) to `DataTable` for uniform search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with
 non-blocking panels/routed edit views + pick-from-list instead of typing IDs), P4
 styling/sliders, P5 consolidate scattered data.
 
