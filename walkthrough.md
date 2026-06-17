@@ -332,6 +332,24 @@ Everything below (Stages 23–35) was verified live on real data.
   classes. **Redesign core complete**; remaining (functional, lower priority): `DatabaseExplorer`
   (h-scroll fixed), `SwarmDashboard`/`ScoutingRadar`/`LiveOps`/`CloneFactory`/`SandboxConsole`.
 
+- **71 — Redesign: Scouting + Swarm + Database on Mantine.** `ScoutingScreen` (DataView +
+  heat-velocity badge + inline convert/dismiss), `SwarmScreen` ("Рой" hub: KPI StatTiles +
+  by-caste/by-agent tables + drill-down DataView modal), `DatabaseExplorer` rebuilt on Mantine
+  (NavLink table list + SQL console + Mantine Table with native h-scroll + inline edit). Replaces
+  ScoutingRadar/SwarmDashboard.
+- **72 — Redesign: CloneFactory + SandboxConsole on Mantine (console now 100% Mantine).** Both
+  rebuilt on Mantine (CloneFactory: provision form + per-bot Progress monitor + log; Sandbox:
+  searchable Selects for agent/device = pick-from-list, SegmentedControl, log, VNC panel). **Every
+  operator screen is now on the Mantine redesign** (only `LiveOps` keeps its bespoke real-time feed
+  styling by design). **The redesign mandate is complete:** professional C2 center, full-screen
+  master→detail edit per entity, pick-from-list everywhere, serious Dashboard, framework migration,
+  layout/scroll fix, h-scroll, raw-HTML rebuilds. **Remaining = cleanup only:** delete the dead old
+  components (SoulsContext, AccountsManager, MissionDeck, NewsHubInspector, MuninnExplorer,
+  ChannelProfiles, LandscapeManager, DecisionLog, ActivityStream, ScoutingRadar, SwarmDashboard,
+  DataTable; keep `ChannelManager`+`SidePanel` — still used contextually) after moving their global
+  CSS (`.status-badge`/`.tabs`/`.data-grid`/…) into a shared stylesheet; optional relationship
+  cross-links.
+
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
 content of this file's git versions.

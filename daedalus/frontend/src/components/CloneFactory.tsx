@@ -1,55 +1,21 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Box, Group, Stack, Title, Text, Badge, Button, NumberInput, Select, TextInput, Paper, SimpleGrid,
+  Progress, ScrollArea, ThemeIcon,
+} from '@mantine/core';
 import { Factory, Cpu, Bot, Rocket, CheckCircle2, XCircle } from 'lucide-react';
-import './CloneFactory.css';
 
-interface CloneFactoryProps {
-  token: string;
-}
-
-interface BotState {
-  index: number;
-  stage: string;
-  status: string;
-  agent_id: string | null;
-  device_id: string | null;
-  phone: string | null;
-  account_id: number | null;
-  error: string | null;
-}
-
-interface Job {
-  job_id: string;
-  status: string;
-  params: { count: number; caste: string; target_platform: string; vector_focus: string };
-  log: string[];
-  bots: BotState[];
-  summary?: { bound: number; failed: number; total: number };
-}
+interface CloneFactoryProps { token: string; }
+interface BotState { index: number; stage: string; status: string; agent_id: string | null; device_id: string | null; phone: string | null; account_id: number | null; error: string | null; }
+interface Job { job_id: string; status: string; params: { count: number; caste: string; target_platform: string; vector_focus: string }; log: string[]; bots: BotState[]; summary?: { bound: number; failed: number; total: number }; }
 
 const CASTES = ['alpha', 'beta', 'gamma'];
 const PLATFORMS = ['instagram', 'telegram', 'twitter', 'threads', 'youtube'];
+const STAGE_TO_STEP: Record<string, number> = { queued: 0, generating_persona: 0, registering: 1, binding: 2, bound: 3, failed: -1 };
+const STAGE_LABEL: Record<string, string> = { queued: 'В очереди', generating_persona: 'Генерация персоны…', registering: 'Регистрация · SMS/OTP…', binding: 'Привязка к душе…', bound: 'Привязан ✓', failed: 'Сбой' };
 
-// Pipeline steps for the per-bot progress stepper.
-const STEPS = ['Персона', 'Регистрация', 'Привязка', 'Готово'];
-const STAGE_TO_STEP: Record<string, number> = {
-  queued: 0,
-  generating_persona: 0,
-  registering: 1,
-  binding: 2,
-  bound: 3,
-  failed: -1,
-};
-
-const STAGE_LABEL: Record<string, string> = {
-  queued: 'В очереди',
-  generating_persona: 'Генерация персоны…',
-  registering: 'Регистрация · SMS/OTP…',
-  binding: 'Привязка к душе…',
-  bound: 'Привязан ✓',
-  failed: 'Сбой',
-};
-
-const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
+const CloneFactory = ({ token }: CloneFactoryProps) => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [count, setCount] = useState(5);
   const [caste, setCaste] = useState('beta');
   const [platform, setPlatform] = useState('instagram');
@@ -57,9 +23,7 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState('');
   const [job, setJob] = useState<Job | null>(null);
-
   const pollRef = useRef<number | null>(null);
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
   useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
 
@@ -71,147 +35,84 @@ const CloneFactory: React.FC<CloneFactoryProps> = ({ token }) => {
         if (res.ok) {
           const data: Job = await res.json();
           setJob(data);
-          if (data.status === 'completed' && pollRef.current) {
-            window.clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
+          if (data.status === 'completed' && pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
         }
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (e) { console.error(e); }
     }, 2000);
   };
 
-  const handleLaunch = async () => {
+  const launch = async () => {
     if (!vectorFocus.trim()) { setError('Укажите вектор фокуса.'); return; }
-    setLaunching(true);
-    setError('');
+    setLaunching(true); setError('');
     try {
-      const res = await fetch('/api/v1/factory/mass-provision', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ count, caste, target_platform: platform, vector_focus: vectorFocus }),
-      });
+      const res = await fetch('/api/v1/factory/mass-provision', { method: 'POST', headers, body: JSON.stringify({ count, caste, target_platform: platform, vector_focus: vectorFocus }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       setJob({ job_id: data.job_id, status: data.status, params: { count, caste, target_platform: platform, vector_focus: vectorFocus }, log: [], bots: data.bots });
       pollJob(data.job_id);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Не удалось запустить фабрику');
-    } finally {
-      setLaunching(false);
-    }
+    } catch (e: any) { setError(e.message || 'Не удалось запустить фабрику'); }
+    finally { setLaunching(false); }
   };
 
   const jobRunning = job && job.status !== 'completed';
 
   return (
-    <div className="clone-factory view-container">
-      <div className="header-row">
-        <div>
-          <h1><Factory size={22} style={{ verticalAlign: '-4px' }} /> Фабрика клонов</h1>
-          <p className="subtitle">Автономное массовое создание ботов — запуск AVD, синтез душ, регистрация аккаунтов и привязка, без ручного участия. (Мобильный стек вне scope.)</p>
-        </div>
-      </div>
+    <Box p="lg">
+      <Group mb="md"><Title order={2}><Factory size={22} style={{ verticalAlign: -4 }} /> Фабрика клонов</Title></Group>
+      <Text size="sm" c="dimmed" mb="md">Автономное массовое создание ботов — запуск AVD, синтез душ, регистрация и привязка. (Мобильный стек вне scope.)</Text>
 
-      {error && <div className="error-banner">{error}</div>}
+      <Paper withBorder radius="md" p="lg" maw={760} mb="lg">
+        <Stack gap="md">
+          <NumberInput label="Число ботов" min={1} max={20} value={count} onChange={v => setCount(Math.max(1, Math.min(20, Number(v) || 1)))} disabled={!!jobRunning} w={200} />
+          <Group grow>
+            <Select label="Каста" data={CASTES} value={caste} onChange={v => v && setCaste(v)} disabled={!!jobRunning} />
+            <Select label="Платформа" data={PLATFORMS} value={platform} onChange={v => v && setPlatform(v)} disabled={!!jobRunning} />
+          </Group>
+          <TextInput label="Вектор фокуса" value={vectorFocus} onChange={e => setVectorFocus(e.currentTarget.value)} disabled={!!jobRunning} placeholder="напр. гражданский активист, Ташкент, городское развитие" />
+          {error && <Text c="red" size="sm">{error}</Text>}
+          <Button size="md" leftSection={<Rocket size={18} />} loading={launching || !!jobRunning} onClick={launch}>
+            {jobRunning ? 'Создание…' : `Создать ${count} ${count > 1 ? 'ботов' : 'бота'}`}
+          </Button>
+        </Stack>
+      </Paper>
 
-      {/* ── Provision form ── */}
-      <div className="cf-builder">
-        <div className="cf-field">
-          <div className="slider-head">
-            <label>Число ботов</label>
-            <input
-              type="number" className="slider-num" min={1} max={20} value={count}
-              onChange={e => setCount(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
-              disabled={!!jobRunning}
-            />
-          </div>
-          <input
-            type="range" className="styled-range" min={1} max={20} value={count}
-            style={{ ['--pct' as string]: `${((count - 1) / 19) * 100}%` }}
-            onChange={e => setCount(parseInt(e.target.value))} disabled={!!jobRunning}
-          />
-          <div className="cf-slider-ends"><span>1</span><span>20</span></div>
-        </div>
-        <div className="cf-row">
-          <div className="cf-field">
-            <label>Каста</label>
-            <select value={caste} onChange={e => setCaste(e.target.value)} disabled={!!jobRunning}>
-              {CASTES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div className="cf-field">
-            <label>Платформа</label>
-            <select value={platform} onChange={e => setPlatform(e.target.value)} disabled={!!jobRunning}>
-              {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
-        </div>
-        <div className="cf-field">
-          <label>Вектор фокуса</label>
-          <input value={vectorFocus} onChange={e => setVectorFocus(e.target.value)} disabled={!!jobRunning}
-            placeholder="напр. гражданский активист, Ташкент, городское развитие" />
-        </div>
-        <button className="btn-primary cf-launch" onClick={handleLaunch} disabled={launching || !!jobRunning}>
-          <Rocket size={16} /> {jobRunning ? 'Создание…' : launching ? 'Запуск…' : `Создать ${count} ${count > 1 ? 'ботов' : 'бота'}`}
-        </button>
-      </div>
-
-      {/* ── Execution monitor ── */}
       {job && (
-        <div className="cf-monitor">
-          <div className="cf-monitor-head">
-            <h2><Cpu size={18} /> Монитор выполнения</h2>
-            <span className={`cf-job-status ${job.status}`}>{job.status.replace(/_/g, ' ')}</span>
-            {job.summary && (
-              <span className="cf-summary">{job.summary.bound} привязано · {job.summary.failed} сбой / {job.summary.total}</span>
-            )}
-          </div>
-
-          <div className="cf-grid">
+        <Box>
+          <Group mb="sm">
+            <Cpu size={18} /><Text fw={600}>Монитор выполнения</Text>
+            <Badge variant="light">{job.status.replace(/_/g, ' ')}</Badge>
+            {job.summary && <Text size="sm" c="dimmed">{job.summary.bound} привязано · {job.summary.failed} сбой / {job.summary.total}</Text>}
+          </Group>
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
             {job.bots.map(bot => {
               const step = STAGE_TO_STEP[bot.stage] ?? 0;
               const failed = bot.stage === 'failed' || bot.status === 'failed';
               const done = bot.stage === 'bound' || bot.status === 'done';
               return (
-                <div key={bot.index} className={`cf-bot ${failed ? 'failed' : done ? 'done' : 'active'}`}>
-                  <div className="cf-bot-head">
-                    <span className="cf-bot-title"><Bot size={14} /> Бот {bot.index}</span>
-                    {done && <CheckCircle2 size={16} className="cf-ok" />}
-                    {failed && <XCircle size={16} className="cf-bad" />}
-                  </div>
-
-                  <div className="cf-steps">
-                    {STEPS.map((label, i) => (
-                      <div key={label} className={`cf-step ${failed && i === step + 1 ? 'failed' : i <= step ? 'done' : ''} ${i === step && !done && !failed ? 'current' : ''}`}>
-                        <span className="cf-step-dot" />
-                        <span className="cf-step-label">{label}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="cf-bot-meta">
-                    <div className="cf-stage-label">{STAGE_LABEL[bot.stage] || bot.stage}</div>
-                    {bot.agent_id && <div className="cf-meta-row">душа: <span>{bot.agent_id}</span></div>}
-                    {bot.device_id && <div className="cf-meta-row">avd: <span>{bot.device_id}</span></div>}
-                    {bot.phone && <div className="cf-meta-row">телефон: <span>{bot.phone}</span></div>}
-                    {bot.error && <div className="cf-error">{bot.error}</div>}
-                  </div>
-                </div>
+                <Paper key={bot.index} withBorder radius="md" p="md" style={{ borderColor: failed ? 'var(--mantine-color-red-7)' : done ? 'var(--mantine-color-teal-7)' : undefined }}>
+                  <Group justify="space-between" mb="xs">
+                    <Group gap={6}><Bot size={14} /><Text fw={600} size="sm">Бот {bot.index}</Text></Group>
+                    {done && <ThemeIcon color="teal" variant="light" size="sm"><CheckCircle2 size={14} /></ThemeIcon>}
+                    {failed && <ThemeIcon color="red" variant="light" size="sm"><XCircle size={14} /></ThemeIcon>}
+                  </Group>
+                  <Progress value={failed ? 100 : ((step + (done ? 1 : 0)) / 4) * 100} color={failed ? 'red' : done ? 'teal' : 'indigo'} size="sm" mb="xs" />
+                  <Text size="xs" c={failed ? 'red' : 'dimmed'}>{STAGE_LABEL[bot.stage] || bot.stage}</Text>
+                  {bot.agent_id && <Text size="xs" c="dimmed">душа: {bot.agent_id}</Text>}
+                  {bot.phone && <Text size="xs" c="dimmed">телефон: {bot.phone}</Text>}
+                  {bot.error && <Text size="xs" c="red">{bot.error}</Text>}
+                </Paper>
               );
             })}
-          </div>
-
+          </SimpleGrid>
           {job.log.length > 0 && (
-            <div className="cf-log">
-              <h3>Журнал фабрики</h3>
-              {job.log.map((line, i) => <div key={i} className="cf-log-line">{line}</div>)}
-            </div>
+            <Paper withBorder radius="md" p="sm" mt="md" style={{ background: '#0a0d14' }}>
+              <Text size="sm" fw={600} mb="xs">Журнал фабрики</Text>
+              <ScrollArea h={180}>{job.log.map((line, i) => <Text key={i} size="xs" ff="monospace" c="dimmed">{line}</Text>)}</ScrollArea>
+            </Paper>
           )}
-        </div>
+        </Box>
       )}
-    </div>
+    </Box>
   );
 };
 
