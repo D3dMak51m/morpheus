@@ -255,6 +255,12 @@ Everything below (Stages 23–35) was verified live on real data.
   live. **Found:** the sidebar nav in `App.tsx` is a mix of English + Russian (Dashboard, Accounts,
   Clone Factory, Landscape, News Hub, Mission Deck, Devices… are English) — flagged as the next
   high-visibility Russification fix.
+- **62 — UX/UI overhaul, Phase 4 (part 4): sidebar nav Russified.** Translated all sidebar items +
+  group labels in `App.tsx` (ПЕРСОНЫ/СБОР/ИСПОЛНЕНИЕ/СИСТЕМА; Дашборд, Лента событий, Аккаунты,
+  Души (хранилище), Генезис душ, Фабрика клонов, Фабрика авторизации, Ландшафт, Центр новостей,
+  Радар разведки, Миссии, Устройства, Песочница, База данных, Выход) — names aligned with the screen
+  titles. Verified live. **Found:** the landing `Dashboard` screen is still almost all English
+  ("System Dashboard", "Tab 1/2", "Swarm Health Overlord", metric labels, welcome text) — next target.
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -264,12 +270,12 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 61 — UX/UI overhaul Phase 4 (part 3, CloneFactory)**: fully Russified the
-"Фабрика клонов" screen, verified live. **Now in progress: the UX/UI overhaul** (operator asked to
-bring the whole console to a real "mission center" standard). **Next: Russify the sidebar nav in
-`App.tsx`** (it's a mix of English + Russian — high-visibility), then convert the read-only
-`SwarmDashboard` drill-down modal to `SidePanel`, then **P5 — consolidate** (bring scattered related
-data/functions into unified screens).
+Just finished **Stage 62 — UX/UI overhaul Phase 4 (part 4, sidebar nav)**: Russified all sidebar nav
+items + group labels in `App.tsx`, verified live. **Now in progress: the UX/UI overhaul** (operator
+asked to bring the whole console to a real "mission center" standard). **Next: Russify the landing
+`Dashboard.tsx` screen** (still almost all English — "System Dashboard", tabs, "Swarm Health
+Overlord", metric labels, welcome text), then convert the read-only `SwarmDashboard` drill-down modal
+to `SidePanel`, then **P5 — consolidate** (bring scattered related data/functions into unified screens).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

@@ -82,13 +82,13 @@ function App() {
             className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`}
             onClick={() => setActiveView('dashboard')}
           >
-            <LayoutDashboard size={18} /> Dashboard
+            <LayoutDashboard size={18} /> Дашборд
           </button>
           <button
             className={`nav-item ${activeView === 'live' ? 'active' : ''}`}
             onClick={() => setActiveView('live')}
           >
-            <Activity size={18} /> Live Ops
+            <Activity size={18} /> Лента событий
           </button>
           <button
             className={`nav-item ${activeView === 'swarm' ? 'active' : ''}`}
@@ -97,50 +97,50 @@ function App() {
             <Users size={18} /> Рой
           </button>
 
-          <div className="sidebar-group-label">PERSONAS</div>
+          <div className="sidebar-group-label">ПЕРСОНЫ</div>
           <button
             className={`nav-item ${activeView === 'accounts' ? 'active' : ''}`}
             onClick={() => setActiveView('accounts')}
           >
-            <Users size={18} /> Accounts
+            <Users size={18} /> Аккаунты
           </button>
           <button
             className={`nav-item ${activeView === 'souls' ? 'active' : ''}`}
             onClick={() => setActiveView('souls')}
           >
-            <Shield size={18} /> Souls (Vault)
+            <Shield size={18} /> Души (хранилище)
           </button>
           <button
             className={`nav-item ${activeView === 'genesis' ? 'active' : ''}`}
             onClick={() => setActiveView('genesis')}
           >
-            <Dna size={18} /> Soul Genesis
+            <Dna size={18} /> Генезис душ
           </button>
           <button
             className={`nav-item ${activeView === 'factory' ? 'active' : ''}`}
             onClick={() => setActiveView('factory')}
           >
-            <Factory size={18} /> Clone Factory
+            <Factory size={18} /> Фабрика клонов
           </button>
           <button
             className={`nav-item ${activeView === 'auth' ? 'active' : ''}`}
             onClick={() => setActiveView('auth')}
           >
-            <Key size={18} /> Auth Factory
+            <Key size={18} /> Фабрика авторизации
           </button>
 
-          <div className="sidebar-group-label">GATHERING</div>
+          <div className="sidebar-group-label">СБОР</div>
           <button
             className={`nav-item ${activeView === 'landscape' ? 'active' : ''}`}
             onClick={() => setActiveView('landscape')}
           >
-            <Map size={18} /> Landscape
+            <Map size={18} /> Ландшафт
           </button>
           <button
             className={`nav-item ${activeView === 'newshub' ? 'active' : ''}`}
             onClick={() => setActiveView('newshub')}
           >
-            <Radio size={18} /> News Hub
+            <Radio size={18} /> Центр новостей
           </button>
           <button
             className={`nav-item ${activeView === 'muninn' ? 'active' : ''}`}
@@ -155,30 +155,30 @@ function App() {
             <Compass size={18} /> Профили каналов
           </button>
 
-          <div className="sidebar-group-label">EXECUTION</div>
+          <div className="sidebar-group-label">ИСПОЛНЕНИЕ</div>
           <button
             className={`nav-item ${activeView === 'scouting' ? 'active' : ''}`}
             onClick={() => setActiveView('scouting')}
           >
-            <Radar size={18} /> Scouting Radar
+            <Radar size={18} /> Радар разведки
           </button>
           <button
             className={`nav-item ${activeView === 'missions' ? 'active' : ''}`}
             onClick={() => setActiveView('missions')}
           >
-            <Target size={18} /> Mission Deck
+            <Target size={18} /> Миссии
           </button>
           <button
             className={`nav-item ${activeView === 'devices' ? 'active' : ''}`}
             onClick={() => setActiveView('devices')}
           >
-            <HardDrive size={18} /> Devices
+            <HardDrive size={18} /> Устройства
           </button>
           <button
             className={`nav-item ${activeView === 'sandbox' ? 'active' : ''}`}
             onClick={() => setActiveView('sandbox')}
           >
-            <TerminalSquare size={18} /> Sandbox Console
+            <TerminalSquare size={18} /> Песочница
           </button>
           <button
             className={`nav-item ${activeView === 'decisions' ? 'active' : ''}`}
@@ -193,17 +193,17 @@ function App() {
             <Activity size={18} /> Журнал (лог)
           </button>
           
-          <div className="sidebar-group-label">SYSTEM</div>
+          <div className="sidebar-group-label">СИСТЕМА</div>
           <button
             className={`nav-item ${activeView === 'database' ? 'active' : ''}`}
             onClick={() => setActiveView('database')}
           >
-            <Database size={18} /> Database
+            <Database size={18} /> База данных
           </button>
         </div>
         <div className="sidebar-footer">
           <button className="nav-item logout" onClick={handleLogout}>
-            <LogOut size={18} /> Logout
+            <LogOut size={18} /> Выход
           </button>
         </div>
       </nav>
