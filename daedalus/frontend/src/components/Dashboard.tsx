@@ -24,10 +24,10 @@ interface Overlord {
 }
 
 const BLOCKER_LABELS: Record<string, string> = {
-  database: 'Database unreachable',
-  fleet_online: 'No emulators online',
-  accounts_active: 'No active accounts',
-  no_recovering_devices: 'Devices recovering',
+  database: 'База данных недоступна',
+  fleet_online: 'Нет эмуляторов онлайн',
+  accounts_active: 'Нет активных аккаунтов',
+  no_recovering_devices: 'Устройства восстанавливаются',
 };
 
 function SwarmOverlord({ token }: { token: string }) {
@@ -41,7 +41,7 @@ function SwarmOverlord({ token }: { token: string }) {
       setData(await res.json());
       setError('');
     } catch (e: any) {
-      setError(e.message || 'Failed to load');
+      setError(e.message || 'Не удалось загрузить');
     }
   };
 
@@ -52,33 +52,33 @@ function SwarmOverlord({ token }: { token: string }) {
   }, []);
 
   if (error && !data) {
-    return <div className="overlord-widget error-banner">Swarm Overlord offline: {error}</div>;
+    return <div className="overlord-widget error-banner">Оверлорд роя недоступен: {error}</div>;
   }
   if (!data) {
-    return <div className="overlord-widget">Loading Swarm Health…</div>;
+    return <div className="overlord-widget">Загрузка состояния роя…</div>;
   }
 
   const isGo = data.readiness === 'GO';
   const fleetPct = data.fleet.total > 0 ? Math.round((data.fleet.online / data.fleet.total) * 100) : 0;
   const lastPrune = data.database.retention.last_run_at
-    ? new Date(data.database.retention.last_run_at).toLocaleString()
-    : 'never';
+    ? new Date(data.database.retention.last_run_at).toLocaleString('ru-RU')
+    : 'никогда';
 
   return (
     <div className={`overlord-widget ${isGo ? 'go' : 'nogo'}`}>
       <div className="overlord-header">
         <div className="overlord-title">
-          <Activity size={18} /> Swarm Health Overlord
+          <Activity size={18} /> Состояние роя
         </div>
         <div className={`overlord-readiness ${isGo ? 'go' : 'nogo'}`}>
           {isGo ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
-          {data.readiness}
+          {isGo ? 'ГОТОВ' : 'НЕ ГОТОВ'}
         </div>
       </div>
 
       {!isGo && data.blockers.length > 0 && (
         <div className="overlord-blockers">
-          Blockers: {data.blockers.map(b => BLOCKER_LABELS[b] || b).join(' · ')}
+          Блокеры: {data.blockers.map(b => BLOCKER_LABELS[b] || b).join(' · ')}
         </div>
       )}
 
@@ -86,42 +86,42 @@ function SwarmOverlord({ token }: { token: string }) {
         <div className="overlord-stat">
           <div className="overlord-stat-icon"><Server size={18} /></div>
           <div className="overlord-stat-value">{data.fleet.online}/{data.fleet.total}</div>
-          <div className="overlord-stat-label">Emulators Online ({fleetPct}%)</div>
-          {data.fleet.recovering > 0 && <div className="overlord-stat-sub recovering">{data.fleet.recovering} recovering</div>}
+          <div className="overlord-stat-label">Эмуляторы онлайн ({fleetPct}%)</div>
+          {data.fleet.recovering > 0 && <div className="overlord-stat-sub recovering">{data.fleet.recovering} восстанавливается</div>}
         </div>
 
         <div className="overlord-stat">
           <div className="overlord-stat-icon"><Activity size={18} /></div>
           <div className="overlord-stat-value">{data.missions.active}</div>
-          <div className="overlord-stat-label">Active Missions</div>
-          <div className="overlord-stat-sub">{data.missions.total} total</div>
+          <div className="overlord-stat-label">Активные миссии</div>
+          <div className="overlord-stat-sub">всего {data.missions.total}</div>
         </div>
 
         <div className="overlord-stat">
           <div className="overlord-stat-icon"><Radar size={18} /></div>
           <div className="overlord-stat-value">{data.huginn.scouted_last_hour}</div>
-          <div className="overlord-stat-label">Scouted / Last Hour</div>
-          <div className="overlord-stat-sub">peak {Math.round(data.huginn.top_velocity).toLocaleString()}/h</div>
+          <div className="overlord-stat-label">Найдено / за час</div>
+          <div className="overlord-stat-sub">пик {Math.round(data.huginn.top_velocity).toLocaleString('ru-RU')}/ч</div>
         </div>
 
         <div className="overlord-stat">
           <div className="overlord-stat-icon"><Database size={18} /></div>
-          <div className="overlord-stat-value">{data.database.captured_events.toLocaleString()}</div>
-          <div className="overlord-stat-label">Captured Events</div>
-          <div className="overlord-stat-sub">pruned {lastPrune}</div>
+          <div className="overlord-stat-value">{data.database.captured_events.toLocaleString('ru-RU')}</div>
+          <div className="overlord-stat-label">Перехвачено событий</div>
+          <div className="overlord-stat-sub">очищено {lastPrune}</div>
         </div>
 
         <div className="overlord-stat">
           <div className="overlord-stat-icon"><ShieldCheck size={18} /></div>
           <div className="overlord-stat-value">{data.accounts.active}</div>
-          <div className="overlord-stat-label">Active Accounts</div>
+          <div className="overlord-stat-label">Активные аккаунты</div>
         </div>
 
         <div className="overlord-stat">
           <div className="overlord-stat-icon"><RefreshCw size={18} /></div>
           <div className="overlord-stat-value">{data.database.scouted_pending}</div>
-          <div className="overlord-stat-label">Radar Pending</div>
-          <div className="overlord-stat-sub">{data.database.activity_logs.toLocaleString()} actions logged</div>
+          <div className="overlord-stat-label">В очереди радара</div>
+          <div className="overlord-stat-sub">{data.database.activity_logs.toLocaleString('ru-RU')} действий записано</div>
         </div>
       </div>
     </div>
@@ -134,19 +134,19 @@ export default function Dashboard({ token }: DashboardProps) {
   return (
     <div className="view-container dashboard-container">
       <div className="dashboard-header">
-        <h1>System Dashboard</h1>
+        <h1>Дашборд системы</h1>
         <div className="tabs dashboard-tabs">
           <button
             className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
             onClick={() => setActiveTab('overview')}
           >
-            Tab 1: Overview
+            Обзор
           </button>
           <button
             className={`tab-btn ${activeTab === 'diagnostics' ? 'active' : ''}`}
             onClick={() => setActiveTab('diagnostics')}
           >
-            Tab 2: Diagnostics
+            Диагностика
           </button>
         </div>
       </div>
@@ -155,8 +155,8 @@ export default function Dashboard({ token }: DashboardProps) {
         {activeTab === 'overview' && (
           <div className="overview-panel">
             <SwarmOverlord token={token} />
-            <h2 style={{ marginTop: '24px' }}>Welcome to Daedalus — Morpheus Control Panel.</h2>
-            <p className="text-muted">Select a module from the sidebar to begin.</p>
+            <h2 style={{ marginTop: '24px' }}>Добро пожаловать в Daedalus — пульт управления Morpheus.</h2>
+            <p className="text-muted">Выберите раздел в меню слева, чтобы начать.</p>
           </div>
         )}
 

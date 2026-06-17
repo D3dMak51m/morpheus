@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 62. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 63. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -172,18 +172,18 @@ These come from the operator's explicit complaints. **This is the immediate work
   `.slider-num` number input (precise, two-way synced) — in `App.css`. ✅ **DeviceGrid** (Stage 60):
   fixed the unstyled toast (it used only non-existent Tailwind classes), cleaned the VNC modal's dead
   classes, fully Russified. ✅ **CloneFactory** (Stage 61): fully Russified. ✅ **Sidebar nav**
-  (Stage 62, `App.tsx`): all items + group labels Russified. **Optional tail:** Russify the landing
-  **`Dashboard.tsx`** (still almost all English); fold the manual assign-agent text input in
-  `DeviceGrid` into a pick-from-list; convert the read-only `SwarmDashboard` drill-down modal to
-  `SidePanel` for consistency.
+  (Stage 62, `App.tsx`): all items + group labels Russified. ✅ **Dashboard** (Stage 63): landing
+  screen Russified (title/tabs/overlord/metrics/welcome). **Optional tail:** Russify
+  **`SystemDiagnostics.tsx`** (the Диагностика tab — still largely English); fold the manual
+  assign-agent text input in `DeviceGrid` into a pick-from-list; convert the read-only `SwarmDashboard`
+  drill-down modal to `SidePanel` for consistency.
 - **Phase 5 — consolidate.** Bring scattered related data/functions into unified screens.
 
 ### Immediate next steps (do these to continue)
 1. **Phase 2 + Phase 3 (editors) COMPLETE; Phase 4 core DONE** (sliders Stage 59, DeviceGrid Stage 60).
-   Operator's cadence is "коммит. потом продолжим" per screen. Continue: (a) Russify the landing
-   **`Dashboard.tsx`** screen — it's still almost all English ("System Dashboard", "Tab 1/2",
-   "Swarm Health Overlord", "NO-GO", metric labels like EMULATORS ONLINE / ACTIVE MISSIONS, welcome
-   text). (b) convert the read-only `SwarmDashboard` drill-down modal to `SidePanel` for consistency; then
+   Operator's cadence is "коммит. потом продолжим" per screen. Continue: (a) Russify
+   **`SystemDiagnostics.tsx`** (the Дашборд → Диагностика tab — still largely English). (b) convert
+   the read-only `SwarmDashboard` drill-down modal to `SidePanel` for consistency; then
    (c) **Phase 5 — consolidate**: bring scattered related data/functions into unified screens (look for
    overlaps, e.g. account↔soul binding lives in both `AccountsManager` and `SoulsContext`). Build
    `daedalus`, verify with a Playwright screenshot, repeat. Pattern reference for any remaining de-modal:
