@@ -120,6 +120,26 @@ class OutputGuardrails:
 
         return True, "Valid"
 
+    def clean_output(self, text: str) -> str:
+        """Post-process a validated comment: strip garbage hashtags qwen2.5:3b likes to
+        tack on — long glued transliteration gibberish like '#УЗБЕКИСТАНишегизилуенет'
+        (an uppercase run welded to a lowercase nonsense tail, or an over-long tag).
+        Normal short/CamelCase hashtags are kept. Sanitising (vs rejecting) avoids an
+        extra regen for an otherwise good comment."""
+        if not text:
+            return text
+
+        def _is_garbage(tok: str) -> bool:
+            body = tok[1:].strip(".,!?;:)(»«\"'…")
+            if len(body) >= 15:
+                return True
+            # Uppercase run (>=3) welded directly to a lowercase run (>=5) = gibberish.
+            return bool(re.search(r"[A-ZА-ЯЁ]{3,}[a-zа-яё]{5,}", body))
+
+        cleaned = re.sub(r"#[^\s#]+", lambda m: "" if _is_garbage(m.group(0)) else m.group(0), text)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+        return cleaned or text
+
     def is_echo(self, text: str, references: List[str]) -> bool:
         """
         Detect when the model parroted the input back instead of replying. A weak

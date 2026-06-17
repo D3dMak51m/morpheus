@@ -350,14 +350,19 @@ def _process_mission(mission: dict, sf) -> None:
         return
 
     channels = mission["channels"][:PER_CYCLE_CHANNEL_CAP]
+    mtitle = (mission.get("title") or "")[:24]
     fetch_list, since_map = [], {}
+    label_by_id = {}
     r = _get_redis()
     for ch in channels:
-        ident = ch["identifier"]
+        # Defensive: legacy targets may be stored as raw t.me URLs Pyrogram can't
+        # resolve — canonicalise to @username/id so the mission still scans them.
+        ident = _resolvable_ident(ch["identifier"])
         key = f"mission:{mid}:{ident}"
         since_map[ident] = int(r.hget(LASTSEEN_KEY, key) or 0)
         username = ident.lstrip("@") if ident.startswith("@") else None
         fetch_list.append({"chat_id": ident, "username": username, "title": ch.get("title")})
+        label_by_id[ident] = ch.get("title") or ident
 
     emit_event(seeder, "target_scan",
                f"миссия «{mission['title'][:30]}»: {len(channels)} цел. канал(ов)",
@@ -365,11 +370,19 @@ def _process_mission(mission: dict, sf) -> None:
 
     driver = TelegramDriver(seeder, creds)
     results = driver.fetch_new_posts(fetch_list, since_map, POSTS_PER_CHANNEL)
-    label_by_id = {c["identifier"]: (c.get("title") or c["identifier"]) for c in channels}
 
     for res in results:
         ident = res["chat_id"]
         key = f"mission:{mid}:{ident}"
+        # Unresolvable channel — tell the operator instead of looking idle (#4).
+        if res.get("error"):
+            err_label = label_by_id.get(ident, ident)
+            emit_event(seeder, "channel_unresolved",
+                       f"«{mtitle}»: канал {err_label} недоступен/не резолвится",
+                       status="warn", target=ident)
+            _log_decision("skip", seeder, mid, ident, "",
+                          detail=f"канал не резолвится: {str(res['error'])[:200]}", verdict=False)
+            continue
         if res["newest"]:
             r.hset(LASTSEEN_KEY, key, res["newest"])
         if res["first_seen"]:
@@ -408,7 +421,8 @@ def _process_mission(mission: dict, sf) -> None:
             # did/didn't engage (not just silence).
             cand_url = _mission_post_url(ident, cand["post_id"])
             emit_event(seeder, "relevance",
-                       ("по теме: " if v else "не по теме: ") + judge_text.replace("\n", " ")[:70],
+                       f"«{mtitle}» " + ("по теме: " if v else "не по теме: ")
+                       + judge_text.replace("\n", " ")[:70],
                        status="ok" if v else "info", target=cand_url)
             _log_decision("relevance", seeder, mid, ident, cand_url,
                           detail=judge_text.replace("\n", " ")[:600], verdict=bool(v))
@@ -423,7 +437,7 @@ def _process_mission(mission: dict, sf) -> None:
             # like the bot ignored a clearly on-topic post).
             skip_url = _mission_post_url(ident, chosen["post_id"])
             emit_event(seeder, "rate_skip",
-                       f"по теме, но пропуск: лимит {MAX_PER_CHANNEL_PER_HOUR} коммент/час на канал исчерпан",
+                       f"«{mtitle}» по теме, но пропуск: лимит {MAX_PER_CHANNEL_PER_HOUR} коммент/час на канал исчерпан",
                        status="warn", target=skip_url)
             _log_decision("skip", seeder, mid, ident, skip_url,
                           detail=f"по теме, но лимит {MAX_PER_CHANNEL_PER_HOUR} коммент/час на канал исчерпан",
@@ -476,6 +490,31 @@ def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:
 
 
 # ── Agent-proposed targets ───────────────────────────────────────────────────
+
+def _resolvable_ident(raw: str) -> str:
+    """Defensive read-side twin of DAEDALUS ``canonical_identifier``: turn a stored
+    target identifier into a ref Pyrogram can resolve (``@username`` / numeric id),
+    so legacy rows saved as raw ``t.me`` URLs still work without a manual DB fix.
+    Keeps a trailing /<post_id> for post targets."""
+    s = (raw or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    for pref in ("https://t.me/", "http://t.me/", "t.me/", "https://telegram.me/", "telegram.me/"):
+        if low.startswith(pref):
+            s = s[len(pref):]
+            break
+    else:
+        if s.startswith("@") or s.lstrip("-").isdigit():
+            return s
+    s = s.strip("/")
+    if s.startswith("c/"):
+        parts = s.split("/")
+        internal = parts[1] if len(parts) > 1 else ""
+        return f"-100{internal}" if internal.isdigit() else s
+    user = s.split("/")[0].lstrip("@")
+    return f"@{user}" if user else s
+
 
 def _norm_ident(ident: str) -> str:
     """Normalize a channel identifier for dedup comparison (@user / t.me url / id)."""

@@ -10,6 +10,7 @@ operator to approve/reject. Per-post tactic is chosen dynamically at runtime.
 
 import logging
 import os
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -32,6 +33,44 @@ VALID_TACTICS = ("soft_support", "aggressive_displacement", "dynamic")
 VALID_STATUS = ("active", "paused")
 VALID_KIND = ("channel", "post")
 VALID_TARGET_STATUS = ("active", "suggested", "rejected")
+
+
+def canonical_identifier(raw: str, kind: str = "channel") -> str:
+    """Normalise a target identifier to a form MYRMIDON/Pyrogram can resolve.
+
+    The UI accepts "@username", a "t.me/..." URL, or a numeric chat id — but the
+    execution engine can only resolve a clean ``@username`` / numeric ``-100…`` ref.
+    A raw URL (``https://t.me/foo``) is silently unresolvable, so the channel is
+    dropped and the mission never acts on it. Canonicalising at write time prevents
+    that class of dead target. For a ``post`` target the trailing /<id> is kept.
+        https://t.me/foo  -> @foo        t.me/foo -> @foo        foo -> @foo
+        @foo -> @foo      -100123 -> -100123   https://t.me/c/123/45 -> -100123/45
+    """
+    s = (raw or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    for pref in ("https://t.me/", "http://t.me/", "t.me/", "https://telegram.me/", "telegram.me/"):
+        if low.startswith(pref):
+            s = s[len(pref):]
+            break
+    else:
+        if s.startswith("@") or s.lstrip("-").isdigit():
+            return s  # already a clean ref
+        # bare token (e.g. "foo" or "foo/45") falls through to the path handling below
+    s = s.strip("/")
+    if s.startswith("c/"):
+        # private/linked chat: c/<internal>[/<post>] -> -100<internal>[/<post>]
+        parts = s.split("/")
+        internal = parts[1] if len(parts) > 1 else ""
+        rest = "/".join(parts[2:])
+        base = f"-100{internal}" if internal.isdigit() else s
+        return f"{base}/{rest}" if (kind == "post" and rest) else base
+    parts = s.split("/")
+    user = parts[0].lstrip("@")
+    if kind == "post" and len(parts) > 1 and parts[1].isdigit():
+        return f"@{user}/{parts[1]}"
+    return f"@{user}" if user else s
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────
@@ -221,7 +260,7 @@ def create_mission(
         mission.squad.append(MissionSquad(agent_id=m.agent_id, assigned_role=m.assigned_role, status="active"))
     for t in request.targets:
         mission.targets.append(MissionTarget(
-            kind=t.kind, identifier=t.identifier.strip(), title=t.title,
+            kind=t.kind, identifier=canonical_identifier(t.identifier, t.kind), title=t.title,
             status="active", source="operator"))
 
     db.add(mission)
@@ -308,7 +347,7 @@ def add_target(
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    ident = request.identifier.strip()
+    ident = canonical_identifier(request.identifier, request.kind)
     if any(t.identifier == ident for t in mission.targets):
         raise HTTPException(status_code=409, detail="Target already in this mission.")
     db.add(MissionTarget(mission_id=mission_id, kind=request.kind, identifier=ident,
@@ -396,7 +435,7 @@ def suggest_target(
     if mission.status != "active":
         return {"status": "skipped", "reason": "mission_not_active"}
 
-    ident = request.identifier.strip()
+    ident = canonical_identifier(request.identifier, request.kind)
     existing = db.query(MissionTarget).filter(
         MissionTarget.mission_id == request.mission_id,
         MissionTarget.identifier == ident,

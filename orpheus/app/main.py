@@ -13,6 +13,7 @@ Strict Sequential VRAM Execution:
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -241,6 +242,48 @@ def _channel_context(cp: Optional[dict]) -> str:
     return " ".join(parts)
 
 
+# Generic mission vocabulary that carries no topical signal — excluded from the
+# relevance entity anchors / keyword override so it can't trigger false matches
+# (e.g. "против", "развитие" appearing in an unrelated post).
+_MISSION_STOPWORDS = {
+    "поддерживать", "поддержка", "поддержки", "против", "продвигать", "продвижение",
+    "развитие", "развития", "развитой", "удобный", "удобного", "системно", "системный",
+    "решаются", "решать", "проблема", "проблемы", "нужно", "важно", "нельзя", "также",
+    "всегда", "будет", "более", "менее", "очень", "может", "чтобы", "потому", "вместе",
+    "целью", "цель", "миссия", "миссии", "наша", "наши", "сторонник", "позиция",
+}
+
+
+def _mission_entities(goal: str, stance: str, limit: int = 12) -> list[str]:
+    """Topical anchor words for a mission (its subject + adversaries), drawn from the
+    goal and stance. Used both to GROUND the relevance prompt (so the weak LLM judges
+    against concrete terms, not an abstract goal) and as a recall-override keyword set
+    (a post mentioning a mission entity is relevant even if the LLM hedges to НЕТ).
+    Generic verbs/prepositions are stripped; the channel's own geo is NOT included
+    here (that would match purely local off-topic posts like weather)."""
+    seen: list[str] = []
+    for tok in re.findall(r"[а-яёa-z]{5,}", f"{goal} {stance}".lower()):
+        if tok in _MISSION_STOPWORDS or tok in seen:
+            continue
+        seen.append(tok)
+        if len(seen) >= limit:
+            break
+    return seen
+
+
+def _entity_hit(post_text: str, entities: list[str]) -> bool:
+    """Recall-override: does the post mention any mission entity (declension-tolerant
+    via a 5-char stem)? Deliberately lenient — the channel is an operator-chosen
+    mission target, so missing an on-topic post is worse than a loose match (rate
+    caps prevent spam)."""
+    t = (post_text or "").lower()
+    for ent in entities:
+        stem = ent[:5]
+        if len(stem) >= 5 and stem in t:
+            return True
+    return False
+
+
 def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     """
     Cheap LLM relevance gate for the target engine: given the agent's mission +
@@ -257,20 +300,20 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
         # Mission-driven relevance (preferred): judge against the mission's goal/stance.
         m_goal = (req.get("goal") or "").strip()
         m_stance = (req.get("stance") or "").strip()
+        entities = _mission_entities(m_goal, m_stance) if (m_goal or m_stance) else []
         if m_goal or m_stance:
             cp_ctx = _channel_context(req.get("channel_profile"))
+            # Ground the question in CONCRETE mission terms (subject + adversaries),
+            # not the abstract goal/stance — a weak 3B model reliably says НЕТ to an
+            # ideological "позиция" salad but answers a plain "связано ли с темой?".
+            ent_hint = (" или упоминает: " + ", ".join(entities)) if entities else ""
             prompt = (
                 (cp_ctx + "\n\n" if cp_ctx else "")
-                + f"Миссия продвигает: {m_goal[:250]}\n"
-                f"Позиция: {m_stance[:250]}\n\n"
+                + f"Тема миссии: {m_goal[:300]}\n\n"
                 f"Сообщение в этом канале: \"{post_text[:400]}\"\n\n"
-                "Реши, стоит ли стороннику миссии вступить в обсуждение. С УЧЁТОМ тематики "
-                "канала и того, что в нём сейчас обсуждают, ответь ДА, если сообщение хоть как-то "
-                "связано с темой миссии, с проблемой, которую она решает, или с её "
-                "причинами/последствиями — даже косвенно, эмоционально, как жалоба, мнение или "
-                "новость. Ответь НЕТ, если сообщение про совершенно другую тему или сферу "
-                "(другой товар, книга, технология, программирование, еда, погода, спорт, реклама, "
-                "объявление, личное). Одно слово: ДА или НЕТ."
+                "Связано ли это сообщение с темой миссии — с её предметом, сторонниками "
+                "или противниками, причинами или последствиями" + ent_hint + " — хотя бы "
+                "косвенно, как новость, мнение, жалоба или эмоция? Ответь одним словом: ДА или НЕТ."
             )
         else:
             mission = profile.get("core_mission") or ""
@@ -287,9 +330,13 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
                 "Ответь СТРОГО одним словом: ДА или НЕТ."
             )
         answer = generate_text(prompt, max_tokens=5, temperature=0.2, penalties=False).strip().lower()
-        result["relevant"] = ("да" in answer) or ("yes" in answer) or answer.startswith("1")
-        logger.info("Relevance %s agent=%s → %s (%r)", req.get("request_id"), agent_id,
-                    result["relevant"], answer[:20])
+        llm_yes = ("да" in answer) or ("yes" in answer) or answer.startswith("1")
+        # Recall-override: a post mentioning a mission entity is relevant even if the
+        # weak model hedged to НЕТ (operator-chosen target → bias toward engaging).
+        kw_yes = bool(entities) and _entity_hit(post_text, entities)
+        result["relevant"] = llm_yes or kw_yes
+        logger.info("Relevance %s agent=%s → %s (llm=%r kw=%s)", req.get("request_id"), agent_id,
+                    result["relevant"], answer[:20], kw_yes)
     except Exception as exc:
         logger.warning("Relevance check failed: %s", exc)
         result = {"status": "error", "relevant": False}
@@ -410,6 +457,7 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                     "own voice that answers them. Try again, follow ALL rules."
                 )
             if final_text:
+                final_text = guardrails.clean_output(final_text)
                 redis_client.incr("metrics:comments_sent")
                 # Return the resolved tactic so MYRMIDON can propagate it to the
                 # mission's beta/gamma amplification (squad coherence).

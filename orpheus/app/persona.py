@@ -70,7 +70,12 @@ def tactic_from_mood(mood_answer: str, post_text: str = "", thread_context: str 
     # Check opposition first — "disagree" contains "agree".
     if "oppose" in a or "disagree" in a or "against" in a or "против" in a:
         blob = f"{post_text}\n{thread_context}".lower()
-        heated = blob.count("!") >= 2 or any(m in blob for m in _HEAT_MARKERS)
+        # Heat = an actual hostile/insulting flame, NOT mere emphasis. Exclamation
+        # marks alone do NOT count: an emphatic or ironic opposing post (e.g. «…и это
+        # схаваем!?») is a normal disagreement that deserves a DIRECT rebuttal
+        # (aggressive_displacement), not the soft "don't confront" sentiment_shift.
+        # Only real insult markers downgrade us to the cunning reframe.
+        heated = any(m in blob for m in _HEAT_MARKERS)
         return "sentiment_shift" if heated else "aggressive_displacement"
     if "agree" in a or "support" in a or "за нас" in a:
         return "amplify"
@@ -379,8 +384,8 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         tactic_directives = {
             "amplify": "The crowd already leans your way. Reinforce and energize the prevailing sentiment — add a concrete reason that makes the shared view feel obvious and widely held.",
             "soft_support": "Be measured, friendly and constructive. Persuade gently; never attack.",
-            "aggressive_displacement": "The crowd leans against your side. Be assertive and confident; firmly counter the opposing framing and replace it with yours. Stay civil — no insults, slurs or threats.",
-            "sentiment_shift": "The crowd leans against your side. Do NOT confront head-on — concede a small point, then subtly reframe the emotional angle toward your stance so readers shift without feeling pushed. Cunning, not combative.",
+            "aggressive_displacement": "This post / thread argues AGAINST your side. Openly DISAGREE with the author: name the specific claim or framing they got wrong and rebut it with your side's view on THAT point. Be assertive and confident, take a clear stand — do not hedge, do not stay neutral, do not drift to the channel's everyday small-talk. Stay civil — no insults, slurs or threats.",
+            "sentiment_shift": "This post / thread argues AGAINST your side, with heat. Do NOT confront head-on — concede a small point, then subtly reframe the emotional angle toward your stance so readers shift without feeling pushed. Still make your disagreement with the author's core claim clear. Cunning, not combative.",
         }
         role_line = role_directives.get(role, role_directives["alpha"])
         tactic_line = tactic_directives.get(tactic, tactic_directives["soft_support"])
@@ -407,7 +412,7 @@ This is what you (the persona) remember from past interactions. Stay consistent 
 """ + (f"""
 [Контекст канала, где ты пишешь]
 {channel_block}
-Пиши как местный, кто в курсе этих тем и того, что волнует здешнюю аудиторию — отсылайся к местным реалиям, но естественно, без перечислений.
+Это фон для понимания АУДИТОРИИ, тона и языка канала — а НЕ тема твоего комментария. Пиши про САМ пост и свою позицию по нему; не сворачивай на дежурные темы канала (если пост не о них) и не подменяй ими суть.
 """ if channel_block else "") + f"""
 [The Post You Are Discussing]
 {post_text or '(no readable text — infer from the channel/topic)'}

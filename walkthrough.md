@@ -23,6 +23,46 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
 
 Everything below (Stages 23–35) was verified live on real data.
 
+### Stage 36 — relevance / tactic / target-identifier hardening (verified live)
+
+Triggered by: operator created mission «Поддержка Узбекистана» (id 13), posted 3 on-topic
+items to `@tashkent_news333`, but the feed showed all "не по теме". Root-caused & fixed
+end-to-end (verified by live posting to post 31 of the test channel):
+
+1. **Target judged by the wrong mission.** The channel was a target of BOTH mission 10
+   (transport) and 13 (Uzbekistan) with the same alpha; the visible verdicts were mission 10's.
+   The feed now prefixes the **mission title** (`«…» по теме: …`) so co-targeted channels are
+   distinguishable (`target_engine` emits).
+2. **Mission 13 never scanned** — its target was stored as a raw `https://t.me/…` URL, which
+   Pyrogram can't resolve, so the channel was silently dropped. Fixes: `canonical_identifier`
+   normalises on write (`router_missions`: create/add/suggest → `@user`/id), `_resolvable_ident`
+   defensively on read (`target_engine`), and `tg_client.fetch_new_posts` no longer swallows an
+   unresolvable ref (warning + `error` result → `channel_unresolved` telemetry + decision_event).
+3. **Relevance prompt broke even for the right mission.** The long negative-category list +
+   the abstract "позиция" salad + "стоит ли вступить в обсуждение" framing pushed qwen2.5:3b to
+   its НЕТ prior. Rewrote the mission relevance prompt (`orpheus.handle_relevance`): concrete
+   topic anchor from the goal + **mission entities** (`_mission_entities`), plain "связано ли с
+   темой?" incl. adversaries, no negative list. Added a **recall-override** (`_entity_hit`):
+   relevant if the post mentions a mission entity even when the LLM hedges (operator-chosen
+   target ⇒ bias to engage). Channel geo is excluded from the entity set (else weather matches).
+4. **Tactic mis-selected.** `tactic_from_mood` treated `"!!"` as a flame → soft `sentiment_shift`
+   on an emphatic-but-not-hostile opposing post. Now heat = real insult markers only, so a normal
+   disagreement gets a **direct** `aggressive_displacement`; opposing-tactic directives strengthened
+   to "openly disagree with the author on the specific claim, don't drift to channel small-talk".
+5. **Channel-context bleed.** The `[Контекст канала]` block told the bot to "write like a local
+   about these topics" → comments drifted to пробки/инфраструктура on a geopolitics post. The block
+   is now explicitly **tone/audience/language only, NOT the comment's topic** (`assemble_mission_prompt`).
+6. **Garbage hashtags** (`#УЗБЕКИСТАНишегизилуенет`, a qwen2.5:3b artifact) are stripped by
+   `guardrails.clean_output` (sanitise, not reject) before posting.
+7. **Mission stance is a "side to argue from", not keywords.** Proven offline + live: an abstract
+   `-ism` salad stance yields muddled/wrong-direction rebuttals; a concrete argued stance yields
+   consistent on-mission ones. Mission 13's stance was rewritten to a concrete position. **Operator
+   takeaway: write mission `stance` as a short argued claim, not a tag list.**
+
+Net live result: the same post → relevance ДА (`llm + kw`) → tactic `aggressive_displacement` →
+comment "…Узбекистан сам выбирает партнёров!" (on-mission, no infra bleed, no junk hashtag).
+Residual: phrasing is still a bit awkward — the 3B model's ceiling (bigger `TEXT_MODEL_NAME` helps).
+
 ---
 
 ## What's been done this arc (Stages 23–48)

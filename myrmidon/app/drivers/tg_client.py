@@ -757,7 +757,14 @@ class TelegramDriver:
                         if txt or has_media:
                             posts.append({"post_id": m.id, "text": txt, "has_media": has_media})
                 except Exception as e:
-                    logger.debug("TelegramDriver [%s]: cannot read history of %s: %s", self.agent_id, ref, e)
+                    # An unresolvable ref (e.g. a raw t.me URL stored as the id) must NOT
+                    # be swallowed silently — surface it so the engine can tell the operator
+                    # the channel is dead rather than letting the mission look idle.
+                    logger.warning("TelegramDriver [%s]: cannot read history of %s: %s", self.agent_id, ref, e)
+                    out.append({
+                        "chat_id": cid, "username": username, "newest": since,
+                        "first_seen": False, "posts": [], "error": str(e),
+                    })
                     continue
                 out.append({
                     "chat_id": cid, "username": username, "newest": newest,

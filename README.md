@@ -145,8 +145,14 @@ walkthrough.md  work log / handoff / next steps
 Done: cognitive comments (human, anti-repeat), conversations, memory, news→knowledge (RAG),
 caste hierarchy, mission-driven engine, dynamic per-post tactic, agent-proposed targets,
 reading photos & audio (STT + VLM + OCR), **Channel Profiling Phase 1** (posts judged in the
-channel's topic/geo/hot-theme context, not in a vacuum), reliability, full operator console.
-See `walkthrough.md` for the staged log.
+channel's topic/geo/hot-theme context, not in a vacuum), **relevance/tactic hardening Stage 36**
+(concrete goal+entity anchored relevance with a keyword recall-override; target identifiers
+canonicalised so a `t.me/…` URL is never a silent dead target; tactic heat = real insults not
+just `!`; channel context grounds tone not topic; garbage-hashtag sanitiser), reliability,
+full operator console. See `walkthrough.md` for the staged log.
+
+> **Operator note:** write a mission's **`stance` as a short argued claim**, not a tag list —
+> the bot can only argue a position it can read as one (a `-ism` salad yields muddled rebuttals).
 
 **DAEDALUS console redesign — ✅ COMPLETE** (Stages 65–77): the whole operator console is now a
 professional command-and-control center on **Mantine 7** — `AppShell` layout, entity routing

@@ -285,9 +285,32 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
   on a Telegram "text card". Read text-bearing images with **Tesseract OCR** (MYRMIDON
   `media_reader`); the VLM is only for real photos. Also keep VLM prompts SHORT (it returns
   empty on long/structured prompts).
-- Relevance judges a post **in a vacuum** today → a vague but on-topic phrase (`«опять эти
-  машины»` on a Tashkent traffic channel) is missed. The fix is **Channel Profiling**
-  (`CHANNEL_PROFILING.md`, designed, build next): judge in the channel's topic/geo/news context.
+- Relevance/tactic prompts need a **concrete anchor, not an abstract stance salad.** A mission
+  `stance` written as a tag list (`«Суверенитет, Социализm, Технократия…»`) makes qwen2.5:3b
+  default to НЕТ on relevance and write muddled (even wrong-direction) rebuttals. The relevance
+  gate now anchors on the goal + extracted **mission entities** (`orpheus._mission_entities`)
+  with a plain "связано ли с темой?" (+ a keyword **recall-override** `_entity_hit`); comments
+  read the concrete `stance` as "the side you argue from". **Operator rule: write `stance` as a
+  short argued claim** (the model can only argue a position it can read as a position).
+- **Mission target identifiers must be canonical.** A raw `https://t.me/foo` URL is unresolvable
+  by Pyrogram → the channel is silently dropped and the mission looks idle. `router_missions.
+  canonical_identifier` normalises on write; `target_engine._resolvable_ident` defensively on
+  read; `tg_client.fetch_new_posts` surfaces an unresolvable ref (`channel_unresolved` event)
+  instead of swallowing it. The same channel can be a target of several missions — the Live Ops
+  relevance verdict is prefixed with the **mission title** so they're not confused.
+- **Tactic heat = real insults, NOT exclamation marks.** `persona.tactic_from_mood` once treated
+  `"!!"`/`"!?"` as a flame and downgraded a direct rebuttal to the soft `sentiment_shift`; an
+  emphatic-but-civil opposing post is a normal disagreement → `aggressive_displacement` (rebut
+  the author directly). Only `_HEAT_MARKERS` (slurs/insults) pick the cunning reframe.
+- **Channel context is for TONE/audience/language, not the comment's topic.** The `[Контекст
+  канала]` block (`assemble_mission_prompt`) used to say "write like a local about these topics"
+  → comments drifted to the channel's everyday themes (пробки/инфраструктура) on an off-theme
+  (e.g. geopolitics) post. It now explicitly grounds tone only; the post + mission drive content.
+- **qwen2.5:3b tacks on garbage hashtags / nonce tokens** (`#УЗБЕКИСТАНишегизилуенет`).
+  `guardrails.clean_output` strips them (sanitise, not reject) before posting. Bigger model = fewer.
+- Relevance judges a post **in a vacuum** by default → a vague but on-topic phrase (`«опять эти
+  машины»` on a Tashkent traffic channel) is missed. **Channel Profiling** (built) feeds the
+  channel's topic/geo/news context into the gate so a post is judged IN context, not blind.
 - `app/main.py` registers signal handlers at import — guarded to main-thread only (daemon
   threads re-import it).
 - Mission DAG reconciler is legacy; it only touches `running`/`amplifying` so new
