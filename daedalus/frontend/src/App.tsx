@@ -22,13 +22,6 @@ import CloneFactory from './components/CloneFactory';
 import { AppShell, ScrollArea } from '@mantine/core';
 import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks, type LucideIcon } from 'lucide-react';
 import './App.css';
-// SoulsContext/AccountsManager were replaced by SoulsScreen/AccountsScreen, but their CSS
-// defines GLOBAL (unscoped) classes (.status-badge, .tabs/.tab-btn, .modal-*, .header-row, …)
-// that not-yet-migrated screens still rely on. Import the stylesheets directly so dropping
-// the old components doesn't strip those globals from the bundle.
-import './components/SoulsContext.css';
-import './components/AccountsManager.css';
-import './components/LandscapeManager.css'; // global .data-grid/.layer-pill/.tag-* used by un-migrated tables
 
 // Views are addressable via the URL hash (#/swarm, #/missions, …) so a page refresh
 // keeps you where you were, links are shareable, and browser back/forward work — instead

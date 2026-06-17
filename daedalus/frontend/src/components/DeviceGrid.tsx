@@ -1,8 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
-import { Shield, Smartphone, HardDrive, Cpu, Link, Unlink } from 'lucide-react';
-import { Badge, Text, Stack } from '@mantine/core';
+import { Shield, Smartphone, HardDrive, Cpu, Link, Unlink, Trash2, Plus } from 'lucide-react';
+import { Box, Group, Stack, Title, Text, TextInput, Button, SimpleGrid, Paper, Badge, Modal, ActionIcon, Tooltip, Notification } from '@mantine/core';
 import { EntityPicker } from '../ui/EntityPicker';
-import './DeviceGrid.css';
 
 interface VirtualDevice {
   id: number;
@@ -279,139 +278,82 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
   });
 
   return (
-    <div className="view-container device-registry relative">
+    <Box p="lg">
       {toastMessage && (
-        <div style={{
-          position: 'fixed', top: 16, right: 16, padding: '12px 16px', borderRadius: 8,
-          color: '#fff', zIndex: 9999, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-          background: toastMessage.type === 'success' ? '#16a34a' : '#dc2626',
-        }}>
-          {toastMessage.text}
-        </div>
+        <Notification color={toastMessage.type === 'success' ? 'teal' : 'red'} onClose={() => setToastMessage(null)}
+          style={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}>{toastMessage.text}</Notification>
       )}
 
-      {vncUrl && (
-        <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-          <div style={{background: '#111', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', width: '80%', height: '80%', display: 'flex', flexDirection: 'column'}}>
-            <div style={{padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-              <h3 style={{margin: 0, color: '#fff', fontWeight: 600}}>Прямой VNC-поток</h3>
-              <button onClick={() => setVncUrl(null)} style={{background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px'}}>Закрыть</button>
-            </div>
-            <iframe src={vncUrl} style={{width: '100%', flexGrow: 1, border: 'none', height: '100%'}}></iframe>
-          </div>
-        </div>
-      )}
+      <Modal opened={!!vncUrl} onClose={() => setVncUrl(null)} title="Прямой VNC-поток" size="80%" centered withinPortal={false}>
+        {vncUrl && <iframe src={vncUrl} style={{ width: '100%', height: '70vh', border: 'none', borderRadius: 8 }} />}
+      </Modal>
 
-      <div className="header-row">
+      <Group justify="space-between" mb="md" align="flex-start">
         <div>
-          <h1>Устройства</h1>
-          <p className="subtitle">Управление виртуальными устройствами роя, прямое взаимодействие и оркестрация эмуляторов. (Мобильный стек вне scope — телеметрия может быть пустой.)</p>
+          <Title order={2}><HardDrive size={22} style={{ verticalAlign: -4 }} /> Устройства</Title>
+          <Text size="sm" c="dimmed" maw={620}>Управление виртуальными устройствами роя, прямое взаимодействие и оркестрация эмуляторов. (Мобильный стек вне scope — телеметрия может быть пустой.)</Text>
         </div>
-        <div className="create-device-form">
-          <input
-            type="text"
-            placeholder="Имя нового эмулятора"
-            value={newEmuName}
-            onChange={e => setNewEmuName(e.target.value)}
-          />
-          <button onClick={handleProvision} disabled={loadingStates['provision']} className="btn-primary">
-            {loadingStates['provision'] ? 'Создание (ждите…)' : 'Создать эмулятор'}
-          </button>
-        </div>
-      </div>
+        <Group gap="xs">
+          <TextInput placeholder="Имя нового эмулятора" value={newEmuName} onChange={e => setNewEmuName(e.currentTarget.value)} />
+          <Button leftSection={<Plus size={15} />} loading={loadingStates['provision']} onClick={handleProvision}>Создать эмулятор</Button>
+        </Group>
+      </Group>
 
-      <div className="device-grid">
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
         {mergedDevices.map((d, idx) => {
           const tel = telemetry[d.deviceId];
-          const isOnline = tel?.state === 'online';
+          const isOnline = tel?.state === 'online' || (d.isOrchestrated && d.status?.includes('Up'));
           const memUsed = tel ? (tel.mem_total_mb - tel.mem_free_mb) : 0;
-
           return (
-            <div key={`${d.deviceId}-${idx}`} className="device-card">
-              <div className="device-header" style={{display: 'flex', justifyContent: 'space-between'}}>
-                <h3><Smartphone size={16}/> {d.orchName || d.deviceId}</h3>
-                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                  {d.isVirtual && <button className="btn-icon text-danger" onClick={() => handleDeleteDevice(d.virtualId)} title="Убрать из Daedalus"><Unlink size={14}/></button>}
-                  <div className={`status-dot ${isOnline || (d.isOrchestrated && d.status?.includes('Up')) ? 'online' : 'offline'}`} />
-                </div>
-              </div>
+            <Paper key={`${d.deviceId}-${idx}`} withBorder radius="md" p="md">
+              <Group justify="space-between" mb="xs">
+                <Group gap={6}><Smartphone size={16} /><Text fw={600} size="sm">{d.orchName || d.deviceId}</Text></Group>
+                <Group gap="xs">
+                  {d.isVirtual && <Tooltip label="Убрать из Daedalus"><ActionIcon variant="subtle" color="red" onClick={() => handleDeleteDevice(d.virtualId)}><Trash2 size={15} /></ActionIcon></Tooltip>}
+                  <Box style={{ width: 10, height: 10, borderRadius: 999, background: isOnline ? '#34c98b' : '#64748b' }} />
+                </Group>
+              </Group>
 
               {d.isOrchestrated && (
-                <div className="text-xs mt-2 text-muted" style={{display: 'flex', gap: '10px'}}>
-                  <span><strong>Docker:</strong> {d.status}</span>
-                  <span><strong>ADB:</strong> {d.adbPort}</span>
-                  <span><strong>VNC:</strong> {d.vncPort}</span>
-                </div>
+                <Group gap="md" mb="xs"><Text size="xs" c="dimmed">Docker: {d.status}</Text><Text size="xs" c="dimmed">ADB: {d.adbPort}</Text><Text size="xs" c="dimmed">VNC: {d.vncPort}</Text></Group>
               )}
 
               {d.isVirtual ? (
-                <div className="device-assignment mt-3">
-                  {d.assignedAgentId ? (
-                    <div className="flex-between">
-                      <span className="agent-tag"><Shield size={12}/> {d.assignedAgentId}</span>
-                      <button className="btn-icon text-danger" onClick={() => handleAssign(d.virtualId, null)}><Unlink size={14}/></button>
-                    </div>
-                  ) : (
-                    <button className="btn-secondary text-xs w-full" onClick={() => setPickerFor(d.virtualId)}>
-                      <Link size={13} /> Привязать агента
-                    </button>
-                  )}
-                </div>
+                d.assignedAgentId ? (
+                  <Group justify="space-between" mb="sm">
+                    <Badge variant="light" color="indigo" leftSection={<Shield size={11} />}>{d.assignedAgentId}</Badge>
+                    <Button size="xs" variant="subtle" color="red" leftSection={<Unlink size={13} />} onClick={() => handleAssign(d.virtualId, null)}>Отвязать</Button>
+                  </Group>
+                ) : (
+                  <Button fullWidth size="xs" variant="light" mb="sm" leftSection={<Link size={13} />} onClick={() => setPickerFor(d.virtualId)}>Привязать агента</Button>
+                )
               ) : (
-                <div className="mt-3">
-                  <button className="btn-secondary text-xs w-full" onClick={() => handleCreateExplicit(d.deviceId)}>Добавить в реестр Daedalus</button>
-                </div>
+                <Button fullWidth size="xs" variant="light" mb="sm" onClick={() => handleCreateExplicit(d.deviceId)}>Добавить в реестр Daedalus</Button>
               )}
 
-              <div className="telemetry-section mt-4">
-                {tel ? (
-                  <>
-                    <div className="telemetry-row">
-                      <label><Cpu size={12}/> Нагрузка</label>
-                      <span>{tel.cpu_load_1m?.toFixed(2) || '0.00'}</span>
-                    </div>
-                    <TelemetryCanvas value={tel.cpu_load_1m || 0} max={8} color={tel.cpu_load_1m > 4 ? '#ef4444' : '#3b82f6'} />
-                    <div className="telemetry-row">
-                      <label><HardDrive size={12}/> ОЗУ</label>
-                      <span>{memUsed} / {tel.mem_total_mb} MB</span>
-                    </div>
-                    <TelemetryCanvas value={memUsed} max={tel.mem_total_mb || 100} color="#8b5cf6" />
-                  </>
-                ) : (
-                  <div className="offline-state text-muted text-xs mt-2">
-                    Телеметрия недоступна или устройство загружается
-                  </div>
-                )}
-              </div>
+              {tel ? (
+                <Stack gap={4} mb="sm">
+                  <Group justify="space-between"><Text size="xs" c="dimmed"><Cpu size={11} style={{ verticalAlign: -1 }} /> Нагрузка</Text><Text size="xs">{tel.cpu_load_1m?.toFixed(2) || '0.00'}</Text></Group>
+                  <TelemetryCanvas value={tel.cpu_load_1m || 0} max={8} color={tel.cpu_load_1m > 4 ? '#ef4444' : '#3b82f6'} />
+                  <Group justify="space-between"><Text size="xs" c="dimmed"><HardDrive size={11} style={{ verticalAlign: -1 }} /> ОЗУ</Text><Text size="xs">{memUsed} / {tel.mem_total_mb} MB</Text></Group>
+                  <TelemetryCanvas value={memUsed} max={tel.mem_total_mb || 100} color="#8b5cf6" />
+                </Stack>
+              ) : <Text size="xs" c="dimmed" mb="sm">Телеметрия недоступна или устройство загружается</Text>}
 
-              <div className="hardware-control-deck mt-4 pt-4" style={{borderTop: '1px solid rgba(255,255,255,0.1)'}}>
-                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px'}}>
-                  {d.isVirtual && (
-                    <>
-                      <button className="btn-secondary text-xs" onClick={() => handleHardwareControl(d.deviceId, 'reboot', {})}>
-                        Перезагрузка
-                      </button>
-                      <button className="btn-warning text-xs" onClick={() => handleHardwareControl(d.deviceId, 'clear-cache', {package: 'com.android.chrome'})}>
-                        Очистить Chrome
-                      </button>
-                    </>
-                  )}
-                  {d.isOrchestrated && (
-                    <>
-                      <button className="btn-primary text-xs" onClick={() => setVncUrl(`http://${window.location.hostname}:${d.vncPort}`)}>
-                        Экран (VNC)
-                      </button>
-                      <button className="btn-danger text-xs" onClick={() => handleOrchControl(d.orchName, 'delete')}>
-                        Уничтожить
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
+              <SimpleGrid cols={2} spacing="xs" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+                {d.isVirtual && <>
+                  <Button size="xs" variant="default" onClick={() => handleHardwareControl(d.deviceId, 'reboot', {})}>Перезагрузка</Button>
+                  <Button size="xs" variant="light" color="yellow" onClick={() => handleHardwareControl(d.deviceId, 'clear-cache', { package: 'com.android.chrome' })}>Очистить Chrome</Button>
+                </>}
+                {d.isOrchestrated && <>
+                  <Button size="xs" onClick={() => setVncUrl(`http://${window.location.hostname}:${d.vncPort}`)}>Экран (VNC)</Button>
+                  <Button size="xs" color="red" variant="light" onClick={() => handleOrchControl(d.orchName, 'delete')}>Уничтожить</Button>
+                </>}
+              </SimpleGrid>
+            </Paper>
           );
         })}
-      </div>
+      </SimpleGrid>
 
       <EntityPicker
         opened={pickerFor !== null}
@@ -428,7 +370,7 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
         ]}
         onPick={s => { if (pickerFor !== null) handleAssign(pickerFor, s.agent_id); setPickerFor(null); }}
       />
-    </div>
+    </Box>
   );
 };
 
