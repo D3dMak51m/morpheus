@@ -369,11 +369,25 @@ informativeness/interactivity + relationship cross-links on every tab. Foundatio
 Mantine `AppShell`, layout/scroll bug fixed) + capability inventory + DB h-scroll bug (Stage 66).
 
 **Operator working-mode note:** do NOT stop+commit after every small change; batch the redesign and
-keep working until a large coherent slice is done, then report. **Next (redesign build, continuous):**
-per-entity routing (`#/souls/<id>`), reusable `DataView` (Mantine Table: sticky header, h-scroll,
-sort/filter) + `DetailPage` (full-screen master-detail) + `EntityPicker` (pick-from-list); then
-**Dashboard v2**; then roll full-screen detail across Souls → Accounts → Missions → Landscape →
-News Hub → Knowledge → Channel Profiles → … ; rebuild raw-HTML Genesis/AuthFactory.
+keep working until a large coherent slice is done.
+
+**REDESIGN COMPLETE (Stages 65–73).** The whole console was migrated to **Mantine 7** as a
+professional command-and-control center: Mantine `AppShell` (layout/scroll bug fixed); reusable
+`src/ui/` primitives (`DataView` table w/ sticky header + horizontal scroll + sort/search/filter,
+`DetailPage` full-screen master-detail scaffold, `EntityPicker` pick-from-list, `StatTile` KPI+spark);
+per-entity routing (`#/<view>/<id>`). **Every operator screen** is now Mantine: Dashboard v2,
+Souls/Accounts/Missions/Landscape/News Hub/Knowledge/Channel Profiles (full-screen master→detail
+edit, all params), Decisions/Activity (DataView), Swarm (KPI hub + drill-downs), Scouting, Database
+(NavLink + SQL console + h-scroll table + inline edit), CloneFactory, Sandbox; Genesis + Auth Factory
+rebuilt from raw HTML (Auth = a guided Stepper wizard); pick-from-list everywhere (Souls/Accounts
+binding, Missions roster, Devices/Sandbox/Auth agent+device). Old pre-Mantine components + orphaned
+CSS deleted (Stage 73); only `ChannelManager` (SidePanel sub-editor of channels, opened from
+Souls/Accounts) and `LiveOps` (bespoke real-time feed) keep their original styling by design.
+**Remaining (optional):** migrate `ChannelManager` off SidePanel; add relationship cross-links
+(account↔soul↔mission↔channel↔decisions) for more informativeness; move the few kept global CSS
+classes (`.tabs`/`.status-badge`/`.data-grid`, used by ChannelManager) into a shared stylesheet so
+`SoulsContext.css`/`AccountsManager.css`/`LandscapeManager.css` no longer need to be imported in
+`App.tsx`.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
