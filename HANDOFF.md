@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 70. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 73. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
