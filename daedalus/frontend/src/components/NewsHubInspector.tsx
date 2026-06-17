@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Radio, Trash2, Edit2, Play, Pause, ShieldAlert, RefreshCw } from 'lucide-react';
 import { DataTable, Column } from './DataTable';
+import { SidePanel } from './SidePanel';
 import './NewsHubInspector.css';
 
 interface CapturedEvent {
@@ -195,62 +196,61 @@ const NewsHubInspector: React.FC<NewsHubInspectorProps> = ({ token }) => {
         }
       />
 
-      {/* Edit Modal */}
+      {/* Edit side panel */}
       {editingEvent && (
-        <div className="modal-overlay" onClick={() => setEditingEvent(null)}>
-          <div className="modal-content standard-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Изменить событие</h2>
-              <p className="subtitle">ID: {editingEvent.event_id}</p>
-            </div>
-
-            <div className="form-group">
-              <label>Текст (переопределить)</label>
-              <textarea
-                rows={5}
-                value={editForm.text_content}
-                onChange={e => setEditForm({ ...editForm, text_content: e.target.value })}
-                className="form-control"
-              />
-            </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label>Статус маршрутизации</label>
-                <select
-                  className="form-control"
-                  value={editForm.status}
-                  onChange={e => setEditForm({ ...editForm, status: e.target.value })}
-                >
-                  <option value="pending">В очереди (передать ORPHEUS)</option>
-                  <option value="approved">Одобрено (приоритет)</option>
-                  <option value="rejected">Отклонено (отбросить)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label>Слои маршрутизации</label>
-              <div className="layer-checkboxes">
-                {['global', 'region', 'state', 'city', 'personal'].map(layer => (
-                  <label key={layer} className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={!!editForm.layers[layer]}
-                      onChange={() => toggleLayer(layer)}
-                    />
-                    <span>{layer}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="modal-actions">
+        <SidePanel
+          open
+          title="Изменить событие"
+          subtitle={`ID: ${editingEvent.event_id}`}
+          onClose={() => setEditingEvent(null)}
+          footer={
+            <>
               <button className="btn-secondary" onClick={() => setEditingEvent(null)}>Отмена</button>
               <button className="btn-primary" onClick={handleSaveEdit}>Сохранить</button>
+            </>
+          }
+        >
+          <div className="form-group">
+            <label>Текст (переопределить)</label>
+            <textarea
+              rows={5}
+              value={editForm.text_content}
+              onChange={e => setEditForm({ ...editForm, text_content: e.target.value })}
+              className="form-control"
+            />
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Статус маршрутизации</label>
+              <select
+                className="form-control"
+                value={editForm.status}
+                onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+              >
+                <option value="pending">В очереди (передать ORPHEUS)</option>
+                <option value="approved">Одобрено (приоритет)</option>
+                <option value="rejected">Отклонено (отбросить)</option>
+              </select>
             </div>
           </div>
-        </div>
+
+          <div className="form-group">
+            <label>Слои маршрутизации</label>
+            <div className="layer-checkboxes">
+              {['global', 'region', 'state', 'city', 'personal'].map(layer => (
+                <label key={layer} className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={!!editForm.layers[layer]}
+                    onChange={() => toggleLayer(layer)}
+                  />
+                  <span>{layer}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </SidePanel>
       )}
     </div>
   );

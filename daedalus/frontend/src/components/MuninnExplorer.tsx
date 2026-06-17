@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Brain, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
+import { SidePanel } from './SidePanel';
 import './MuninnExplorer.css';
 
 interface KnowledgeFact {
@@ -235,12 +236,21 @@ const MuninnExplorer: React.FC<MuninnExplorerProps> = ({ token }) => {
         )}
       </div>
 
-      {showInject && (
-        <div className="modal-overlay" onClick={() => setShowInject(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h2>Добавить факт в память</h2>
+      <SidePanel
+        open={showInject}
+        title="Добавить факт в память"
+        onClose={() => setShowInject(false)}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => setShowInject(false)}>Отмена</button>
+            <button type="submit" form="inject-fact-form" className="btn-primary" disabled={injecting}>
+              {injecting ? 'Добавление…' : 'Добавить в память'}
+            </button>
+          </>
+        }
+      >
             <p className="help-text">Daedalus авто-классифицирует (категории/теги через <code>qwen2.5:3b</code>), строит эмбеддинг (<code>nomic-embed-text</code>) и кластеризует (близость&nbsp;&gt;&nbsp;0.85 — слияние с существующим фактом).</p>
-            <form onSubmit={handleInject}>
+            <form id="inject-fact-form" onSubmit={handleInject}>
               <div className="form-group">
                 <label>Текст факта <span style={{ color: '#ef4444' }}>*</span></label>
                 <textarea rows={5} value={injectContent} onChange={e => setInjectContent(e.target.value)}
@@ -261,16 +271,8 @@ const MuninnExplorer: React.FC<MuninnExplorerProps> = ({ token }) => {
                 <label>Источник (необязательно)</label>
                 <input type="text" value={injectSource} onChange={e => setInjectSource(e.target.value)} placeholder="https://… или пусто" />
               </div>
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowInject(false)}>Отмена</button>
-                <button type="submit" className="btn-primary" disabled={injecting}>
-                  {injecting ? 'Добавление…' : 'Добавить в память'}
-                </button>
-              </div>
             </form>
-          </div>
-        </div>
-      )}
+      </SidePanel>
     </div>
   );
 };
