@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Radar, Instagram, Twitter, MessageCircle, Flame, X, Rocket, RefreshCw } from 'lucide-react';
+import { DataTable, Column } from './DataTable';
 import './ScoutingRadar.css';
 
 export interface MissionPrefill {
@@ -41,11 +42,11 @@ const heatColor = (score: number): string => {
 };
 
 const relativeTime = (epoch: number | null): string => {
-  if (!epoch) return 'unknown time';
+  if (!epoch) return 'неизвестно';
   const secs = Math.max(0, Math.floor(Date.now() / 1000) - epoch);
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)} мин назад`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)} ч назад`;
+  return `${Math.floor(secs / 86400)} дн назад`;
 };
 
 const ScoutingRadar: React.FC<ScoutingRadarProps> = ({ token, onConverted }) => {
@@ -94,19 +95,56 @@ const ScoutingRadar: React.FC<ScoutingRadarProps> = ({ token, onConverted }) => 
       const data = await res.json();
       if (res.ok) {
         setTargets(prev => prev.filter(x => x.id !== t.id));
-        showToast(`Mission #${data.mission_id} drafted. Redirecting to Mission Deck…`, 'success');
+        showToast(`Миссия #${data.mission_id} создана. Переход в Mission Deck…`, 'success');
         onConverted({
           target_url: data.target_url,
           title: data.title,
           narrative_goal: t.content_summary || '',
         });
       } else {
-        showToast(`Convert failed: ${data.detail || res.status}`, 'error');
+        showToast(`Не удалось создать миссию: ${data.detail || res.status}`, 'error');
       }
     } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
+      showToast(`Ошибка: ${e.message}`, 'error');
     }
   };
+
+  const columns: Column<ScoutedTarget>[] = [
+    { key: 'platform', header: 'Платформа', width: '120px',
+      sortValue: t => t.platform,
+      render: t => <span className="sr-platform">{platformIcon(t.platform)} {t.platform}</span> },
+    { key: 'author_name', header: 'Автор', width: '150px',
+      sortValue: t => (t.author_name || '').toLowerCase(),
+      render: t => <span className="sr-author-cell">@{t.author_name || 'unknown'}</span> },
+    { key: 'content_summary', header: 'Содержание', sortable: false,
+      render: t => <span className="sr-snippet-cell">{t.content_summary || '(без текста)'}</span> },
+    { key: 'velocity_score', header: 'Скорость', width: '130px', align: 'right',
+      sortValue: t => t.velocity_score,
+      render: t => (
+        <span className="sr-velocity-badge" style={{ background: heatColor(t.velocity_score) }}>
+          <Flame size={13} /> {Math.round(t.velocity_score).toLocaleString('ru-RU')}/ч
+        </span>
+      ) },
+    { key: 'engagement', header: 'Вовлечённость', width: '130px', align: 'right',
+      sortValue: t => t.engagement,
+      render: t => <span className="sr-engagement-cell">{t.engagement.toLocaleString('ru-RU')}</span> },
+    { key: 'posted_at', header: 'Когда', width: '110px',
+      sortValue: t => t.posted_at || 0,
+      render: t => <span className="sr-time">{relativeTime(t.posted_at)}</span> },
+    { key: 'link', header: '', sortable: false, width: '60px',
+      render: t => <a className="sr-link" href={t.url} target="_blank" rel="noreferrer">пост ↗</a> },
+    { key: 'actions', header: 'Действия', sortable: false, width: '210px',
+      render: t => (
+        <div className="sr-actions">
+          <button className="sr-dismiss" onClick={() => handleDismiss(t.id)}>
+            <X size={13} /> Скрыть
+          </button>
+          <button className="sr-convert" onClick={() => handleConvert(t)}>
+            <Rocket size={13} /> В миссию
+          </button>
+        </div>
+      ) },
+  ];
 
   return (
     <div className="scouting-radar view-container">
@@ -114,53 +152,22 @@ const ScoutingRadar: React.FC<ScoutingRadarProps> = ({ token, onConverted }) => 
 
       <div className="header-row">
         <div>
-          <h1><Radar size={22} style={{ verticalAlign: '-4px' }} /> Scouting Radar</h1>
-          <p className="subtitle">Authenticated viral discoveries from HUGINN, ranked by engagement velocity.</p>
+          <h1><Radar size={22} style={{ verticalAlign: '-4px' }} /> Радар разведки</h1>
+          <p className="subtitle">Вирусные находки из HUGINN, ранжированные по скорости набора вовлечённости. Сортируйте по «Скорости», ищите по автору или тексту, превращайте горячий пост в миссию.</p>
         </div>
-        <button className="btn-primary sr-refresh" onClick={fetchRadar}><RefreshCw size={14} /> Refresh</button>
+        <button className="btn-primary sr-refresh" onClick={fetchRadar}><RefreshCw size={14} /> Обновить</button>
       </div>
 
-      {loading ? (
-        <p>Scanning radar…</p>
-      ) : targets.length === 0 ? (
-        <div className="sr-empty">
-          <Radar size={48} />
-          <p>No viral targets detected yet.</p>
-          <span>Supply social cookies to an account and HUGINN will surface hot posts here.</span>
-        </div>
-      ) : (
-        <div className="sr-grid">
-          {targets.map(t => (
-            <div key={t.id} className="sr-card" style={{ borderTopColor: heatColor(t.velocity_score) }}>
-              <div className="sr-card-head">
-                <span className="sr-platform">{platformIcon(t.platform)} {t.platform}</span>
-                <span className="sr-time">{relativeTime(t.posted_at)}</span>
-              </div>
-
-              <div className="sr-author">@{t.author_name || 'unknown'}</div>
-              <p className="sr-snippet">{t.content_summary || '(no caption)'}</p>
-
-              <div className="sr-velocity">
-                <div className="sr-velocity-badge" style={{ background: heatColor(t.velocity_score) }}>
-                  <Flame size={14} /> {Math.round(t.velocity_score).toLocaleString()}/h
-                </div>
-                <span className="sr-engagement">{t.engagement.toLocaleString()} engagements</span>
-              </div>
-
-              <a className="sr-link" href={t.url} target="_blank" rel="noreferrer">{t.url}</a>
-
-              <div className="sr-actions">
-                <button className="sr-dismiss" onClick={() => handleDismiss(t.id)}>
-                  <X size={14} /> Dismiss
-                </button>
-                <button className="sr-convert" onClick={() => handleConvert(t)}>
-                  <Rocket size={14} /> Convert to Mission
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={targets}
+        rowKey={t => t.id}
+        loading={loading}
+        searchText={t => `${t.platform} ${t.author_name || ''} ${t.content_summary || ''} ${t.url}`}
+        searchPlaceholder="🔍 Поиск по автору, тексту или платформе…"
+        emptyText="Вирусных целей пока нет. Привяжите соц-куки к аккаунту — HUGINN начнёт находить горячие посты."
+        pageSize={25}
+      />
     </div>
   );
 };

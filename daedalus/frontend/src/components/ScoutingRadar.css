@@ -115,22 +115,36 @@
 
 .sr-actions {
   display: flex;
-  gap: 8px;
-  margin-top: auto;
+  gap: 6px;
 }
 
 .sr-actions button {
-  flex: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 8px;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 0.82em;
+  font-size: 0.78em;
+  white-space: nowrap;
   border: 1px solid transparent;
   transition: opacity 0.15s;
+}
+
+/* ── Table-cell variants (Stage 51: ScoutingRadar -> DataTable) ──────── */
+.sr-author-cell { font-weight: 600; font-size: 0.85em; color: #e2e8f0; }
+.sr-engagement-cell { font-size: 0.82em; color: var(--text-muted, #94a3b8); font-variant-numeric: tabular-nums; }
+.sr-velocity-badge { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.scouting-radar .sr-snippet-cell {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 420px;
+  font-size: 0.84em;
+  color: #cbd5e1;
+  line-height: 1.4;
 }
 
 .sr-dismiss {

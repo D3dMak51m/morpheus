@@ -156,6 +156,14 @@ Everything below (Stages 23–35) was verified live on real data.
   console must be Russian). The modal was kept (de-modal is Phase 3); only its strings changed.
   Verified live (1440px): 8 sources render, modal opens & is Russian. (Still to migrate:
   `ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs.)
+- **51 — UX/UI overhaul, Phase 2 (part 3): ScoutingRadar.** Migrated `ScoutingRadar`
+  ("Радар разведки") from a search-less card grid to `DataTable` — the highest-value case so far
+  (`scouted_targets` holds **684 rows**, previously all dumped with no search/sort/pagination).
+  Now search (author/text/platform) + sort (velocity/engagement/time/platform/author) +
+  pagination (28 pages). The heat metaphor is preserved as a heat-colored "Скорость" badge column
+  (yellow→red by velocity); convert/dismiss actions + toasts kept. Whole screen English → fully
+  Russified. Verified live: 684 rows, pager 1/28, top badge 640 104/ч matches the top target.
+  (Still to migrate: `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs.)
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -165,13 +173,14 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 50 — UX/UI overhaul Phase 2 (part 2)**: migrated `LandscapeManager`
-("Ландшафт скрапинга") to the reusable `DataTable` and fully Russified it (was English),
-verified live. So far on `DataTable`: `DecisionLog`, `AccountsManager`, `ChannelProfiles`,
-`LandscapeManager` (`MuninnExplorer` intentionally left on its own server-side search). **Now in
+Just finished **Stage 51 — UX/UI overhaul Phase 2 (part 3)**: migrated `ScoutingRadar`
+("Радар разведки") to the reusable `DataTable` (684 rows now searchable/sortable/paginated; heat
+metaphor kept as a velocity-badge column) and fully Russified it, verified live. So far on
+`DataTable`: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,
+`ScoutingRadar` (`MuninnExplorer` intentionally left on its own server-side search). **Now in
 progress: the UX/UI overhaul** (operator asked to bring the whole console to a real "mission
 center" standard). **Next: continue Phase 2** — migrate the remaining list screens
-(`ScoutingRadar`, `NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs) to `DataTable`
+(`NewsHubInspector`, `DeviceGrid`, `SwarmDashboard` drill-downs) to `DataTable`
 for uniform search/filter/sort. Then P3 de-modal (replace the 9 blocking modals with
 non-blocking panels/routed edit views + pick-from-list instead of typing IDs), P4
 styling/sliders, P5 consolidate scattered data.
