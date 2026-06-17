@@ -275,6 +275,27 @@ Everything below (Stages 23–35) was verified live on real data.
   Remaining English is in secondary screens (`AuthFactory`, `SoulGenesisView`, `SandboxConsole`,
   `ActivityStream`, `LiveOps`).
 
+- **65 — UI framework migration (foundation) + layout/scroll fix.** Operator re-scoped: stop the
+  Russification micro-pass; the real ask is a **professional command-and-control / monitoring
+  center** — serious Dashboard, far more informativeness/interactivity, **full-screen** detail-edit
+  per entity (NOT modals/drawers), pick-from-list everywhere instead of typing IDs, and a real UI
+  framework. Adopted **Mantine 7** (`@mantine/core` + `@mantine/hooks`, `MantineProvider` dark
+  theme in `main.tsx`). Rewrote the app shell on Mantine **`AppShell`** (fixed navbar + `ScrollArea`
+  nav + single content scroll region) and made the sidebar nav **data-driven** (one `NAV` array).
+  **Fixed the operator-reported layout bug**: the old `.sidebar` had no overflow so the long nav
+  overflowed `100vh` → a page-level scrollbar that shifted the whole UI ("3 scrollbars / interface
+  goes up"). Verified via DOM metrics: `bodyScrolls:false`, navbar `fixed`, nav + content scroll
+  independently. Verified Dashboard / DatabaseExplorer / LiveOps render intact. (Also folded in a
+  minor `ActivityStream`/`LiveOps` Russification done just before the re-scope.)
+- **66 — Capability inventory + Database h-scroll fix.** Wrote **`DAEDALUS_CAPABILITIES.md`** — an
+  authoritative map of *everything* Daedalus does (20 operator screens, ~90 endpoints across 14
+  routers with 🟢operator/🔒internal/📵mobile tags, data model, RBAC, cross-cutting engines) + a
+  "Redesign mandate" section capturing the operator's asks verbatim and the proposed redesign
+  sequence. This anchors the redesign. **Fixed the operator-reported bug**: Database Explorer's
+  wide table didn't scroll horizontally (the shared `.data-grid-container` overflow rule was scoped
+  to other screens only) — added scoped h-scroll + nowrap cells + sticky header. Verified
+  `scrollWidth>clientWidth`.
+
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
 content of this file's git versions.
@@ -283,12 +304,22 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 64 — UX/UI overhaul Phase 4 (part 6, SystemDiagnostics)**: removed the fake
-"Global Cache Flush" control and Russified the Диагностика tab — both Dashboard tabs are now fully
-Russian. **Now in progress: the UX/UI overhaul** (operator asked to bring the whole console to a real
-"mission center" standard). **Next:** Russify the remaining secondary screens (`AuthFactory`,
-`SoulGenesisView`, `SandboxConsole`, `ActivityStream`, `LiveOps`), convert the read-only
-`SwarmDashboard` drill-down modal to `SidePanel`, then **P5 — consolidate** (unify scattered screens).
+**MAJOR RE-SCOPE (operator, after Stage 64).** The Russification / SidePanel direction was the wrong
+focus. The real mandate: a **professional command-and-control / monitoring center** — see
+`DAEDALUS_CAPABILITIES.md` §3 (Redesign mandate). Concretely: (1) full **UI-framework migration**
+(Mantine 7, adopted Stage 65); (2) **full-screen** master→detail edit per entity (NOT modal/drawer —
+the SidePanels built in Stages 54–58 are to be *replaced* by routed full-screen detail pages exposing
+*all* params); (3) **pick-from-list everywhere** (searchable/filterable/sortable list w/ detail)
+instead of typing IDs; (4) a serious, information-dense **Dashboard v2**; (5) far more
+informativeness/interactivity + relationship cross-links on every tab. Foundation done (Stage 65:
+Mantine `AppShell`, layout/scroll bug fixed) + capability inventory + DB h-scroll bug (Stage 66).
+
+**Operator working-mode note:** do NOT stop+commit after every small change; batch the redesign and
+keep working until a large coherent slice is done, then report. **Next (redesign build, continuous):**
+per-entity routing (`#/souls/<id>`), reusable `DataView` (Mantine Table: sticky header, h-scroll,
+sort/filter) + `DetailPage` (full-screen master-detail) + `EntityPicker` (pick-from-list); then
+**Dashboard v2**; then roll full-screen detail across Souls → Accounts → Missions → Landscape →
+News Hub → Knowledge → Channel Profiles → … ; rebuild raw-HTML Genesis/AuthFactory.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps

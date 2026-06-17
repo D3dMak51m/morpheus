@@ -72,7 +72,14 @@ so any frontend change needs `docker compose build daedalus`.
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
   GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal
   `/decisions/internal/log`; operator `GET /decisions` — the durable decision history).
-- React (`daedalus/frontend/src/`): **hash routing** — `App.tsx` keeps the active view in the
+- React (`daedalus/frontend/src/`): **UI-framework migration IN PROGRESS** — adopting **Mantine 7**
+  (`MantineProvider` dark theme in `main.tsx`; app shell on Mantine `AppShell` with fixed navbar +
+  `ScrollArea` + single content scroll). The operator mandate is a **professional command-and-control
+  center**: full-screen master→detail edit per entity (NOT modals/drawers), pick-from-list everywhere,
+  serious Dashboard, relationship cross-links. **The full capability map + redesign plan is in
+  `DAEDALUS_CAPABILITIES.md` — read it before touching the UI.** The `DataTable`/`SidePanel` below are
+  the *previous* iteration being superseded by the Mantine redesign.
+  **hash routing** — `App.tsx` keeps the active view in the
   URL hash (`#/view`) so refresh/deep-links/back-forward work. **`components/DataTable.tsx`** —
   reusable table (search / sortable columns / pagination / states); migrate list screens to it
   (Phase 2 done: `DecisionLog`, `AccountsManager`, `ChannelProfiles`, `LandscapeManager`,

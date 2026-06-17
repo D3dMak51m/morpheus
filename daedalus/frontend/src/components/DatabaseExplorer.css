@@ -126,3 +126,29 @@
   border-top: 1px solid var(--border-subtle);
   padding-top: 15px;
 }
+
+/* Stage 66: horizontal scroll for wide tables (operator-reported bug).
+   The shared .data-grid-container overflow rule was scoped to other screens
+   only; here the wide table clipped instead of scrolling. */
+.database-explorer .data-grid-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.database-explorer .data-grid {
+  width: auto;
+  min-width: 100%;
+}
+.database-explorer .data-grid th,
+.database-explorer .data-grid td {
+  white-space: nowrap;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Keep the column header row visible while scrolling vertically. */
+.database-explorer .data-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}

@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 64. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 66. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -165,37 +165,43 @@ footer, bound to the form via the HTML `form=` attribute — or plain `onClick` 
 read-only `SwarmDashboard` drill-down (activity/dialogue viewer — not an editor, so the unsaved-edits
 complaint doesn't apply; convert it only as an optional consistency pass).
 
-### What is MISSING — the rest of the UX overhaul (Phases 4–5)
-These come from the operator's explicit complaints. **This is the immediate work.**
-- **Phase 4 — styling + controls (CORE DONE).** ✅ **Sliders** (Stage 59): `SoulsContext` (psychology
-  tab) + `CloneFactory` now use a shared `.styled-range` (filled track via `--pct`) + a paired
-  `.slider-num` number input (precise, two-way synced) — in `App.css`. ✅ **DeviceGrid** (Stage 60):
-  fixed the unstyled toast (it used only non-existent Tailwind classes), cleaned the VNC modal's dead
-  classes, fully Russified. ✅ **CloneFactory** (Stage 61): fully Russified. ✅ **Sidebar nav**
-  (Stage 62, `App.tsx`): all items + group labels Russified. ✅ **Dashboard** (Stage 63): landing
-  screen Russified (title/tabs/overlord/metrics/welcome). ✅ **SystemDiagnostics** (Stage 64): removed
-  a fake "Global Cache Flush" control (it faked success without any real endpoint) and Russified the
-  Диагностика tab. **Optional tail:** Russify the secondary screens still in English (`AuthFactory`,
-  `SoulGenesisView`, `SandboxConsole`, `ActivityStream`, `LiveOps`); fold the manual assign-agent text
-  input in `DeviceGrid` into a pick-from-list; convert the read-only `SwarmDashboard` drill-down modal
-  to `SidePanel` for consistency.
-- **Phase 5 — consolidate.** Bring scattered related data/functions into unified screens.
+### ⚠️ MAJOR RE-SCOPE (operator, after Stage 64) — read `DAEDALUS_CAPABILITIES.md` first
+The Stages 49–64 work (DataTable migrations, SidePanel de-modal, Russification) was the **wrong
+focus**. The real mandate is a **professional command-and-control / monitoring center**:
+1. **Full UI-framework migration** → **Mantine 7** (adopted Stage 65: provider + dark theme + Mantine
+   `AppShell`; the long-nav page-scroll bug is fixed).
+2. **Full-screen master→detail edit per entity** (NOT modals, NOT drawers). The `SidePanel`s built in
+   Stages 54–58 are to be **replaced** by routed full-screen detail pages exposing **all** params of
+   the selected item — for accounts, souls, landscape, news hub, knowledge, channel profiles, AND all
+   others.
+3. **Pick-from-list everywhere** — every "type an ID" (device→agent, etc.) → searchable/filterable/
+   sortable list with detailed item data.
+4. **Dashboard v2** — serious, information-dense (trends/queues/throughput/health, drill-through).
+5. Far more **informativeness / interactivity** + relationship cross-links on every tab.
+6. Bug fixed (Stage 66): Database Explorer table now scrolls horizontally.
 
-### Immediate next steps (do these to continue)
-1. **Phase 2 + Phase 3 (editors) COMPLETE; Phase 4 core DONE** (sliders Stage 59, DeviceGrid Stage 60).
-   Operator's cadence is "коммит. потом продолжим" per screen. Continue: (a) Russify the remaining
-   secondary screens still in English (`AuthFactory`, `SoulGenesisView`, `SandboxConsole`,
-   `ActivityStream`, `LiveOps`). (b) convert the read-only `SwarmDashboard` drill-down modal to
-   `SidePanel` for consistency; then
-   (c) **Phase 5 — consolidate**: bring scattered related data/functions into unified screens (look for
-   overlaps, e.g. account↔soul binding lives in both `AccountsManager` and `SoulsContext`). Build
-   `daedalus`, verify with a Playwright screenshot, repeat. Pattern reference for any remaining de-modal:
-   `<SidePanel open=… title=… onClose=…
-   footer={Cancel/Save}>` wrapping the form; submit button in the `footer`, bound with
-   `form="<formId>"` (or plain `onClick` if not a `<form>`). Build `daedalus`, verify with a
-   Playwright screenshot (open editor → switch tab → return → edits intact), repeat per screen.
-2. Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend
-   change requires `docker compose build daedalus` (the React SPA is built inside the image).
+`DAEDALUS_CAPABILITIES.md` is the authoritative inventory of all 20 screens + ~90 endpoints + the
+redesign mandate/sequence. **It is the source of truth for the redesign.**
+
+### Operator working mode (IMPORTANT)
+Do **NOT** stop+commit after every small change. **Batch** the redesign and keep working until a large
+coherent slice is done, then report. (This reverses the earlier per-screen "коммит. потом продолжим"
+cadence.)
+
+### Immediate next steps (redesign build — continuous)
+1. **Per-entity routing** — extend the hash hook to `#/<view>/<id>` so "edit" opens a full screen.
+2. **Reusable primitives** — `DataView` (Mantine `Table`: sticky header, **horizontal scroll**, sort,
+   filter, density, row→detail) ; `DetailPage` (full-screen master-detail scaffold: back, header,
+   tabbed sections, sticky save bar) ; `EntityPicker` (searchable/filterable list + detail preview →
+   returns an id). Build on Mantine `@mantine/core`.
+3. **Dashboard v2** — Mantine KPI tiles + sparklines (simple inline SVG, or add `@mantine/charts`),
+   queue depths (`GET /analytics/queues`), throughput, health timeline.
+4. **Roll full-screen detail across screens**: Souls (reference, biggest) → Accounts → Missions →
+   Landscape → News Hub → Knowledge → Channel Profiles → Decisions/Activity → Database (Mantine Table)
+   → Genesis/AuthFactory (rebuild from raw HTML). Add relationship cross-links throughout.
+5. Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
+   requires `docker compose build daedalus` (the React SPA is built inside the image). `npm install`
+   runs in the build (network available) so adding Mantine deps to `package.json` is enough.
 
 ---
 
