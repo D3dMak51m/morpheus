@@ -315,6 +315,23 @@ Everything below (Stages 23–35) was verified live on real data.
   the remaining screens (Missions, Landscape, News Hub, Knowledge, Channel Profiles, Decisions/Activity,
   Database→Mantine, Genesis/Auth rebuild, Devices pick-list) + relationship cross-links.
 
+- **68–70 — Redesign rollout (continuous): full-screen detail across the console.** Applied the
+  Stage-67 pattern (`DataView` + `DetailPage` + `EntityPicker`) to the rest of the core screens, in
+  one continuous push (operator: "don't stop+commit after each small change; do it in one go").
+  **68:** `MissionsScreen` (list → full-screen Обзор/Цели/Агенты; eligible-agent `EntityPicker`;
+  create via `#/missions/new`; replaces MissionDeck) + `LandscapeScreen` (list → full-screen source
+  add/edit; replaces LandscapeManager). **69:** `NewsHubScreen` (event edit), `KnowledgeScreen`
+  (facts + inject + fact detail), `ChannelProfilesScreen` (read-only profile) — replace
+  NewsHubInspector/MuninnExplorer/ChannelProfiles. **70:** `DecisionsScreen` + `ActivityScreen`
+  (Mantine `DataView` timelines, replace DecisionLog/ActivityStream); **rebuilt the two raw-HTML
+  screens** — `SoulGenesisView` (Mantine synth form, now gets the token) and `AuthFactory` (Mantine
+  **Stepper** wizard: request code → verify → done, + searchable `Select` pick-from-list for the
+  agent/device binding); **`DeviceGrid`** device→agent binding now uses an `EntityPicker`
+  (no more typed IDs). `EntityPicker` modal set `withinPortal={false}` so it hides with its host
+  view. All verified live. Old replaced components' CSS kept imported in `App.tsx` for global
+  classes. **Redesign core complete**; remaining (functional, lower priority): `DatabaseExplorer`
+  (h-scroll fixed), `SwarmDashboard`/`ScoutingRadar`/`LiveOps`/`CloneFactory`/`SandboxConsole`.
+
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
 content of this file's git versions.

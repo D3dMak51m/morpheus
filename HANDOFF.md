@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 67. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 70. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -197,19 +197,25 @@ sparklines). All verified live. The old `SoulsContext.css`/`AccountsManager.css`
 `App.tsx` to keep global classes (`.status-badge`/`.tabs`/`.modal-*`/`.header-row`) for un-migrated
 screens.
 
-**NEXT — apply the same pattern to the rest** (`DataView` list → `DetailPage` full-screen, `EntityPicker`
-for any ID entry, Mantine components, cross-links):
-1. **Missions** (`MissionDeck`) — list → full-screen mission detail (Overview/Targets/Agents tabs);
-   the eligible-agent picker → `EntityPicker`.
-2. **Landscape**, **News Hub**, **Knowledge**, **Channel Profiles** — list → full-screen add/edit
-   (replace the SidePanels).
-3. **Decisions** + **Activity** — consider unifying into one timeline; add cross-links to
-   agent/channel/mission.
-4. **Database Explorer** → Mantine Table (the h-scroll bug is patched in CSS; Mantine Table does it natively).
-5. **Genesis** + **Auth Factory** — rebuild from raw HTML on Mantine (Auth = a guided wizard).
-6. **Devices** — fold the manual assign-agent input into `EntityPicker`.
-7. Weave **relationship cross-links** + more informativeness as each migrates.
-Templates: `SoulsScreen.tsx` / `AccountsScreen.tsx` + `src/ui/*`. Build `daedalus`, verify via Playwright.
+**Redesign core COMPLETE (Stages 67–70).** Migrated to full-screen `DataView`+`DetailPage`
+(+`EntityPicker`): **Souls, Accounts, Missions, Landscape, News Hub, Knowledge, Channel Profiles,
+Decisions, Activity**; **Dashboard v2**; **Genesis + Auth Factory** rebuilt from raw HTML
+(Auth = Mantine Stepper wizard); **Devices** binding via `EntityPicker`. All verified live.
+
+**Remaining (functional, low priority / optional):**
+1. `DatabaseExplorer` — h-scroll bug fixed; full Mantine-Table reskin is optional polish.
+2. `SwarmDashboard` / `ScoutingRadar` — still old `DataTable` (work); migrate to `DataView` +
+   full-screen detail for consistency if desired.
+3. `LiveOps` / `CloneFactory` / `SandboxConsole` — functional; reskin only if asked.
+4. **Relationship cross-links** — weave account↔soul↔mission↔channel↔decisions navigation into the
+   new detail pages for more informativeness.
+5. **Cleanup:** once all screens are migrated, delete the dead old components (`SoulsContext`,
+   `AccountsManager`, `MissionDeck`, `NewsHubInspector`, `MuninnExplorer`, `ChannelProfiles`,
+   `LandscapeManager`, `DecisionLog`, `ActivityStream`, `DataTable`, `SidePanel`) — but FIRST move
+   their **global** CSS (`.status-badge`, `.tabs/.tab-btn`, `.modal-*`, `.header-row`, `.data-grid`,
+   `.layer-pill`, `.tag-*`) into a shared stylesheet (they're re-imported in `App.tsx` for now).
+Templates: `SoulsScreen.tsx` / `AccountsScreen.tsx` / `MissionsScreen.tsx` + `src/ui/*`. Build
+`daedalus`, verify via Playwright.
 
 Stack screens are running; **do NOT rebuild unless you changed that service.** A frontend change
 requires `docker compose build daedalus` (React SPA built inside the image; `npm install` runs in the

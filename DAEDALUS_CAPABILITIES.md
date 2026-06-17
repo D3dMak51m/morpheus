@@ -282,12 +282,17 @@ Captured so the redesign is anchored to explicit asks:
    (KPI tile + inline SVG sparkline).
 4. ✅ **Dashboard v2** (Stage 67) — "Центр управления": readiness alert + 8 KPI tiles (live
    sparklines from rolling poll history) + radar-queue panel; Diagnostics tab kept.
-5. **Per-domain migration to full-screen detail** — ✅ **Souls** (`SoulsScreen`, flagship: list →
-   full-screen 5-tab editor, Mantine sliders, account bind via `EntityPicker`, history rollback) +
-   ✅ **Accounts** (`AccountsScreen`: list → detail, soul-bind via `EntityPicker`, channels, audit).
-   **Remaining:** Missions → Landscape → News Hub → Knowledge → Channel Profiles → Decisions/Activity
-   (unify) → Database (Mantine Table) → Genesis/Auth (rebuild from raw HTML) → Devices/Sandbox/Factory
-   (mobile, lighter). Each = apply the `DataView` + `DetailPage` (+ `EntityPicker`) pattern.
+5. **Per-domain migration to full-screen detail** — ✅ **DONE for the core screens** (Stages 67–70):
+   `SoulsScreen` (flagship 5-tab editor), `AccountsScreen`, `MissionsScreen` (Обзор/Цели/Агенты +
+   eligible-agent `EntityPicker` + create), `LandscapeScreen` (add/edit source), `NewsHubScreen`
+   (edit event), `KnowledgeScreen` (facts + inject + fact detail), `ChannelProfilesScreen`
+   (read-only profile), `DecisionsScreen` + `ActivityScreen` (DataView timelines). ✅ **Raw-HTML
+   rebuilt:** `SoulGenesisView` (Mantine synth form) + `AuthFactory` (Mantine Stepper wizard +
+   pick-from-list selects). ✅ **Devices** now uses an `EntityPicker` for device→agent binding
+   (no more typed IDs). **Remaining (functional, lower priority):** `DatabaseExplorer` (h-scroll bug
+   fixed; full Mantine-Table reskin optional), `SwarmDashboard` (DataTable drill-downs — works),
+   `ScoutingRadar` (DataTable — works), `LiveOps` (custom live feed — works), `CloneFactory`
+   (Mantine slider + Russified — works), `SandboxConsole` (mobile).
 6. **Cross-links & informativeness** — relationship navigation everywhere (account↔soul↔mission↔
    channel↔decisions↔activity). To weave in as each screen migrates.
 
