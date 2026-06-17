@@ -237,6 +237,17 @@ Everything below (Stages 23–35) was verified live on real data.
   (psychology tab: tone/emoji/vocab/aggression 1–10) and `CloneFactory` (bot count 1–20). Verified
   live (typing 9 moves the slider + fill to 88.9%). (Phase 4 remaining: clean up `DeviceGrid` dead
   Tailwind classes + English; optionally Russify `CloneFactory`.)
+- **60 — UX/UI overhaul, Phase 4 (part 2): DeviceGrid cleanup + Russify.** Fixed a real bug — the
+  toast notification relied **only** on non-existent Tailwind classes (`absolute top-4 right-4
+  bg-green-600 …`, no Tailwind in this project) so it rendered unstyled in the wrong place; replaced
+  with inline styles (fixed top-right, colored by type). Removed the dead duplicate Tailwind
+  classNames on the VNC modal (its inline styles already did the work). Russified the whole screen:
+  header "Устройства", "Создать эмулятор", "Привязать агента…", "Добавить в реестр Daedalus",
+  telemetry (Нагрузка/ОЗУ/«Телеметрия недоступна…»), card buttons (Перезагрузка/Очистить Chrome/
+  Экран (VNC)/Уничтожить), and all toast messages. Verified live. (Harmless no-op utility classes
+  like `text-xs`/`mt-*` left on elements that already carry real component CSS classes.) Phase 4
+  remaining is optional: Russify `CloneFactory`; convert the read-only `SwarmDashboard` drill-down
+  to `SidePanel`.
 
 Earlier work (Stages ≤22: RBAC, souls/accounts, genesis, scouting, RAG knowledge with
 LLM auto-classification, pgvector dedup, landscape) is in git history and the prior
@@ -246,14 +257,13 @@ content of this file's git versions.
 
 ## Where we stopped
 
-Just finished **Stage 59 — UX/UI overhaul Phase 4 (part 1, sliders)**: replaced the bare native
-range sliders in `SoulsContext` (psychology tab) and `CloneFactory` with a shared `.styled-range`
-(value-proportional filled track) + paired `.slider-num` number input (precise, two-way synced),
-verified live. **Now in progress: the UX/UI overhaul** (operator asked to bring the whole console
-to a real "mission center" standard). **Next: continue Phase 4 — styling/controls**: clean up
-`DeviceGrid.tsx` (dead Tailwind-style utility classes — no Tailwind in this project — and all
-English; it's the out-of-scope mobile screen, so a light cleanup/Russify is enough); optionally
-Russify `CloneFactory`. Then P5 consolidate (unify scattered related screens).
+Just finished **Stage 60 — UX/UI overhaul Phase 4 (part 2, DeviceGrid)**: fixed the unstyled toast
+(it relied only on non-existent Tailwind classes), cleaned the VNC modal's dead classes, and fully
+Russified the DeviceGrid screen; verified live. **Phase 4 core is done** (sliders + DeviceGrid).
+**Now in progress: the UX/UI overhaul** (operator asked to bring the whole console to a real
+"mission center" standard). **Next (optional Phase 4 tail / then Phase 5):** Russify `CloneFactory`
+(still English); convert the read-only `SwarmDashboard` drill-down modal to `SidePanel` for
+consistency; then **P5 — consolidate** (bring scattered related data/functions into unified screens).
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
