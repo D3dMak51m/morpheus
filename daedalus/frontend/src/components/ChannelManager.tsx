@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { SidePanel } from './SidePanel';
 import './ChannelManager.css';
 
 interface Channel {
@@ -138,10 +139,14 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content large cm-modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>Каналы аккаунта · {label}</h2>
+    <SidePanel
+      open
+      title={`Каналы аккаунта · ${label}`}
+      onClose={onClose}
+      width={680}
+      footer={<button className="btn-secondary" onClick={onClose}>Закрыть</button>}
+    >
+        <div className="cm-tabs-row">
           <div className="tabs">
             <button className={`tab-btn ${tab === 'channels' ? 'active' : ''}`} onClick={() => setTab('channels')}>
               Каналы {channels.length ? `(${channels.length})` : ''}
@@ -149,13 +154,13 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
             <button className={`tab-btn ${tab === 'actions' ? 'active' : ''}`} onClick={() => setTab('actions')}>
               Действия бота
             </button>
-            <button className="btn-secondary cm-refresh" onClick={refresh} disabled={refreshing}>
-              {refreshing ? '⏳ Опрос…' : '↻ Обновить из Telegram'}
-            </button>
           </div>
+          <button className="btn-secondary cm-refresh" onClick={refresh} disabled={refreshing}>
+            {refreshing ? '⏳ Опрос…' : '↻ Обновить из Telegram'}
+          </button>
         </div>
 
-        <div className="modal-body">
+        <div className="cm-content">
           {error && <div className="error-banner">{error}</div>}
 
           {tab === 'channels' && (
@@ -246,12 +251,7 @@ const ChannelManager: React.FC<ChannelManagerProps> = ({ token, agentId, label, 
             </>
           )}
         </div>
-
-        <div className="modal-actions">
-          <button className="btn-secondary" onClick={onClose}>Закрыть</button>
-        </div>
-      </div>
-    </div>
+    </SidePanel>
   );
 };
 

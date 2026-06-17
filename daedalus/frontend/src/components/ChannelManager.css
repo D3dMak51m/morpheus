@@ -1,6 +1,17 @@
 .cm-modal { max-width: 920px; }
 .cm-refresh { margin-left: auto; padding: 4px 12px; font-size: 0.78rem; }
 
+/* Stage 56: ChannelManager moved into a SidePanel — tabs row + scroll body. */
+.cm-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle, #30363d);
+}
+.cm-tabs-row .cm-refresh { margin-left: auto; }
+
 .cm-counts {
   display: flex;
   gap: 16px;

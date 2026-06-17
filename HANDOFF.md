@@ -7,7 +7,7 @@
 > comments and git commit messages stay in English; the operator console UI is in Russian).
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff time = Stage 55. Working tree is clean. Stages are tagged in
+> HEAD at handoff time = Stage 56. Working tree is clean. Stages are tagged in
 > commit subjects; full history is in `git log`.
 
 ---
@@ -158,14 +158,16 @@ the right with NO dimming backdrop (rest of page + sidebar stay clickable; submi
 footer, bound to the form via the HTML `form=` attribute — or plain `onClick` if the editor isn't a
 `<form>`). Verified live: unsaved edits survive a tab switch; the panel hides with its host view
 (`display:none`) so it doesn't bleed over other screens. **Converted so far:** `LandscapeManager`
-(add/edit source), `MuninnExplorer` (inject fact), `NewsHubInspector` (edit event).
+(add/edit source), `MuninnExplorer` (inject fact), `NewsHubInspector` (edit event), `ChannelManager`
+(account channels — a wide 680px panel with tabs/filters/bulk actions).
 
 ### What is MISSING — the rest of the UX overhaul (Phase 3 remainder + Phases 4–5)
 These come from the operator's explicit complaints. **This is the immediate work.**
 - **Phase 3 (remaining) — de-modal.** Convert the other **blocking modal-overlay** editors to
-  `SidePanel` (template: `LandscapeManager` / `MuninnExplorer` / `NewsHubInspector`): `SoulsContext`,
-  `ChannelManager`, `MissionDeck`, `SwarmDashboard` drill-down. Operator complaint: after opening a
-  modal you must close it (losing unsaved changes) to switch tabs — `SidePanel` fixes that. Also
+  `SidePanel` (template: `LandscapeManager` / `MuninnExplorer` / `NewsHubInspector` /
+  `ChannelManager`): `SoulsContext`, `MissionDeck`, `SwarmDashboard` drill-down. Operator complaint:
+  after opening a modal you must close it (losing unsaved changes) to switch tabs — `SidePanel`
+  fixes that. Also
   replace manual ID/name entry with **searchable pick-from-list** (e.g. the agent picker in
   MissionDeck; the assign-agent input in DeviceGrid).
 - **Phase 4 — styling + controls.** Remove leftover **raw unstyled HTML**; fix the **range
@@ -175,11 +177,12 @@ These come from the operator's explicit complaints. **This is the immediate work
 
 ### Immediate next steps (do these to continue)
 1. **Phase 2 COMPLETE; Phase 3 (de-modal) IN PROGRESS** (`SidePanel` + `LandscapeManager` +
-   `MuninnExplorer` + `NewsHubInspector` done). Operator's cadence is "коммит. потом продолжим" per
-   screen. Continue **Phase 3**: convert the next modal editor to `SidePanel` (templates:
-   `LandscapeManager.tsx` / `MuninnExplorer.tsx` / `NewsHubInspector.tsx`). Remaining: `SoulsContext`,
-   `ChannelManager`, `MissionDeck` (+ replace the manual agent-ID text entry with a searchable
-   pick-from-list), `SwarmDashboard` drill-down. Pattern: `<SidePanel open=… title=… onClose=…
+   `MuninnExplorer` + `NewsHubInspector` + `ChannelManager` done). Operator's cadence is "коммит.
+   потом продолжим" per screen. Continue **Phase 3**: convert the next modal editor to `SidePanel`
+   (templates: `LandscapeManager.tsx` / `MuninnExplorer.tsx` / `NewsHubInspector.tsx` /
+   `ChannelManager.tsx`). Remaining: `SoulsContext`, `MissionDeck` (+ replace the manual agent-ID
+   text entry with a searchable pick-from-list), `SwarmDashboard` drill-down. Pattern:
+   `<SidePanel open=… title=… onClose=…
    footer={Cancel/Save}>` wrapping the form; submit button in the `footer`, bound with
    `form="<formId>"` (or plain `onClick` if not a `<form>`). Build `daedalus`, verify with a
    Playwright screenshot (open editor → switch tab → return → edits intact), repeat per screen.
