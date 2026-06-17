@@ -8,13 +8,13 @@ import Dashboard from './components/Dashboard';
 import DatabaseExplorer from './components/DatabaseExplorer';
 import ActivityScreen from './components/ActivityScreen';
 import LiveOps from './components/LiveOps';
-import SwarmDashboard from './components/SwarmDashboard';
+import SwarmScreen from './components/SwarmScreen';
 import { AuthFactory } from './components/AuthFactory';
 import { SoulGenesisView } from './components/SoulGenesisView';
 import AccountsScreen from './components/AccountsScreen';
 import SandboxConsole from './components/SandboxConsole';
 import MissionsScreen from './components/MissionsScreen';
-import ScoutingRadar, { MissionPrefill } from './components/ScoutingRadar';
+import ScoutingScreen, { MissionPrefill } from './components/ScoutingScreen';
 import KnowledgeScreen from './components/KnowledgeScreen';
 import ChannelProfilesScreen from './components/ChannelProfilesScreen';
 import DecisionsScreen from './components/DecisionsScreen';
@@ -170,13 +170,13 @@ function App() {
         <div style={{ display: activeView === 'decisions' ? 'block' : 'none', height: '100%' }}><DecisionsScreen token={token} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
-        <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingRadar token={token} onConverted={handleConverted} /></div>
+        <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingScreen token={token} onConverted={handleConverted} /></div>
         <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionsScreen token={token} selectedId={activeView === 'missions' ? route.id : null} onOpen={(id) => navigate('missions', id)} onBack={() => navigate('missions')} prefill={missionPrefill} onPrefillConsumed={() => setMissionPrefill(null)} /></div>
         <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityScreen token={token} /></div>
         <div style={{ display: activeView === 'database' ? 'block' : 'none', height: '100%' }}><DatabaseExplorer token={token} /></div>
         <div style={{ display: activeView === 'dashboard' ? 'block' : 'none', height: '100%' }}><Dashboard token={token} /></div>
         <div style={{ display: activeView === 'live' ? 'block' : 'none', height: '100%' }}><LiveOps token={token} /></div>
-        <div style={{ display: activeView === 'swarm' ? 'block' : 'none', height: '100%' }}><SwarmDashboard token={token} onNavigate={(v) => setActiveView(v as typeof activeView)} /></div>
+        <div style={{ display: activeView === 'swarm' ? 'block' : 'none', height: '100%' }}><SwarmScreen token={token} onNavigate={(v) => setActiveView(v as typeof activeView)} /></div>
       </AppShell.Main>
     </AppShell>
   );
