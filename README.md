@@ -35,6 +35,10 @@ A single operator runs everything from the **DAEDALUS** web console.
 - **Safety & realism** — Telegram FloodWait/ban handling, per-account cooldowns,
   per-channel/agent rate limits, **active-hours** (bots post only in the persona's live
   hours, not 24/7), and one-click pause for any agent or mission.
+- **Simulation polygon** — a Telegram-like **isolated** test environment for personas,
+  missions, RAG, system prompts, comments/reactions and mass generation. Own `sim_*` tables,
+  own Redis queue, no production writes and no rate limits — tune an agent there, then apply
+  it to a real soul. See **`SIMULATION.md`**.
 
 ---
 
@@ -121,6 +125,8 @@ Open the console at **http://localhost:8000** and log in with `SUPERADMIN_USERNA
   discussed now, summary (drives in-context relevance + comment grounding).
 - **Решения** — durable history of WHY a bot did/didn't react: what it recognized (text /
   audio transcript / photo OCR), the relevance verdict, and skip reasons.
+- **Симуляция** — the isolated polygon: activity feed / channel posts ↔ single-post comment
+  thread / channels + actions, with mass generation, knowledge import and landscape scraping.
 - Accounts, Auth Factory, Clone Factory, Landscape, Scouting Radar, Devices, etc.
 
 ---
@@ -136,6 +142,14 @@ muninn/     dialog memory (ChromaDB)
 docker-compose.yml
 CLAUDE.md       engineering guide (read this to work on the code)
 walkthrough.md  work log / handoff / next steps
+SIMULATION.md   the isolated test polygon (entities, API, isolation contract)
+```
+
+Tests (both suites run inside the containers):
+
+```bash
+docker compose exec daedalus python -m pytest tests -q
+docker compose exec orpheus  python -m pytest tests -q
 ```
 
 ---
@@ -160,6 +174,12 @@ professional command-and-control center on **Mantine 7** — `AppShell` layout, 
 master→detail editing of every entity** (no modals/drawers), **pick-from-list everywhere**, a serious
 Dashboard, relationship cross-links, and h-scroll tables. See `DAEDALUS_CAPABILITIES.md` for the full
 screen↔endpoint map and `walkthrough.md` for the staged log.
+
+**Simulation polygon — ✅ built** (isolated test environment): `sim_*` schema on its own
+declarative base, `/api/v1/simulation/*`, a dedicated `queue:sim_gen` ORPHEUS handler that
+persists nothing, landscape scraping (RSS / web / public `t.me/s/` preview) and read-only
+imports from production, a Telegram-like 3-column workspace, mass generation, and 60 tests.
+See `SIMULATION.md`.
 
 Next focus: the **functional / swarm logic** (ORPHEUS cognition, MYRMIDON engines, mission pipeline,
 RAG, channel profiling, conversations). The text model is small (`qwen2.5:3b`); a larger

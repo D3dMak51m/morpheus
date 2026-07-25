@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base
+from app.models_simulation import SimBase
 
 logger = logging.getLogger("daedalus.database")
 
@@ -65,6 +66,12 @@ def init_tables() -> None:
         logger.info("pgvector extension ensured.")
 
     Base.metadata.create_all(bind=engine)
+
+    # SIMULATION — an isolated test polygon living in its own ``sim_`` namespace
+    # with its own declarative base. Created alongside production but never
+    # linked to it (no cross-FKs), so it can be dropped without touching real data.
+    SimBase.metadata.create_all(bind=engine)
+    logger.info("Simulation tables ensured (%d isolated sim_* tables).", len(SimBase.metadata.tables))
 
     # Cosine ANN index on KnowledgeFact embeddings (idempotent).
     try:

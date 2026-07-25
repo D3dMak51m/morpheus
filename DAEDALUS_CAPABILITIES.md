@@ -23,7 +23,7 @@ knowledge + channel-profile context the cognitive core reads.
 **Auth:** JWT. `POST /auth/login` (form), `GET /auth/me`. **RBAC:** User → Roles → atomic
 permissions: `db:read`, `db:edit`, `monitoring:view`, `agents:manage`, `agents:view`,
 `campaigns:{create,view,edit,delete}`, `accounts:{manage,view}`, `roles:{manage,view}`,
-`system:settings`. Enforced via `require_permission`. Roles/permissions managed at
+`system:settings`, `simulation:{view,manage}`. Enforced via `require_permission`. Roles/permissions managed at
 `POST/GET /roles`, `GET /permissions`.
 
 **Real-time substrate:** the console tails Redis telemetry (`stream:agent_events`) and live
@@ -232,7 +232,31 @@ channel profiles, target suggestions, decision log, device status, activity).
 - **Redesign gaps (operator-reported BUG):** the data table **does not scroll horizontally** —
   wide tables clip. Also English; the three nested scroll regions are part of the layout problem.
 
-### 1.20 Legacy / system endpoints  🟢
+### 1.20 Simulation  🟢 `#/simulation` (+ `#/simulation/<post_id>`)  ("Симуляция")
+- **Purpose:** an **isolated Telegram-like polygon** for testing agents/souls, missions, RAG,
+  system prompts, comments, reactions and mass generation without touching production. Distinct
+  from 1.18 "Песочница" (that one drives a physical device) — nothing here reaches a real channel.
+- **Layout:** three columns — activity feed + filters (left), channel posts / single-post thread
+  mode (centre), channels + actions + inspector (right).
+- **Capabilities:** several isolated worlds (+seed/reset); channel & post CRUD with media,
+  reactions, editable time and a full revision history (restore); Telegram-like comment tree
+  (reply, edit, change author, react, publish, delete branch); manual accounts vs AI personas
+  (editable persona incl. style sliders and **system prompt**, autosaved); simulation-only
+  missions grouping agents (run against a polygon post); single and **mass generation**
+  (agents + manual accounts together; generate / generate+publish / draft; count, tone, pace,
+  order, reply share, prompt override) with live job progress; post/article generation;
+  knowledge base + import from production (facts, channel profiles, landscape, souls, missions,
+  history); landscape scraping (RSS/Atom, web page, public `t.me/s/` preview — read-only);
+  raw-state inspector for any entity.
+- **API:** everything under `/simulation/*` (see `SIMULATION.md` §3).
+- **Isolation:** own `sim_*` tables on a separate declarative base (no FK into production), own
+  RBAC atoms `simulation:{view,manage}`, own Redis queue `queue:sim_gen` (never
+  `queue:execution_tasks`), ORPHEUS handler that writes no memory/metrics, and read-only imports.
+  Production rate limits, cooldowns and active-hours do **not** apply inside the polygon.
+- **Polygon → production:** `GET /simulation/personas/{id}/export` shapes a tested persona as a
+  soul draft; the Souls screen has an **«Из симуляции»** picker that prefills the real form.
+
+### 1.21 Legacy / system endpoints  🟢
 - `GET/POST/DELETE /agents`, `GET/POST/DELETE /campaigns`, `GET/POST /roles`, `GET /permissions`,
   `GET /health`. (Some predate the mission model; `agents` here = accounts-ish. Audit before
   surfacing in the new UI.)

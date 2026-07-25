@@ -34,6 +34,7 @@ from app.persona import (
 )
 from app.guardrails import OutputGuardrails
 from app.coordination import generate_beta_subtasks
+from app.simulation import handle_simulation_generation
 from app.telemetry import emit as emit_event
 import threading
 import asyncio
@@ -60,6 +61,10 @@ EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
 # MYRMIDON pushes a request (with the live post context) here; ORPHEUS generates
 # a persona/RAG/memory/mission-aware comment and LPUSHes it to req["reply_key"].
 MISSION_GEN_QUEUE = "queue:mission_gen"
+# SIMULATION — the isolated test polygon (DAEDALUS ``/api/v1/simulation``). Its own
+# queue on purpose: a polygon run must never enter the live mission path, and its
+# handler persists nothing (no MUNINN memory, no recent-output history, no metrics).
+SIM_GEN_QUEUE = "queue:sim_gen"
 
 PROCESSING_TIMEOUT_SEC = 5
 MAX_REGENERATION_ATTEMPTS = 2
@@ -513,11 +518,23 @@ def main() -> None:
         try:
             # Listen on both the autonomous news queue and the targeted mission
             # generation queue; whichever has work is served (sequential VRAM).
-            result = redis_client.brpop([RAW_EVENTS_QUEUE, MISSION_GEN_QUEUE], timeout=PROCESSING_TIMEOUT_SEC)
+            result = redis_client.brpop(
+                [RAW_EVENTS_QUEUE, MISSION_GEN_QUEUE, SIM_GEN_QUEUE],
+                timeout=PROCESSING_TIMEOUT_SEC,
+            )
             if result is None:
                 continue
 
             queue_key, payload = result
+
+            if queue_key == SIM_GEN_QUEUE:
+                try:
+                    sim_req = json.loads(payload)
+                except json.JSONDecodeError as exc:
+                    logger.error("Malformed simulation request: %s", exc)
+                    continue
+                handle_simulation_generation(sim_req, redis_client, guardrails, generate_text)
+                continue
 
             if queue_key == MISSION_GEN_QUEUE:
                 try:

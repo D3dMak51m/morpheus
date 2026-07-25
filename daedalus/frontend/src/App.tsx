@@ -19,15 +19,16 @@ import KnowledgeScreen from './components/KnowledgeScreen';
 import ChannelProfilesScreen from './components/ChannelProfilesScreen';
 import DecisionsScreen from './components/DecisionsScreen';
 import CloneFactory from './components/CloneFactory';
+import SimulationScreen from './components/simulation/SimulationScreen';
 import { AppShell, ScrollArea } from '@mantine/core';
-import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks, type LucideIcon } from 'lucide-react';
+import { Shield, HardDrive, LayoutDashboard, LogOut, Database, Activity, Map, Radio, Key, Dna, Users, TerminalSquare, Target, Radar, Brain, Factory, Compass, ListChecks, FlaskConical, type LucideIcon } from 'lucide-react';
 import './App.css';
 
 // Views are addressable via the URL hash (#/swarm, #/missions, …) so a page refresh
 // keeps you where you were, links are shareable, and browser back/forward work — instead
 // of always snapping back to Dashboard.
 const VIEWS = ['dashboard', 'live', 'swarm', 'accounts', 'souls', 'genesis', 'factory', 'auth',
-  'devices', 'sandbox', 'missions', 'scouting', 'landscape', 'newshub', 'muninn',
+  'devices', 'sandbox', 'simulation', 'missions', 'scouting', 'landscape', 'newshub', 'muninn',
   'channelprofiles', 'decisions', 'database', 'activity'] as const;
 type View = typeof VIEWS[number];
 
@@ -71,6 +72,9 @@ const NAV: { label: string; items: NavItem[] }[] = [
     { view: 'sandbox', label: 'Песочница', Icon: TerminalSquare },
     { view: 'decisions', label: 'Решения', Icon: ListChecks },
     { view: 'activity', label: 'Журнал (лог)', Icon: Activity },
+  ] },
+  { label: 'ПОЛИГОН', items: [
+    { view: 'simulation', label: 'Симуляция', Icon: FlaskConical },
   ] },
   { label: 'СИСТЕМА', items: [
     { view: 'database', label: 'База данных', Icon: Database },
@@ -163,6 +167,13 @@ function App() {
         <div style={{ display: activeView === 'decisions' ? 'block' : 'none', height: '100%' }}><DecisionsScreen token={token} goTo={(v, id) => navigate(v as View, id)} /></div>
         <div style={{ display: activeView === 'devices' ? 'block' : 'none', height: '100%' }}><DeviceGrid token={token} /></div>
         <div style={{ display: activeView === 'sandbox' ? 'block' : 'none', height: '100%' }}><SandboxConsole token={token} /></div>
+        {/* Simulation runs a fixed 3-column layout, so it is mounted only while active
+            (keeping it hidden-but-mounted would keep its polling loops alive). */}
+        {activeView === 'simulation' && (
+          <div style={{ height: '100%' }}>
+            <SimulationScreen token={token} selectedId={route.id} onOpen={(id) => navigate('simulation', id)} onBack={() => navigate('simulation')} />
+          </div>
+        )}
         <div style={{ display: activeView === 'scouting' ? 'block' : 'none', height: '100%' }}><ScoutingScreen token={token} onConverted={handleConverted} /></div>
         <div style={{ display: activeView === 'missions' ? 'block' : 'none', height: '100%' }}><MissionsScreen token={token} selectedId={activeView === 'missions' ? route.id : null} onOpen={(id) => navigate('missions', id)} onBack={() => navigate('missions')} prefill={missionPrefill} onPrefillConsumed={() => setMissionPrefill(null)} goTo={(v, id) => navigate(v as View, id)} /></div>
         <div style={{ display: activeView === 'activity' ? 'block' : 'none', height: '100%' }}><ActivityScreen token={token} goTo={(v, id) => navigate(v as View, id)} /></div>

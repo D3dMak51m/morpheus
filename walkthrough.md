@@ -21,7 +21,59 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
 - Three real TG accounts live: `clone_alpha_91eea738` (alpha), `clone_alpha_bd35bcad`
   (beta), `clone_alpha_0e795b8d` (gamma). Test channel `@tashkent_news333`.
 
+- **NEW — Stage 37: the SIMULATION polygon** (isolated test environment) is live at
+  `#/simulation`; production is provably untouched by it. See the stage entry below and
+  **`SIMULATION.md`**.
+
 Everything below (Stages 23–35) was verified live on real data.
+
+### Stage 37 — SIMULATION: isolated Telegram-like test polygon (built & verified live)
+
+**Why:** everything cognitive (personas, missions, RAG, system prompts, tactics) could only be
+tested by posting to a real channel with real accounts under production rate limits. Now there
+is a полигон: same engine, same prompts — zero production consequences.
+
+**Isolation contract** (the whole point; each layer is independent):
+- **Schema** — 13 `sim_*` tables on their **own** `SimBase` (`app/models_simulation.py`), no FK
+  into production. `init_tables()` creates them alongside (never mixes metadata).
+- **API** — `/api/v1/simulation/*` only, new RBAC atoms `simulation:{view,manage}`.
+- **Queue** — own **`queue:sim_gen`** + `reply:simgen:<id>`. Never `queue:execution_tasks`, so a
+  polygon run physically cannot reach MYRMIDON or a real channel.
+- **ORPHEUS** — dedicated handler (`orpheus/app/simulation.py`) that writes **no** MUNINN memory,
+  **no** `morpheus:recent_outputs:*`, **no** `metrics:*`. The persona and the RAG facts travel
+  inline in the request, so no production profile is ever read.
+- **Imports** — production tables are only SELECTed and copied into `sim_*`.
+- **No production limits** inside the polygon: no rate caps, cooldowns or active-hours.
+
+**What it does:** worlds (+demo seed/reset) · channels · posts (media, reactions, editable time,
+full revision history + restore, move between channels) · Telegram-like comment tree (reply, edit,
+change author, react, publish, delete branch) · manual accounts (operator-driven) vs AI personas
+(style sliders + **system prompt**, autosaved) · simulation-only missions grouping agents ·
+single generation, **mass generation** (agents + accounts together; generate / generate+publish /
+draft; count, tone, pace, order, reply share, prompt override) with live job progress ·
+post/article generation · knowledge base with lexical RAG + import from production (facts,
+channel profiles, landscape, souls, missions, history) · landscape scraping (RSS/Atom, web page,
+public `t.me/s/` preview — read-only, no session) · activity journal + raw-state inspector.
+
+**UI:** `daedalus/frontend/src/components/simulation/` — three columns per the operator's mock
+(activity feed + filters | channel posts ↔ single-post thread | channels + actions + inspector),
+hash-routed `#/simulation/<post_id>`. Modals here are deliberate (it is a workspace, not a CRUD
+screen). Souls got an **«Из симуляции»** picker: a tested persona prefills a real soul's form.
+
+**Verified live:** real ORPHEUS generation (4.4 s, guardrails passed, 2 RAG facts in the prompt);
+a 5-item batch from 2 agents + 2 manual accounts with nested replies (5/5); a 2-agent mission run;
+BBC RSS + `@tashkent_news333` web-preview scraping; AI-written post grounded on a polygon fact.
+After all of it: `metrics:comments_sent`, `agent_activity_logs`, `missions`, `agent_profiles` and
+`queue:execution_tasks` were **unchanged**.
+
+**Tests:** `docker compose exec daedalus python -m pytest tests -q` (45) and
+`… orpheus …` (15). Isolation is structural in the suite: the test DB has only `sim_*` tables,
+so any write to a production table would fail with "no such table". The ORPHEUS suite asserts the
+handler touches **only** its reply key (a fake Redis records every call).
+
+**Gaps (documented, not hidden):** no comment import from real TG channels (public preview does
+not expose them); `scheduled` exists as a status/filter but there is no time-based scheduler —
+jobs start immediately; media are stored as link+caption (no file upload).
 
 ### Stage 36 — relevance / tactic / target-identifier hardening (verified live)
 
@@ -429,6 +481,15 @@ classes (`.tabs`/`.status-badge`/`.data-grid`, used by ChannelManager) into a sh
 `SoulsContext.css`/`AccountsManager.css`/`LandscapeManager.css` no longer need to be imported in
 `App.tsx`.
 
+**Stage 37 (this batch): the SIMULATION polygon is built, deployed and verified** — see the stage
+entry above and `SIMULATION.md`. New files: `daedalus/app/{models_simulation,router_simulation,
+sim_generator,sim_landscape}.py`, `orpheus/app/simulation.py`,
+`daedalus/frontend/src/components/simulation/*`, `daedalus/tests/`, `orpheus/tests/`,
+`{daedalus,orpheus}/requirements-dev.txt` (pytest is now in both images, tests copied in).
+Touched production files, minimally: `database.py` (create the sim metadata), `main.py` (mount the
+router / BRPOP the sim queue), `rbac.py` (two atoms), `App.tsx` (one nav view), `SoulsScreen.tsx`
+(«Из симуляции» prefill picker), both Dockerfiles.
+
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
 working it (≤1 comment/channel/hr). Pause it via the UI if you want it quiet.
@@ -468,7 +529,16 @@ TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/login \
 curl -s localhost:8000/api/v1/analytics/swarm -H "Authorization: Bearer $TOKEN" | jq .
 ```
 UI: open `localhost:8000`, log in (`morpheus` / `.env` `SUPERADMIN_PASSWORD`). Key screens:
-**Live Ops**, **Рой** (swarm dashboard), **Mission Deck**, **Souls/Агенты**, **Знания роя**.
+**Live Ops**, **Рой** (swarm dashboard), **Mission Deck**, **Souls/Агенты**, **Знания роя**,
+**Симуляция** (polygon).
+
+```bash
+# tests (both suites live inside the images)
+docker compose exec daedalus python -m pytest tests -q
+docker compose exec orpheus  python -m pytest tests -q
+# simulation polygon: health + a seeded world
+curl -s localhost:8000/api/v1/simulation/health -H "Authorization: Bearer $TOKEN" | jq .
+```
 
 To watch the engine: trigger or wait for the target_engine tick (every 300s); follow
 `docker logs -f morpheus-myrmidon` for `mission_engine` / `swarm:` / `comment posted`, and

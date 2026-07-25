@@ -68,6 +68,8 @@ so any frontend change needs `docker compose build daedalus`.
   scraping sources. `router_scouting.py`, `router_auth_factory.py` (TG login/code),
   `router_factory.py` (clone factory), `router_sandbox.py`, `db_explorer.py`,
   `classifier.py`/`embeddings.py` (LLM classify + embed for knowledge), `genesis_engine.py`.
+  **`router_simulation.py` + `models_simulation.py` + `sim_generator.py` + `sim_landscape.py`
+  — the SIMULATION polygon** (isolated test environment; see `SIMULATION.md`).
   `channel_profiler.py` (LLM strict-JSON per-channel profile + hot themes) +
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
   GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal
@@ -88,7 +90,10 @@ so any frontend change needs `docker compose build daedalus`.
     `CloneFactory`, `AuthFactory` (Stepper login wizard), `LandscapeScreen`, `NewsHubScreen`,
     `KnowledgeScreen`, `ChannelProfilesScreen`, `ScoutingScreen`, `MissionsScreen`, `DeviceGrid`,
     `SandboxConsole`, `DecisionsScreen`, `ActivityScreen`, `DatabaseExplorer`, `Login`, `ChannelManager`
-    (full-screen channel editor opened from Souls/Accounts). Editing a selected item is always a
+    (full-screen channel editor opened from Souls/Accounts), and **`simulation/`** — the polygon's
+    own 3-column workspace (`SimulationScreen` + `ActivityFeed`/`ChannelFeed`/`ThreadView`/`RightPanel`
+    + modals); it deliberately uses modals, not full-screen pages, because it is a Telegram-like
+    workspace, not a CRUD screen. See `SIMULATION.md`. Editing a selected item is always a
     **full-screen page**, never a modal/drawer; cross-links jump account↔soul↔mission↔channel↔decisions
     via a global `goTo(view,id)`. **No per-component CSS** — only `App.css` (theme vars/base); style
     with Mantine props.
@@ -101,7 +106,9 @@ so any frontend change needs `docker compose build daedalus`.
     (ORPHEUS/MYRMIDON/pipelines below).**
 
 ### ORPHEUS (`orpheus/app/`) — cognitive core (NO HTTP for generation)
-- `main.py` — Redis worker, multi-key `BRPOP` on `queue:raw_events` + `queue:mission_gen`.
+- `main.py` — Redis worker, multi-key `BRPOP` on `queue:raw_events` + `queue:mission_gen`
+  + `queue:sim_gen` (the isolated simulation polygon → `simulation.py`, which persists
+  nothing: no MUNINN memory, no recent-output history, no metrics).
   `handle_mission_generation` (mode=comment|reply, lite for beta; `_resolve_dynamic_tactic`
   picks the per-post tactic; anti-repeat via `_recent_outputs`/`_remember_output` +
   `guardrails.is_repeat`), `handle_relevance` (mode=relevance, mission- or profile-aware
@@ -195,12 +202,18 @@ Knowledge: **`knowledge_facts`** (pgvector RAG), `scraping_landscape` (sources),
 Activity: **`agent_activity_logs`** (durable: comment|reply|react), **`decision_events`**
 (durable WHY the swarm did/didn't act: kind relevance|skip|comment, detail = recognized text/
 reason, verdict), `account_audit_logs`, `virtual_devices`.
+Simulation (**isolated polygon, never production**): `sim_worlds`, `sim_channels`, `sim_posts`,
+`sim_post_revisions`, `sim_comments`, `sim_accounts`, `sim_personas`, `sim_missions`,
+`sim_mission_agents`, `sim_knowledge`, `sim_landscape_sources`, `sim_jobs`, `sim_events` —
+own `SimBase`, no FK into production. See **`SIMULATION.md`**.
 
 ## Redis keys
 
 Queues: `queue:raw_events` (HUGINN→ORPHEUS autonomous), `queue:execution_tasks`
 (ORPHEUS/engines→MYRMIDON), `queue:mission_gen` (MYRMIDON↔ORPHEUS request/reply, with
-`reply:missiongen:<id>` and `reply:relevance:<id>`).
+`reply:missiongen:<id>` and `reply:relevance:<id>`), **`queue:sim_gen`** (DAEDALUS↔ORPHEUS,
+SIMULATION polygon only, with `reply:simgen:<id>` — deliberately NOT the mission queue and
+never `queue:execution_tasks`, so a polygon run cannot reach a real channel).
 Telemetry: **`stream:agent_events`** (capped stream the Live Ops feed tails).
 Dialogue: `morpheus:dialogue:watches` (hash), `morpheus:dialogue:handled`.
 Targets: `morpheus:target:lastseen` (hash, also `mission:<id>:<channel>`),

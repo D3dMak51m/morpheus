@@ -5,6 +5,7 @@ import {
 } from '@mantine/core';
 import {
   Shield, Play, Pause, Trash2, Plus, X, Link as LinkIcon, Unlink, History, RotateCcw, Radio,
+  FlaskConical,
 } from 'lucide-react';
 import { DataView, Col } from '../ui/DataView';
 import { DetailPage } from '../ui/DetailPage';
@@ -199,6 +200,10 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
   const [history, setHistory] = useState<any[]>([]);
   const [pickAccount, setPickAccount] = useState(false);
   const [channelMgr, setChannelMgr] = useState(false);
+  // Simulation → production: pick a persona that was tuned on the polygon and
+  // prefill this soul's fields with it (nothing is saved until "Сохранить").
+  const [simPersonas, setSimPersonas] = useState<any[]>([]);
+  const [pickSim, setPickSim] = useState(false);
 
   const comm = p.communication_style as CommunicationStyle;
   const rules = p.behavioral_rules as BehavioralRules;
@@ -210,6 +215,31 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
     if (res.ok) setHistory(await res.json());
   }, [p.agent_id, token]);
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const openSimPicker = async () => {
+    try {
+      const res = await fetch('/api/v1/simulation/personas', { headers });
+      if (res.ok) setSimPersonas((await res.json()).personas || []);
+    } catch { setSimPersonas([]); }
+    setPickSim(true);
+  };
+
+  /** Copy a полигон-tested persona into this (production) soul's form. */
+  const applySimPersona = async (personaId: number) => {
+    const res = await fetch(`/api/v1/simulation/personas/${personaId}/export`, { headers });
+    if (!res.ok) return;
+    const s = await res.json();
+    setP(prev => ({
+      ...prev,
+      codename: s.codename || prev.codename,
+      full_name: s.full_name || prev.full_name,
+      caste: s.caste || prev.caste,
+      profession: s.bio || prev.profession,
+      core_mission: s.core_mission ?? prev.core_mission,
+      communication_style: normalizeComm(s.communication_style),
+      behavioral_rules: normalizeRules({ ...normalizeRules(prev.behavioral_rules), ...(s.behavioral_rules || {}) }),
+    }));
+  };
 
   const boundAccounts = useMemo(() => accounts.filter(a => a.agent_id === p.agent_id), [accounts, p.agent_id]);
   const freeAccounts = useMemo(() => accounts.filter(a => !a.agent_id), [accounts]);
@@ -282,6 +312,9 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
             ? <Button variant="light" color="teal" leftSection={<Play size={15} />} onClick={() => onStatus(p.agent_id, 'active')}>Запустить</Button>
             : <Button variant="light" color="orange" leftSection={<Pause size={15} />} onClick={() => onStatus(p.agent_id, 'suspended')}>Пауза</Button>}
           {isTg && <Button variant="default" leftSection={<Radio size={15} />} onClick={() => setChannelMgr(true)}>Каналы</Button>}
+          <Tooltip label="Подставить личность, отлаженную в Симуляции">
+            <Button variant="default" leftSection={<FlaskConical size={15} />} onClick={openSimPicker}>Из симуляции</Button>
+          </Tooltip>
         </>
       }
       footer={
@@ -441,6 +474,21 @@ function SoulDetail({ token, profile, accounts, onBack, onSaved, onAccountsChang
           { key: 'status', header: 'Статус', minWidth: 120, render: a => <Badge size="sm" color={STATUS_COLOR[a.status] || 'gray'} variant="light">{a.status}</Badge> },
         ]}
         onPick={bindAccount}
+      />
+
+      <EntityPicker
+        opened={pickSim} onClose={() => setPickSim(false)}
+        title="Личность из Симуляции (полигон)"
+        rows={simPersonas} rowKey={(s: any) => s.id}
+        searchText={(s: any) => `${s.codename} ${s.agent_key} ${s.caste} ${(s.interests || []).join(' ')}`}
+        emptyText="В симуляции пока нет агентов."
+        columns={[
+          { key: 'codename', header: 'Позывной', minWidth: 160, render: (s: any) => <Text fw={600}>{s.codename}</Text> },
+          { key: 'caste', header: 'Каста', minWidth: 100, render: (s: any) => <Badge size="sm" color={CASTE_COLOR[s.caste] || 'gray'} variant="light">{s.caste}</Badge> },
+          { key: 'bio', header: 'Кто это', minWidth: 260, render: (s: any) => <Text size="sm" lineClamp={2}>{s.bio || '—'}</Text> },
+          { key: 'interests', header: 'Интересы', minWidth: 200, sortable: false, render: (s: any) => <Group gap={4}>{(s.interests || []).slice(0, 4).map((i: string) => <Badge key={i} size="xs" variant="dot">{i}</Badge>)}</Group> },
+        ]}
+        onPick={(s: any) => applySimPersona(s.id)}
       />
     </DetailPage>
   );
