@@ -167,10 +167,12 @@ Keeps "what's discussed lately" current and cheap:
 
 ## 5. Integration A — relevance (the actual fix)
 
-`handle_relevance` (ORPHEUS) already improved (penalties OFF for classification + a
-better prompt). Channel Profiling adds **context** to it. `target_engine` fetches the
-channel's cached profile (from DAEDALUS, cached locally) and includes it in the
-`_relevance_via_orpheus` request. New prompt shape:
+`handle_relevance` (ORPHEUS) now cleans the post, receives a bounded live discussion and asks
+whether the persona can **naturally join the conversation** from the mission's position
+(`ДА` / `СЛАБО` / `НЕТ`; Stage 38, see `DIAGNOSIS.md`). Channel Profiling supplies
+**context**, not a blanket approval: `target_engine` fetches the cached profile (from
+DAEDALUS, cached locally), and channel affinity can only break ties among weak candidates.
+Prompt context shape:
 
 ```
 Канал: «{title}» — {summary}. Регион: {geo_label}. Тематика канала: {topics}.
@@ -179,12 +181,14 @@ channel's cached profile (from DAEDALUS, cached locally) and includes it in the
 
 Миссия продвигает: {goal}. Позиция: {stance}.
 Сообщение в этом канале: "{post}"
+Что уже пишут в комментариях: {thread}
 
-С учётом тематики канала и того, что в нём сейчас обсуждают, связано ли сообщение
-с темой/проблемой миссии (прямо, косвенно или эмоционально)? ДА или НЕТ.
+Может ли наш человек естественно и по делу вступить в это обсуждение со своей
+позицией? ДА / СЛАБО / НЕТ.
 ```
 
-→ `«опять эти машины»` + "канал обсуждает пробки, город Ташкент" → **ДА**.
+→ `«опять эти машины»` + "канал обсуждает пробки, город Ташкент" может получить
+**ДА**; но канал, где среди тем есть «пробки», не делает релевантной любую новость.
 
 ## 6. Integration B — comment grounding (phase 2)
 

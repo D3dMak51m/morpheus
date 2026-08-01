@@ -7,8 +7,9 @@
 > After reading, **reply to the operator in RUSSIAN** (code, logs, code comments and git commit
 > messages stay in English; the operator console UI is in Russian).
 >
-> **Current phase:** the DAEDALUS **UI redesign is COMPLETE** (Mantine 7, Stages 65–77) — the next
-> focus is the **functional / swarm logic** (ORPHEUS / MYRMIDON / pipelines). See §2.
+> **Current phase:** the DAEDALUS **UI redesign is COMPLETE** (Mantine 7, Stages 65–77). Stage 38
+> completed the first functional reliability pass: relevance, RAG, target health and explicit
+> mission position. The next focus is the remaining swarm throughput and knowledge coverage. See §2.
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
 > HEAD at handoff time = Stage 77. Working tree is clean. Stages are tagged in
@@ -77,10 +78,12 @@ descriptions). The single **~6 GB GPU runs ONE model at a time** (ORPHEUS unload
    `schedule.in_active_hours` (persona's active window, Tashkent UTC+5). Scans the mission's
    `active` channel targets; **media-only posts are now included** and "read" first
    (`read_media_context` → `media_reader`: audio→HEIMDALL STT, image→Ollama VLM **+ Tesseract
-   OCR** for text cards). ORPHEUS judges **relevance IN the channel's profile context**
-   (`penalties=False` — see Constraints). On YES + rate-ok: seeds a comment. ORPHEUS picks a
+   OCR** for text cards), peeks at their discussion threads, and skips targets freshly known as
+   blocked. ORPHEUS judges whether the persona can naturally **join the conversation** in channel
+   context (`ДА` / `СЛАБО` / `НЕТ`, `penalties=False` — see Constraints); the engine ranks all
+   viable posts by verdict, live-thread size and freshness. On a viable post + rate-ok: seeds a comment. ORPHEUS picks a
    **dynamic per-post tactic** (post+thread mood vs stance), weaves persona + RAG + MUNINN
-   memory + thread mood + **media context** + **channel context (+ region news)** + stance,
+   memory + thread mood + **media context** + **channel context (+ region news)** + explicit mission position,
    with anti-echo and **anti-repeat** (against the agent's own recent comments). Posts via
    Pyrogram, registers a dialogue watch. Every relevance verdict and rate-skip is written to
    `decision_events` (`_log_decision`) and emitted to Live Ops (`media_read`/`relevance`/
@@ -98,7 +101,9 @@ RBAC: `admin_users`, `roles`, `role_permissions`, `user_roles`. Identity: `agent
 `active_hours_start`/`_end`), `souls_accounts`, `profile_history`. Channels:
 `agent_channel_prefs`, **`channel_profiles`** (per-channel: geo_layers/geo_label/topics/
 recent_themes/summary). Missions: `missions` (`stance`, `status` active|paused, `agent_mode`,
-`dynamic_count`, `tactic` default `dynamic`), `mission_targets`, `mission_squads`. Knowledge:
+`dynamic_count`, `tactic` default `dynamic`, explicit `our_side` / `opponent` / `key_points` /
+`red_lines`), `mission_targets` (including health `unknown` / `ok` / `blocked` / `degraded`),
+`mission_squads`. Knowledge:
 `knowledge_facts` (pgvector RAG; `landscape_layers` global/regional/state/city, `categories`,
 `tags`). Activity: `agent_activity_logs` (comment|reply|react), **`decision_events`** (durable
 why-did/didn't-react: kind relevance|skip|comment, detail, verdict).
@@ -145,6 +150,19 @@ functional work. The functional code lives in:
 - Channel Profiling is built (see `CHANNEL_PROFILING.md`); relevance is judged in channel context.
 - Conversations (`dialogue_engine`) are multi-turn; quality depends on persona + memory.
 - Mobile/Appium path is **broken & out of scope** (Devices/Sandbox/CloneFactory mobile bits).
+
+### Stage 38 — completed reliability pass
+- **Relevance:** the gate cleans post/media input, ignores OCR schedule dumps, sees a bounded live
+  thread and returns a graded joinability verdict. Keyword recall may lift `НЕТ` only to `СЛАБО`;
+  channel affinity is a tie-breaker, never permission to accept all posts.
+- **RAG:** the query joins the situation with mission goal/stance; vectors fetch candidates but
+  lexical overlap admits facts. Stored HTML is scrubbed on ingest; `/knowledge/facts/cleanup`
+  repairs historical rows and re-embeds them.
+- **Target health:** MYRMIDON probes new targets, reports `unknown` / `ok` / `blocked` /
+  `degraded` to DAEDALUS, and retries a blocked target only after its re-check window. A
+  comment-disabled **post** is not a blocked channel; guest-send errors join then retry.
+- **Mission position:** `our_side`, `opponent`, `key_points`, `red_lines` travel from the mission
+  editor to the prompt so the model need not infer its side. Full evidence: `DIAGNOSIS.md`.
 
 ### How to run / verify (functional)
 - Deploy a change: `docker compose build <svc> && docker compose up -d <svc>`. ORPHEUS/MYRMIDON are

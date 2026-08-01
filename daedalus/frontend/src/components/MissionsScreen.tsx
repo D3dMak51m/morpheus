@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Group, Stack, Title, Text, Badge, Button, Paper, Tabs, TextInput, Textarea, Select,
-  NumberInput, ActionIcon, SimpleGrid,
+  NumberInput, ActionIcon, SimpleGrid, Tooltip, TagsInput,
 } from '@mantine/core';
 import { Target, Plus, Play, Pause, Trash2, Check, X, Trash, Sparkles, UserPlus } from 'lucide-react';
 import { DataView, Col } from '../ui/DataView';
@@ -9,12 +9,36 @@ import { DetailPage } from '../ui/DetailPage';
 import { EntityPicker } from '../ui/EntityPicker';
 
 interface SquadMember { id: number; agent_id: string; assigned_role: string; status: string; codename?: string | null; }
-interface MTarget { id: number; kind: string; identifier: string; title: string | null; status: string; source: string; proposed_by: string | null; reason: string | null; }
+interface MTarget {
+  id: number; kind: string; identifier: string; title: string | null; status: string;
+  source: string; proposed_by: string | null; reason: string | null;
+  // Stage 38 — can the swarm actually comment there (comments enabled, account allowed)?
+  health: string; health_reason: string | null; health_checked_at: string | null;
+}
+
+const HEALTH_LABEL: Record<string, string> = {
+  ok: 'работает', blocked: 'не работает', degraded: 'сбои', unknown: 'не проверено',
+};
+const HEALTH_COLOR: Record<string, string> = {
+  ok: 'teal', blocked: 'red', degraded: 'orange', unknown: 'gray',
+};
+
+/** Target health chip — a mission that never posts is usually a blocked target. */
+function TargetHealthBadge({ health }: { health: string }) {
+  const h = health || 'unknown';
+  return <Badge size="xs" variant={h === 'ok' ? 'light' : 'filled'} color={HEALTH_COLOR[h] || 'gray'}>
+    {HEALTH_LABEL[h] || h}
+  </Badge>;
+}
 interface Mission {
   id: number; title: string; platform: string; narrative_goal: string | null; stance: string | null;
+  our_side: string | null; opponent: string | null; key_points: string[]; red_lines: string[];
   tactic: string; status: string; agent_mode: string; dynamic_count: number; forced_context: string | null;
   squad: SquadMember[]; targets: MTarget[];
-  summary: { status_label: string; agents: Record<string, number>; targets: Record<string, number> };
+  summary: {
+    status_label: string; agents: Record<string, number>; targets: Record<string, number>;
+    target_health?: Record<string, number>;
+  };
 }
 interface EligibleAgent { agent_id: string; codename: string | null; caste: string; status: string; active_mission_load: number; at_capacity: boolean; already_enlisted: boolean; match_score: number; match_reasons: string[]; }
 
@@ -75,9 +99,14 @@ export default function MissionsScreen({ token, selectedId, onOpen, onBack, pref
       render: m => <Badge color={m.status === 'active' ? 'teal' : 'orange'} variant="light">{m.summary.status_label}</Badge> },
     { key: 'agents', header: 'Агенты', minWidth: 90, align: 'right', sortValue: m => m.summary.agents.total || 0,
       render: m => m.summary.agents.total || 0 },
-    { key: 'targets', header: 'Цели', minWidth: 120, align: 'right', sortValue: m => m.summary.targets.active || 0,
+    { key: 'targets', header: 'Цели', minWidth: 170, align: 'right', sortValue: m => m.summary.targets.active || 0,
       render: m => (<Group gap={6} justify="flex-end">{m.summary.targets.active || 0}
-        {(m.summary.targets.suggested || 0) > 0 && <Badge size="xs" color="yellow" variant="light">⏳{m.summary.targets.suggested}</Badge>}</Group>) },
+        {(m.summary.targets.suggested || 0) > 0 && <Badge size="xs" color="yellow" variant="light">⏳{m.summary.targets.suggested}</Badge>}
+        {/* A mission whose targets are all unusable looks "active" but can never post. */}
+        {(m.summary.target_health?.blocked || 0) > 0 && (
+          <Tooltip label="Целей, где комментировать невозможно">
+            <Badge size="xs" color="red">⚠{m.summary.target_health?.blocked}</Badge>
+          </Tooltip>)}</Group>) },
     { key: 'tactic', header: 'Тактика', minWidth: 160, render: m => TACTICS.find(t => t.value === m.tactic)?.label || m.tactic },
   ];
 
@@ -158,6 +187,10 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
   const [title, setTitle] = useState(m.title);
   const [goal, setGoal] = useState(m.narrative_goal || '');
   const [stance, setStance] = useState(m.stance || '');
+  const [ourSide, setOurSide] = useState(m.our_side || '');
+  const [opponent, setOpponent] = useState(m.opponent || '');
+  const [keyPoints, setKeyPoints] = useState<string[]>(m.key_points || []);
+  const [redLines, setRedLines] = useState<string[]>(m.red_lines || []);
   const [tactic, setTactic] = useState(m.tactic);
   const [newTarget, setNewTarget] = useState('');
   const [eligible, setEligible] = useState<EligibleAgent[]>([]);
@@ -168,7 +201,8 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
 
   const save = async () => {
     setSaving(true);
-    const r = await fetch(`/api/v1/missions/${m.id}`, { method: 'PUT', headers, body: JSON.stringify({ title, narrative_goal: goal, stance, tactic }) });
+    const r = await fetch(`/api/v1/missions/${m.id}`, { method: 'PUT', headers, body: JSON.stringify({ title, narrative_goal: goal, stance, tactic,
+        our_side: ourSide, opponent, key_points: keyPoints, red_lines: redLines }) });
     if (r.ok) apply(await r.json());
     setSaving(false);
   };
@@ -237,6 +271,17 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
             <TextInput label="Название" value={title} onChange={e => setTitle(e.currentTarget.value)} />
             <Textarea label="Цель" autosize minRows={2} value={goal} onChange={e => setGoal(e.currentTarget.value)} />
             <Textarea label="«Правда» / сторона" autosize minRows={3} value={stance} onChange={e => setStance(e.currentTarget.value)} />
+            {/* Явная позиция: без неё модель угадывает, за кого она, и путает стороны. */}
+            <Group grow align="flex-start">
+              <TextInput label="Мы за" value={ourSide} onChange={e => setOurSide(e.currentTarget.value)}
+                placeholder="напр. сборная Аргентины" description="кого/что защищаем" />
+              <TextInput label="Оппонент" value={opponent} onChange={e => setOpponent(e.currentTarget.value)}
+                placeholder="напр. критики Месси" description="с чьей позицией спорим" />
+            </Group>
+            <TagsInput label="Доводы (тезисы)" value={keyPoints} onChange={setKeyPoints}
+              description="3–5 коротких аргументов; агент возьмёт уместный" placeholder="Enter, чтобы добавить" />
+            <TagsInput label="Красные линии" value={redLines} onChange={setRedLines}
+              description="что агент НИКОГДА не должен говорить" placeholder="Enter, чтобы добавить" />
             <Select label="Тактика по умолчанию" data={TACTICS} value={tactic} onChange={v => v && setTactic(v)} w={320} />
             <Group>
               <Button loading={saving} onClick={save}>Сохранить</Button>
@@ -257,9 +302,18 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
                 <Paper key={t.id} withBorder p="sm" radius="md">
                   <Group justify="space-between" wrap="nowrap">
                     <Box style={{ minWidth: 0 }}>
-                      <Text fw={600} size="sm">{t.kind === 'post' ? '📄' : '📢'} {t.title || t.identifier}</Text>
+                      <Group gap={6}>
+                        <Text fw={600} size="sm">{t.kind === 'post' ? '📄' : '📢'} {t.title || t.identifier}</Text>
+                        {t.status === 'active' && <TargetHealthBadge health={t.health} />}
+                      </Group>
                       <Text size="xs" c="dimmed">{t.identifier} · {t.source === 'agent' ? `предложил ${t.proposed_by || 'агент'}` : 'оператор'}{t.status === 'rejected' ? ' · отклонено' : ''}</Text>
                       {t.reason && <Text size="xs" c="dimmed">{t.reason}</Text>}
+                      {t.health === 'blocked' && t.health_reason && (
+                        <Text size="xs" c="red">⚠ {t.health_reason}{t.health_checked_at ? ` · проверено ${new Date(t.health_checked_at).toLocaleString('ru-RU')}` : ''}</Text>
+                      )}
+                      {t.health === 'degraded' && t.health_reason && (
+                        <Text size="xs" c="orange">{t.health_reason}</Text>
+                      )}
                     </Box>
                     <Group gap={6} wrap="nowrap">
                       {t.status === 'suggested' && <>

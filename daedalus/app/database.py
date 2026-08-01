@@ -101,6 +101,15 @@ def init_tables() -> None:
         ("missions", "stance", "TEXT"),
         ("missions", "agent_mode", "VARCHAR(20) NOT NULL DEFAULT 'manual'"),
         ("missions", "dynamic_count", "INTEGER NOT NULL DEFAULT 3"),
+        # Stage 38 — target health (can we actually comment there at all?).
+        ("mission_targets", "health", "VARCHAR(20) NOT NULL DEFAULT 'unknown'"),
+        ("mission_targets", "health_reason", "TEXT"),
+        ("mission_targets", "health_checked_at", "TIMESTAMPTZ"),
+        # Stage 38 — mission as an explicit position (side / opponent / arguments).
+        ("missions", "our_side", "TEXT"),
+        ("missions", "opponent", "TEXT"),
+        ("missions", "key_points", "JSONB DEFAULT '[]'::jsonb"),
+        ("missions", "red_lines", "JSONB DEFAULT '[]'::jsonb"),
     ]
     try:
         with engine.begin() as conn:

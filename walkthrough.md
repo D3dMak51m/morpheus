@@ -24,6 +24,40 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
 - **NEW — Stage 37: the SIMULATION polygon** (isolated test environment) is live at
   `#/simulation`; production is provably untouched by it. See the stage entry below and
   **`SIMULATION.md`**.
+- **NEW — Stage 38: why the swarm was silent** — diagnosed on live data and fixed
+  (relevance gate, RAG, target health, mission-as-position). Full evidence and before/after
+  numbers in **`DIAGNOSIS.md`**.
+
+### Stage 38 — relevance / RAG / target-health / mission-position (diagnosed + fixed)
+
+Operator report: bots almost never find relevant posts, don't read the discussion, RAG has no
+visible effect, they misread the mission and pick the wrong side, no sign of any tactic.
+Everything below was measured on the live stand before touching code (see `DIAGNOSIS.md`).
+
+**What was actually wrong (all reproduced):**
+1. The gate's LLM answered «нет» in **50/50** live calls; every positive verdict came from the
+   crude keyword override, so the choice of post was effectively random.
+2. Every publication that did pass failed: `403 CHAT_GUEST_SEND_FORBIDDEN` is a *generic*
+   RPCError in Pyrogram, so the join-and-retry branch never fired (3/3 attempts on `@Match_TV`).
+3. RAG injected pure noise with high confidence (traffic-jam query → «Град уничтожил бойцов ВСУ»
+   at 0.74 vs a relevant fact at 0.85; the floor was 0.5 — everything passed). 220/354 facts
+   carried raw HTML. The query used only the post, never the mission.
+4. The gate never saw the thread; the engine seeded on the newest post, which has no comments —
+   so the "dynamic tactic" classified emptiness.
+5. Mission 14's goal and stance contradicted each other → the bot argued against its own goal.
+
+**Fixes (each verified):** target health with post-level vs target-level scopes + proactive
+`check_comment_capability` + engine skip; the CHAT_GUEST fix; a reframed graded gate («можем ли
+вступить» ДА/СЛАБО/НЕТ) over cleaned input (`orpheus/app/textutil.py`, OCR schedule dumps
+dropped); lexical admission for RAG + mission-aware query + HTML scrub with a re-embedding
+backfill (278 facts); thread read *before* the verdict and best-candidate ranking; explicit
+mission position (`our_side`/`opponent`/`key_points`/`red_lines`) in schema, API, prompt and UI.
+
+**Measured:** gate 6/14 → **11/14** accepted, and by the model's own judgement instead of 0;
+verdicts stable 3/3 per case; RAG returns topical facts on all five probe queries (was: war,
+allergies, unemployment); 0/369 facts still contain markup.
+New tests: orpheus 42, myrmidon 17 (+ two live benches: `orpheus/tests/bench_relevance.py`,
+`bench_rag.py`).
 
 Everything below (Stages 23–35) was verified live on real data.
 
@@ -481,14 +515,13 @@ classes (`.tabs`/`.status-badge`/`.data-grid`, used by ChannelManager) into a sh
 `SoulsContext.css`/`AccountsManager.css`/`LandscapeManager.css` no longer need to be imported in
 `App.tsx`.
 
-**Stage 37 (this batch): the SIMULATION polygon is built, deployed and verified** — see the stage
-entry above and `SIMULATION.md`. New files: `daedalus/app/{models_simulation,router_simulation,
-sim_generator,sim_landscape}.py`, `orpheus/app/simulation.py`,
-`daedalus/frontend/src/components/simulation/*`, `daedalus/tests/`, `orpheus/tests/`,
-`{daedalus,orpheus}/requirements-dev.txt` (pytest is now in both images, tests copied in).
-Touched production files, minimally: `database.py` (create the sim metadata), `main.py` (mount the
-router / BRPOP the sim queue), `rbac.py` (two atoms), `App.tsx` (one nav view), `SoulsScreen.tsx`
-(«Из симуляции» prefill picker), both Dockerfiles.
+**Stage 38 (current batch): the live swarm reliability pass is implemented and verified** — see the
+entry above and `DIAGNOSIS.md`. The stage changes the full production path: DAEDALUS stores explicit
+mission position and target health; ORPHEUS cleans input, judges joinability on a graded scale and
+retrieves mission-aware lexical RAG; MYRMIDON probes targets, reads threads before judging, chooses
+the best candidate and repairs guest-send publication failures. New code includes
+`orpheus/app/textutil.py`, `myrmidon/app/target_health.py` and offline suites for both services;
+the Mission editor shows position and target-health state.
 
 Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
 a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
@@ -500,20 +533,15 @@ testing (raw SQL) — harmless, adjust in the editor if desired.
 
 ## Next steps (planned, agreed)
 
-0. **Channel Profiling** (DESIGNED, not built — see **`CHANNEL_PROFILING.md`**). Per-channel
-   independent profile (topics / geo / "hot themes now"), linked to the geo-layered news
-   base (`knowledge_facts` already has global→regional→state→city layers), fed into the
-   relevance gate + comment grounding. This is what makes the gate judge a post **in the
-   channel's context** (e.g. `«опять эти машины»` on a Tashkent traffic-heavy channel →
-   relevant) instead of in a vacuum. Agreed update cadence = **hybrid** (heavy profile
-   daily, hot themes every few hours). Phase 1 MVP = table + profiler + relevance.
-1. **Agent target suggestions** — DONE (target_engine `_suggest_targets_for_mission` +
-   DAEDALUS `/missions/internal/suggest-target`). Uncommitted.
-2. Backlog/ideas: **active_hours** enforcement (bots act only in the persona's live hours —
-   the only remaining "realism" gap; swarm currently runs 24/7); dynamic auto-assign for
-   `agent_mode='dynamic'` at runtime; mission-scoped news; bigger `TEXT_MODEL_NAME` for
-   sharper comments/relevance if VRAM allows (the small model occasionally leaks Chinese
-   tokens / misjudges mood — the tactic mechanism is model-agnostic).
+0. **Throughput decision (operator).** Current limits remain deliberately unchanged: one
+   comment/channel/hour, four/agent/hour, a 300-second cycle and new posts only. Stage 38 makes
+   this the dominant remaining limiter; increasing it is an operator policy decision.
+1. **Mission content (operator).** Fill `our_side`, `opponent`, `key_points` and `red_lines` for
+   the contradictory existing missions (13/14/16). The system can now carry an explicit position,
+   but must not invent the operator's message.
+2. **Knowledge coverage/model.** Add mission-scoped news collection where the current news corpus
+   lacks the mission domain (notably sports), then use the Simulation polygon to compare a 7–8B
+   Q4 text model if the operator approves the download and VRAM trade-off.
 
 ---
 

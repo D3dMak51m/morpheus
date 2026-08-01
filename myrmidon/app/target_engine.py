@@ -37,6 +37,7 @@ import redis
 from sqlalchemy import text
 
 from app import dialogue_store
+from app import target_health
 from app.telemetry import emit as emit_event
 
 logger = logging.getLogger("myrmidon.target_engine")
@@ -52,6 +53,9 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key
 NEWS_MAX_PER_CYCLE = int(os.getenv("TARGET_NEWS_MAX_PER_CYCLE", "20"))
 # How many of the newest new posts per mission channel to LLM-relevance-check.
 MISSION_RELEVANCE_CHECK = int(os.getenv("MISSION_RELEVANCE_CHECK", "3"))
+# Stage 38 — how many existing comments to peek at per candidate post, so the gate
+# judges the CONVERSATION and the engine can prefer a post with a live discussion.
+THREAD_PEEK_LIMIT = int(os.getenv("MISSION_THREAD_PEEK_LIMIT", "8"))
 
 # Agent-proposed targets: how many fresh candidate channels per mission to scan per
 # cycle, how many recent posts to relevance-check, and how long to wait before
@@ -69,6 +73,10 @@ THEMES_SAMPLE = int(os.getenv("CHANNEL_THEMES_SAMPLE", "18"))
 PROFILE_MAX_PER_CYCLE = int(os.getenv("CHANNEL_PROFILE_MAX_PER_CYCLE", "3"))
 PROFILE_HEAVY_PREFIX = "morpheus:profile:heavy:"     # <platform>:<ref> -> staleness gate
 PROFILE_THEMES_PREFIX = "morpheus:profile:themes:"
+
+# Stage 38 — how many never-checked targets to probe per cycle (one cheap get_chat
+# each) so a channel with comments disabled is flagged before it wastes a mission.
+TARGET_HEALTH_CHECKS_PER_CYCLE = int(os.getenv("TARGET_HEALTH_CHECKS_PER_CYCLE", "3"))
 
 TARGET_POLL_INTERVAL_SEC = int(os.getenv("TARGET_POLL_INTERVAL_SEC", "300"))
 MAX_PER_CHANNEL_PER_HOUR = int(os.getenv("TARGET_MAX_PER_CHANNEL_PER_HOUR", "1"))
@@ -105,18 +113,23 @@ def _get_gen_redis() -> redis.Redis:
 
 
 def _relevance_via_orpheus(agent_id: str, post_text: str, goal: str = "", stance: str = "",
-                           channel_profile: Optional[dict] = None) -> Optional[bool]:
+                           channel_profile: Optional[dict] = None,
+                           thread_context: str = "",
+                           media_context: str = "") -> Optional[dict]:
     """
-    Ask ORPHEUS for a cheap LLM verdict on whether this post is worth commenting on.
-    If a mission goal/stance is given, relevance is judged against the MISSION (and, when
-    provided, IN the channel's profile context); otherwise against the agent's own
-    profile. None on timeout → keyword fallback.
+    Ask ORPHEUS whether our agent can join this discussion.
+
+    Judged against the MISSION (goal + stance) in the channel's profile context AND in
+    the context of what people are already writing under the post. Returns
+    ``{relevant, verdict: yes|weak|no, reason}``; ``None`` on timeout so the caller can
+    decide what to do without an LLM.
     """
     rid = uuid.uuid4().hex
     rk = f"reply:relevance:{rid}"
     req = {"request_id": rid, "reply_key": rk, "mode": "relevance",
            "agent_id": agent_id, "post_text": post_text, "goal": goal, "stance": stance,
-           "channel_profile": channel_profile}
+           "channel_profile": channel_profile, "thread_context": thread_context,
+           "media_context": media_context}
     try:
         c = _get_gen_redis()
         c.lpush(MISSION_GEN_QUEUE, json.dumps(req, ensure_ascii=False))
@@ -124,7 +137,7 @@ def _relevance_via_orpheus(agent_id: str, post_text: str, goal: str = "", stance
         if not res:
             return None
         data = json.loads(res[1])
-        return bool(data.get("relevant")) if data.get("status") == "ok" else None
+        return data if data.get("status") == "ok" else None
     except Exception as exc:
         logger.warning("target_engine: relevance round-trip failed: %s", exc)
         return None
@@ -186,16 +199,34 @@ def _active_missions(sf) -> list[dict]:
     session = sf()
     try:
         mrows = session.execute(text(
-            "SELECT id, title, narrative_goal, stance, tactic FROM missions WHERE status='active'"
+            "SELECT id, title, narrative_goal, stance, tactic, our_side, opponent, "
+            "       key_points, red_lines "
+            "FROM missions WHERE status='active'"
         )).fetchall()
         if not mrows:
             return []
         out = []
-        for mid, title, goal, stance, tactic in mrows:
+        for (mid, title, goal, stance, tactic, our_side, opponent,
+             key_points, red_lines) in mrows:
+            # Stage 38 — a target that cannot be commented on (comments disabled, the
+            # account may not write there, unresolvable ref) is skipped while its
+            # 'blocked' verdict is fresh, instead of eating the scan budget every tick.
             tgts = session.execute(text(
-                "SELECT identifier, title FROM mission_targets "
+                "SELECT identifier, title, health, "
+                "  EXTRACT(EPOCH FROM health_checked_at) AS checked_epoch "
+                "FROM mission_targets "
                 "WHERE mission_id=:m AND status='active' AND kind='channel'"
             ), {"m": mid}).fetchall()
+            usable, unchecked = [], []
+            for ident, ttl, health, checked in tgts:
+                if target_health.should_skip(health or "unknown",
+                                             float(checked) if checked else None):
+                    logger.info("target_engine: mission %s — skipping blocked target %s.", mid, ident)
+                    continue
+                if (health or "unknown") == "unknown":
+                    unchecked.append(ident)
+                usable.append((ident, ttl))
+            tgts = usable
             squad = session.execute(text(
                 "SELECT s.agent_id, s.assigned_role FROM mission_squads s "
                 "JOIN agent_profiles a ON a.agent_id = s.agent_id "
@@ -206,8 +237,14 @@ def _active_missions(sf) -> list[dict]:
             out.append({
                 "id": mid, "title": title, "goal": goal or title, "stance": stance or "",
                 "tactic": tactic or "dynamic",
+                # Stage 38 — the mission as an explicit position, so the bot knows
+                # WHOSE side it is on instead of inferring it from prose.
+                "our_side": our_side or "", "opponent": opponent or "",
+                "key_points": list(key_points or []), "red_lines": list(red_lines or []),
                 "channels": [{"identifier": i, "title": t} for i, t in tgts],
                 "agents": [{"agent_id": a, "role": r} for a, r in squad],
+                # Targets never health-checked yet — probed once per cycle (cheap read).
+                "unchecked": unchecked[:TARGET_HEALTH_CHECKS_PER_CYCLE],
             })
         return out
     except Exception as exc:
@@ -288,7 +325,8 @@ def _post_url(username: Optional[str], chat_id: str, post_id: int) -> str:
 
 def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
                      stance: str, tactic: str, mission_id: int, channel_label: str,
-                     media_context: str = "", channel_profile: Optional[dict] = None) -> None:
+                     media_context: str = "", channel_profile: Optional[dict] = None,
+                     thread_context: str = "", position: Optional[dict] = None) -> None:
     task = {
         "task_id": str(uuid.uuid4()),
         "agent_id": agent_id,
@@ -307,6 +345,11 @@ def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
         # Media already "read" at scan time (caption-less photo/voice posts) — passed
         # through so the comment path doesn't re-analyze it.
         "media_context": media_context or "",
+        # The discussion as it looked when we CHOSE this post (the driver re-reads it
+        # fresh at posting time; this is the fallback if that read fails).
+        "thread_context": thread_context or "",
+        # Explicit position: our side / opponent / arguments / red lines.
+        "position": position or {},
         "execution_delay_sec": EXEC_DELAY_SEC,
         "source": "mission_engine",
         "swarm_seed": True,   # alpha seed → mission's beta/gamma amplify after it posts
@@ -369,7 +412,33 @@ def _process_mission(mission: dict, sf) -> None:
                status="info", target="telegram")
 
     driver = TelegramDriver(seeder, creds)
-    results = driver.fetch_new_posts(fetch_list, since_map, POSTS_PER_CHANNEL)
+
+    # Stage 38 — probe never-checked targets first: a channel with comments disabled
+    # (or one this account may not write in) is flagged now instead of after a failed
+    # publication, and the operator sees WHY the mission is quiet.
+    blocked_now: set[str] = set()
+    for ident in (mission.get("unchecked") or []):
+        try:
+            resolved = _resolvable_ident(ident)
+            health, reason = driver.check_comment_capability(resolved)
+            target_health.report(ident, health, reason, mid)
+            if health == "blocked":
+                blocked_now.add(resolved)
+                emit_event(seeder, "target_blocked", f"цель {ident}: {reason}",
+                           status="warn", target=ident)
+                _log_decision("skip", seeder, mid, ident, "",
+                              detail=f"цель непригодна: {reason}", verdict=False)
+        except Exception as exc:
+            logger.warning("target_engine: health check of %s failed: %s", ident, exc)
+    if blocked_now:
+        fetch_list = [f for f in fetch_list if f["chat_id"] not in blocked_now]
+        if not fetch_list:
+            logger.info("target_engine: mission %s — all targets blocked, nothing to scan.", mid)
+            return
+
+    results = driver.fetch_new_posts(
+        fetch_list, since_map, POSTS_PER_CHANNEL,
+        threads_for=MISSION_RELEVANCE_CHECK, thread_limit=THREAD_PEEK_LIMIT)
 
     for res in results:
         ident = res["chat_id"]
@@ -382,6 +451,8 @@ def _process_mission(mission: dict, sf) -> None:
                        status="warn", target=ident)
             _log_decision("skip", seeder, mid, ident, "",
                           detail=f"канал не резолвится: {str(res['error'])[:200]}", verdict=False)
+            # Unresolvable ref is a target-health problem, not a per-post one.
+            target_health.report_failure(ident, str(res["error"]), mid)
             continue
         if res["newest"]:
             r.hset(LASTSEEN_KEY, key, res["newest"])
@@ -399,8 +470,11 @@ def _process_mission(mission: dict, sf) -> None:
                 channel_profile = {**channel_profile, "news_digest": digest}
         # Check the few newest new posts (not just the latest) for one relevant to
         # the mission — bounded so the LLM relevance load stays small.
-        chosen = None
-        chosen_media = ""
+        # Stage 38 — judge ALL candidates, then take the BEST one, instead of grabbing
+        # the first that scraped a "yes". A graded verdict (yes > weak) plus the size of
+        # the live discussion decides: a post people are already arguing under is a far
+        # better opening than a silent fresh one.
+        scored: list[tuple] = []
         for cand in posts[:MISSION_RELEVANCE_CHECK]:
             ctext = (cand.get("text") or "").strip()
             media_ctx = ""
@@ -413,25 +487,36 @@ def _process_mission(mission: dict, sf) -> None:
             judge_text = (ctext + ("\n" + media_ctx if media_ctx else "")).strip()
             if not judge_text:
                 continue  # unreadable media / download failed — nothing to judge on
-            v = _relevance_via_orpheus(seeder, judge_text, goal=mission["goal"],
-                                       stance=mission["stance"], channel_profile=channel_profile)
-            if v is None:
-                v = True  # mission target channel → engage if LLM unavailable
-            # Surface the per-post relevance decision so the operator sees WHY the bot
-            # did/didn't engage (not just silence).
+            thread = cand.get("thread") or ""
+            verdict = _relevance_via_orpheus(
+                seeder, judge_text, goal=mission["goal"], stance=mission["stance"],
+                channel_profile=channel_profile, thread_context=thread,
+                media_context=media_ctx)
+            if verdict is None:
+                # LLM unavailable — a mission target channel is operator-chosen, so
+                # engage rather than stall, but at the lowest rank.
+                verdict = {"relevant": True, "verdict": "weak", "reason": "LLM недоступен"}
+            rel = bool(verdict.get("relevant"))
+            grade = verdict.get("verdict") or ("yes" if rel else "no")
+
             cand_url = _mission_post_url(ident, cand["post_id"])
+            comments = int(cand.get("comment_count") or 0)
             emit_event(seeder, "relevance",
-                       f"«{mtitle}» " + ("по теме: " if v else "не по теме: ")
-                       + judge_text.replace("\n", " ")[:70],
-                       status="ok" if v else "info", target=cand_url)
+                       f"«{mtitle}» [{grade}{f', {comments} комм.' if comments else ''}] "
+                       + judge_text.replace("\n", " ")[:64],
+                       status="ok" if rel else "info", target=cand_url)
             _log_decision("relevance", seeder, mid, ident, cand_url,
-                          detail=judge_text.replace("\n", " ")[:600], verdict=bool(v))
-            if v:
-                chosen = cand
-                chosen_media = media_ctx
-                break
-        if not chosen:
+                          detail=f"[{grade}] {verdict.get('reason','')} · "
+                                 + judge_text.replace("\n", " ")[:520],
+                          verdict=rel)
+            if rel:
+                rank = 2 if grade == "yes" else 1
+                scored.append((rank, comments, cand["post_id"], cand, media_ctx, thread))
+
+        if not scored:
             continue
+        scored.sort(reverse=True)
+        _, _, _, chosen, chosen_media, chosen_thread = scored[0]
         if not _allow_rate(f"mission_{mid}", ident):
             # Relevant, but the anti-spam hourly cap is spent — say so (else it looks
             # like the bot ignored a clearly on-topic post).
@@ -446,7 +531,11 @@ def _process_mission(mission: dict, sf) -> None:
         _enqueue_comment(seeder, _mission_post_url(ident, chosen["post_id"]), chosen["text"],
                          mission["goal"], mission["stance"], mission["tactic"], mid,
                          label_by_id.get(ident, ident), media_context=chosen_media,
-                         channel_profile=channel_profile)
+                         channel_profile=channel_profile, thread_context=chosen_thread,
+                         position={"our_side": mission.get("our_side", ""),
+                                   "opponent": mission.get("opponent", ""),
+                                   "key_points": mission.get("key_points") or [],
+                                   "red_lines": mission.get("red_lines") or []})
 
 
 def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:
@@ -644,10 +733,12 @@ def _suggest_targets_for_mission(mission: dict, sf) -> None:
             posts = sorted(res["posts"], key=lambda p: p["post_id"], reverse=True)
             hit = None
             for cand in posts[:SUGGEST_RELEVANCE_CHECK]:
-                # Conservative: only propose on a positive verdict (None/False → skip),
-                # since this channel is NOT yet a mission target.
-                if _relevance_via_orpheus(agent_id, cand["text"], goal=mission["goal"],
-                                          stance=mission["stance"]):
+                # Conservative: only propose on a STRONG verdict, since this channel is
+                # NOT yet a mission target — a "weak" opening is not worth the operator's
+                # approval queue.
+                v = _relevance_via_orpheus(agent_id, cand["text"], goal=mission["goal"],
+                                           stance=mission["stance"])
+                if v and v.get("verdict") == "yes":
                     hit = cand
                     break
             if not hit:

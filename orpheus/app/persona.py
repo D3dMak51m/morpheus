@@ -357,8 +357,14 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
 
         # Ground retrieval + memory on the most relevant text we have.
         subscriptions = profile.get("context_subscriptions") or ["global"]
-        rag_query = "\n".join(t for t in (incoming_text, post_text, narrative_goal) if t).strip()
-        fresh_context = fetch_fresh_context(rag_query, subscriptions, forced_context)
+        # Retrieval is grounded on the concrete situation AND on the mission's own
+        # words — searching by the post alone never surfaced anything about the
+        # mission's actual subject (Stage 38).
+        rag_query = "\n".join(t for t in (incoming_text, post_text) if t).strip()
+        fresh_context = fetch_fresh_context(
+            rag_query, subscriptions, forced_context,
+            mission_goal=narrative_goal, mission_stance=mission_stance,
+        )
         memory_context = self.fetch_memory(agent_id, opponent_key, incoming_text or post_text or narrative_goal)
 
         identity = profile.get("identity", {})
@@ -467,6 +473,27 @@ Your role: {role_line}
 Tactic: {tactic_line}
 Objective to advance: {narrative_goal or core_mission}
 """
+        # Stage 38 — the mission as an explicit POSITION. Free-text goal+stance made
+        # the model guess whose side it was on (and a contradiction between them
+        # produced comments arguing against the mission's own goal). Spelling out the
+        # side, the opponent, the arguments and the red lines removes the guesswork.
+        position = req.get("position") or {}
+        our_side = (position.get("our_side") or "").strip()
+        opponent = (position.get("opponent") or "").strip()
+        key_points = [p for p in (position.get("key_points") or []) if str(p).strip()][:5]
+        red_lines = [p for p in (position.get("red_lines") or []) if str(p).strip()][:5]
+        if our_side or opponent or key_points or red_lines:
+            prompt += "\n[Твоя сторона в этом споре]\n"
+            if our_side:
+                prompt += f"Ты за: {our_side}\n"
+            if opponent:
+                prompt += f"Противоположная сторона: {opponent}. Ты с ней НЕ согласен.\n"
+            if key_points:
+                prompt += "Твои доводы (используй ОДИН, тот что уместен здесь):\n"
+                prompt += "".join(f"- {p}\n" for p in key_points)
+            if red_lines:
+                prompt += "Никогда не говори следующее:\n"
+                prompt += "".join(f"- {p}\n" for p in red_lines)
         if mission_stance:
             prompt += (
                 f"Mission stance (the side/'truth' you argue from — make your comment "

@@ -23,8 +23,9 @@ A single operator runs everything from the **DAEDALUS** web console.
   them, carrying a thread for several turns.
 - **Caste hierarchy** — **alpha** (smartest, full pipeline) seeds; **beta** (cheap, "lite")
   reinforces; **gamma** (cheapest) just reacts with emoji. No bot acts identically.
-- **Missions as permanent goals** — a mission has its own *stance/"truth"*, many target
-  channels, and a roster. Its alpha seeds on relevant new posts, choosing a **tactic per
+- **Missions as permanent goals** — a mission has its own explicit position (*our side*,
+  opponent, arguments and red lines), many target channels, and a roster. Its alpha seeds on
+  relevant discussions, choosing a **tactic per
   post** (amplify / soft-support / displace / cunning sentiment-shift) from the thread's mood
   versus the stance; its beta/gamma amplify. Missions never "complete" — only **active** or
   **paused**.
@@ -33,8 +34,9 @@ A single operator runs everything from the **DAEDALUS** web console.
 - **Live observability** — a real-time **Live Ops** feed of every action, an interactive
   **swarm dashboard**, and a knowledge explorer.
 - **Safety & realism** — Telegram FloodWait/ban handling, per-account cooldowns,
-  per-channel/agent rate limits, **active-hours** (bots post only in the persona's live
-  hours, not 24/7), and one-click pause for any agent or mission.
+  per-channel/agent rate limits, proactive **target health** (uncommentable channels are
+  surfaced and skipped), **active-hours** (bots post only in the persona's live hours, not
+  24/7), and one-click pause for any agent or mission.
 - **Simulation polygon** — a Telegram-like **isolated** test environment for personas,
   missions, RAG, system prompts, comments/reactions and mass generation. Own `sim_*` tables,
   own Redis queue, no production writes and no rate limits — tune an agent there, then apply
@@ -164,6 +166,15 @@ channel's topic/geo/hot-theme context, not in a vacuum), **relevance/tactic hard
 canonicalised so a `t.me/…` URL is never a silent dead target; tactic heat = real insults not
 just `!`; channel context grounds tone not topic; garbage-hashtag sanitiser), reliability,
 full operator console. See `walkthrough.md` for the staged log.
+
+**Stage 38 — relevance/RAG/publishing reliability — ✅**: the gate now judges whether a
+persona can naturally join a post's **live discussion** (`ДА` / `СЛАБО` / `НЕТ`) after input
+hygiene, selects the strongest candidate instead of the newest post, and uses an explicit
+mission position. RAG retrieves a wider candidate set but admits facts by lexical overlap,
+avoiding confident irrelevant context; stored HTML is scrubbed and backfillable. Targets are
+health-checked, comment-disabled posts do not blacklist their channel, and
+`CHAT_GUEST_SEND_FORBIDDEN` joins the discussion group then retries. Evidence and measurements:
+`DIAGNOSIS.md`.
 
 > **Operator note:** write a mission's **`stance` as a short argued claim**, not a tag list —
 > the bot can only argue a position it can read as one (a `-ism` salad yields muddled rebuttals).

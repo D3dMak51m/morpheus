@@ -380,6 +380,21 @@ class Mission(Base):
     agent_mode: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
     dynamic_count: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
 
+    # Stage 38 — a mission as a POSITION, not two free-text fields.
+    #
+    # With only `narrative_goal` + `stance` the model had to infer which side it was
+    # on, and a contradiction between them ("Аргентина должна была выиграть" vs
+    # "Аргентина проиграла из-за тренера") produced comments that argued against the
+    # mission's own goal. These fields state it explicitly:
+    #   our_side     — кто «мы» (за кого/что выступаем)
+    #   opponent     — чья позиция нам противостоит
+    #   key_points   — 3-5 тезисов, которыми аргументируем (JSONB array of strings)
+    #   red_lines    — чего никогда не говорим (JSONB array of strings)
+    our_side: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    opponent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    key_points: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    red_lines: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+
     alpha_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     forced_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -427,6 +442,18 @@ class MissionTarget(Base):
     source: Mapped[str] = mapped_column(String(20), default="operator", nullable=False)
     proposed_by: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Stage 38 — target HEALTH. A target can be perfectly "active" and still be
+    # impossible to comment on (comments disabled, no linked discussion group, the
+    # account isn't allowed to write there, channel unresolvable). Without this the
+    # engine burns cycles on it every tick and the operator only sees silence.
+    #   unknown  — not checked yet
+    #   ok       — a comment was posted / the discussion group is writable
+    #   blocked  — permanently unusable (reason below); engine skips until re-check
+    #   degraded — transient trouble (flood/cooldown); engine keeps trying
+    health: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    health_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    health_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

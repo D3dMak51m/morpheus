@@ -11,6 +11,7 @@ operator to approve/reject. Per-post tactic is chosen dynamically at runtime.
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -93,6 +94,11 @@ class MissionCreateRequest(BaseModel):
     tactic: str = Field("dynamic", description="dynamic | soft_support | aggressive_displacement")
     forced_context: Optional[str] = None
     agent_mode: str = Field("manual", description="manual | dynamic")
+    # Stage 38 — the mission as an explicit position (see Mission.our_side).
+    our_side: Optional[str] = None
+    opponent: Optional[str] = None
+    key_points: list[str] = Field(default_factory=list)
+    red_lines: list[str] = Field(default_factory=list)
     dynamic_count: int = Field(3, ge=0, le=50)
     squad: list[SquadMemberRequest] = Field(default_factory=list)
     targets: list[TargetRequest] = Field(default_factory=list)
@@ -106,6 +112,10 @@ class MissionUpdateRequest(BaseModel):
     forced_context: Optional[str] = None
     agent_mode: Optional[str] = None
     dynamic_count: Optional[int] = None
+    our_side: Optional[str] = None
+    opponent: Optional[str] = None
+    key_points: Optional[list[str]] = None
+    red_lines: Optional[list[str]] = None
 
 
 class StatusRequest(BaseModel):
@@ -133,6 +143,10 @@ class TargetResponse(BaseModel):
     proposed_by: Optional[str]
     reason: Optional[str]
     created_at: Any
+    # Stage 38 — can the swarm actually comment there? (see MissionTarget.health)
+    health: str = "unknown"
+    health_reason: Optional[str] = None
+    health_checked_at: Any = None
 
     class Config:
         from_attributes = True
@@ -149,6 +163,10 @@ class MissionResponse(BaseModel):
     agent_mode: str
     dynamic_count: int
     forced_context: Optional[str]
+    our_side: Optional[str] = None
+    opponent: Optional[str] = None
+    key_points: list[str] = Field(default_factory=list)
+    red_lines: list[str] = Field(default_factory=list)
     created_at: Any
     squad: list[SquadMemberResponse]
     targets: list[TargetResponse]
@@ -170,12 +188,17 @@ def _summary(mission: Mission) -> dict[str, Any]:
     for s in mission.squad:
         roles[s.assigned_role] = roles.get(s.assigned_role, 0) + 1
     tstat = {"active": 0, "suggested": 0, "rejected": 0}
+    health = {"ok": 0, "blocked": 0, "unknown": 0, "degraded": 0}
     for t in mission.targets:
         tstat[t.status] = tstat.get(t.status, 0) + 1
+        if t.status == "active":
+            health[t.health] = health.get(t.health, 0) + 1
     return {
         "status_label": "В процессе" if mission.status == "active" else "На паузе",
         "agents": {**roles, "total": len(mission.squad)},
         "targets": tstat,
+        # Blocked targets are the #1 silent killer of a mission — surface the count.
+        "target_health": health,
     }
 
 
@@ -204,6 +227,8 @@ def _serialize(mission: Mission, db: Optional[Session] = None) -> MissionRespons
         narrative_goal=mission.narrative_goal, stance=mission.stance,
         tactic=mission.tactic, status=mission.status, agent_mode=mission.agent_mode,
         dynamic_count=mission.dynamic_count, forced_context=mission.forced_context,
+        our_side=mission.our_side, opponent=mission.opponent,
+        key_points=list(mission.key_points or []), red_lines=list(mission.red_lines or []),
         created_at=mission.created_at, squad=squad, targets=targets,
         summary=_summary(mission),
     )
@@ -254,6 +279,8 @@ def create_mission(
         forced_context=request.forced_context,
         agent_mode=request.agent_mode,
         dynamic_count=request.dynamic_count,
+        our_side=request.our_side, opponent=request.opponent,
+        key_points=request.key_points, red_lines=request.red_lines,
         status="active",
     )
     for m in request.squad:
@@ -297,6 +324,10 @@ def update_mission(
         mission.forced_context = request.forced_context
     if request.dynamic_count is not None:
         mission.dynamic_count = max(0, min(50, request.dynamic_count))
+    for field in ("our_side", "opponent", "key_points", "red_lines"):
+        value = getattr(request, field)
+        if value is not None:
+            setattr(mission, field, value)
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
@@ -454,6 +485,54 @@ def suggest_target(
     logger.info("Mission %s — agent %s suggested target '%s' (target %s).",
                 request.mission_id, request.proposed_by, ident, target.id)
     return {"status": "created", "target_id": target.id}
+
+
+# ── Target health (internal: reported by MYRMIDON) ───────────────────────────
+
+VALID_HEALTH = ("unknown", "ok", "blocked", "degraded")
+
+
+class TargetHealthRequest(BaseModel):
+    mission_id: Optional[int] = Field(None, description="ограничить одной миссией")
+    identifier: str = Field(..., min_length=1)
+    health: str = Field(..., description="ok | blocked | degraded | unknown")
+    reason: Optional[str] = None
+
+
+@router.post("/internal/target-health")
+def report_target_health(
+    request: TargetHealthRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    MYRMIDON reports whether a target can actually be commented on.
+
+    A channel with comments disabled, no linked discussion group, or one the account
+    may not write in is *permanently* unusable — the engine must stop spending its
+    scan budget there and the operator must SEE why, instead of a mission that looks
+    active but never posts. The same identifier can belong to several missions, so by
+    default every mission's copy of it is updated.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    if request.health not in VALID_HEALTH:
+        raise HTTPException(status_code=400, detail=f"Invalid health. Allowed: {list(VALID_HEALTH)}")
+
+    ident = canonical_identifier(request.identifier, "channel")
+    q = db.query(MissionTarget).filter(MissionTarget.identifier.in_([ident, request.identifier]))
+    if request.mission_id:
+        q = q.filter(MissionTarget.mission_id == request.mission_id)
+    rows = q.all()
+    for target in rows:
+        target.health = request.health
+        target.health_reason = (request.reason or "")[:1000] or None
+        target.health_checked_at = datetime.now(timezone.utc)
+    db.commit()
+    if rows:
+        logger.info("Target health '%s' → %s (%s) on %d target(s).",
+                    ident, request.health, (request.reason or "")[:80], len(rows))
+    return {"status": "ok", "updated": len(rows), "identifier": ident}
 
 
 # ── Squad management ─────────────────────────────────────────────────────────

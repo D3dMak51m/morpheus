@@ -25,8 +25,10 @@ Operator (JWT, consumed by the Muninn Explorer UI):
   GET    /api/v1/knowledge/stats          — per-layer cluster counts
 """
 
+import html
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -50,6 +52,29 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key
 
 # Cosine similarity threshold above which two facts are considered the same story.
 MERGE_SIMILARITY_THRESHOLD = float(os.getenv("KNOWLEDGE_MERGE_THRESHOLD", "0.85"))
+
+
+# Stage 38 — markup/boilerplate that RSS bodies drag into the knowledge base.
+_TAG_RE = re.compile(r"<[^>]+>")
+_PREVIEW_RE = re.compile(r"(?:alt\s*=\s*[\"']?Preview[\"']?|src\s*=\s*[\"'][^\"']*[\"'])",
+                         re.IGNORECASE)
+_WS_RE = re.compile(r"\s+")
+
+
+def clean_fact_text(raw: str, max_len: int = 1200) -> str:
+    """
+    Strip HTML/markup and collapse whitespace so a stored fact is a readable sentence.
+
+    A fact is read twice: by the embedder (markup skews the vector) and by the LLM
+    writing the comment (markup is noise it may echo). Both want plain prose.
+    """
+    s = raw or ""
+    s = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", s, flags=re.DOTALL | re.IGNORECASE)
+    s = _TAG_RE.sub(" ", s)
+    s = _PREVIEW_RE.sub(" ", s)
+    s = html.unescape(s)
+    s = _WS_RE.sub(" ", s).strip()
+    return s[:max_len].strip()
 
 
 def _clean_layers(values: Optional[list[str]]) -> list[str]:
@@ -95,7 +120,10 @@ class IngestResponse(BaseModel):
 class RagSearchRequest(BaseModel):
     embedding: list[float] = Field(..., min_length=1)
     layers: list[str] = Field(default_factory=lambda: ["global"])
-    limit: int = Field(5, ge=1, le=20)
+    # Stage 38 — ORPHEUS pulls a wider candidate set and admits facts lexically
+    # (embedding similarity alone does not separate topics on this corpus), so the
+    # cap has to leave room for that re-ranking.
+    limit: int = Field(5, ge=1, le=50)
 
 
 class RagFact(BaseModel):
@@ -244,8 +272,16 @@ async def ingest_fact(
     if x_internal_token != INTERNAL_API_TOKEN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
 
+    # 0. Stage 38 — scrub markup BEFORE classifying/embedding. RSS bodies arrive with
+    #    `<img align="left" alt="Preview" src=…>` tails (measured: 220 of 354 stored
+    #    facts carried them), which poison both the embedding and the prompt the bot
+    #    finally reads.
+    content = clean_fact_text(request.content)
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty content after cleaning.")
+
     # 1. LLM auto-classification (before embedding / dedup).
-    classification = await auto_classify_text(request.content)
+    classification = await auto_classify_text(content)
 
     # 2. Merge classifier layers with the source's default layers.
     layers = _union(classification["layers"], _clean_layers(request.default_layers))
@@ -253,9 +289,9 @@ async def ingest_fact(
         layers = ["global"]
 
     # 3. Embed (DAEDALUS-side) and 4. dedup/insert.
-    embedding = _resolve_embedding(request.embedding, request.content)
+    embedding = _resolve_embedding(request.embedding, content)
     action, fact, similarity = _upsert_fact(
-        db, request.content, request.source_url,
+        db, content, request.source_url,
         layers, classification["categories"], classification["tags"], embedding,
     )
     return IngestResponse(
@@ -267,6 +303,54 @@ async def ingest_fact(
         source_count=fact.source_count,
         similarity=round(similarity, 4) if similarity is not None else None,
     )
+
+
+class CleanupResponse(BaseModel):
+    scanned: int
+    cleaned: int
+    reembedded: int
+    deleted: int
+
+
+@router.post("/facts/cleanup", response_model=CleanupResponse)
+def cleanup_facts(
+    limit: int = 500,
+    reembed: bool = True,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("db:edit")),
+) -> CleanupResponse:
+    """
+    One-off repair of facts stored before markup was scrubbed at ingest.
+
+    Rewrites the content without HTML and (by default) recomputes the embedding —
+    a vector built over `<img … Preview src=…>` does not point where the sentence
+    actually means. Facts that turn out to be pure markup are deleted.
+    """
+    rows = db.query(KnowledgeFact).order_by(KnowledgeFact.id.desc()).limit(limit).all()
+    scanned = cleaned = reembedded = deleted = 0
+    for fact in rows:
+        scanned += 1
+        fresh = clean_fact_text(fact.content or "")
+        if fresh == (fact.content or "").strip():
+            continue
+        if len(fresh) < 25:
+            db.delete(fact)
+            deleted += 1
+            continue
+        fact.content = fresh
+        cleaned += 1
+        if reembed:
+            try:
+                fact.embedding = generate_embedding(fresh)
+                reembedded += 1
+            except Exception as exc:      # embedding is best-effort; text is fixed anyway
+                logger.warning("Cleanup: re-embedding fact %s failed: %s", fact.id, exc)
+        fact.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    logger.info("Knowledge cleanup: scanned=%d cleaned=%d reembedded=%d deleted=%d",
+                scanned, cleaned, reembedded, deleted)
+    return CleanupResponse(scanned=scanned, cleaned=cleaned,
+                           reembedded=reembedded, deleted=deleted)
 
 
 @router.post("/internal/rag-search", response_model=RagSearchResponse)

@@ -108,6 +108,10 @@ class TelegramDriver:
         # Coordinates of the last comment this driver posted (disc chat + msg id),
         # so the swarm can have gamma agents react to alpha's exact comment.
         self.last_post_ref: Optional[dict] = None
+        # Stage 38 — why the last comment attempt failed, in raw Telegram terms. The
+        # caller classifies it (app.target_health) and reports the target's health, so
+        # an uncommentable channel is flagged instead of silently retried forever.
+        self.last_failure: str = ""
 
     async def _simulate_typing(self, text: str) -> None:
         """Human-like pause before sending; capped so missions don't stall."""
@@ -170,12 +174,14 @@ class TelegramDriver:
                 "(comments disabled / no linked group).",
                 self.agent_id, post_id, chat.title or chat.id,
             )
+            self.last_failure = "no discussion thread (comments disabled / no linked group)"
             return None, None
         except Exception as e:
             logger.error(
                 "TelegramDriver [%s]: failed to resolve discussion message for post %s: %s",
                 self.agent_id, post_id, e,
             )
+            self.last_failure = str(e)
             return None, None
 
         disc_chat_id = disc.chat.id
@@ -200,19 +206,43 @@ class TelegramDriver:
                             "TelegramDriver [%s]: failed to join discussion group %s: %s",
                             self.agent_id, disc_chat_id, je,
                         )
+                        self.last_failure = f"failed to join discussion group: {je}"
                         return None, None
                     continue
                 logger.error(
                     "TelegramDriver [%s]: cannot write to discussion %s: %s",
                     self.agent_id, disc_chat_id, e,
                 )
+                self.last_failure = str(e)
                 return None, None
             except FloodWait as e:
                 if attempt == 1 and await self._flood_retry(e):
                     continue
+                self.last_failure = f"FLOOD_WAIT {getattr(e, 'value', '')}"
                 return None, None
             except Exception as e:
+                # Telegram answers 403 CHAT_GUEST_SEND_FORBIDDEN when the account is not
+                # a member of the linked discussion group. Pyrogram surfaces that as a
+                # generic RPCError, so it never reached the join-and-retry branch above
+                # and every mission comment on such a channel died here (measured: 3/3
+                # attempts on @Match_TV). Join the group and retry once.
+                if attempt == 1 and "CHAT_GUEST_SEND_FORBIDDEN" in str(e).upper():
+                    logger.info(
+                        "TelegramDriver [%s]: guests cannot post in discussion %s — joining and retrying.",
+                        self.agent_id, disc_chat_id,
+                    )
+                    try:
+                        await app.join_chat(disc_chat_id)
+                    except Exception as je:
+                        logger.error(
+                            "TelegramDriver [%s]: failed to join discussion group %s: %s",
+                            self.agent_id, disc_chat_id, je,
+                        )
+                        self.last_failure = f"failed to join discussion group: {je}"
+                        return None, None
+                    continue
                 logger.error("TelegramDriver [%s]: failed to post comment: %s", self.agent_id, e)
+                self.last_failure = str(e)
                 account_health.handle_fault(self.agent_id, e)
                 return None, None
         return None, None
@@ -556,6 +586,54 @@ class TelegramDriver:
         except Exception as e:
             logger.error("TelegramDriver [%s]: failed to register dialogue watch: %s", self.agent_id, e)
 
+    async def _check_comment_capability_async(self, channel_ref: str) -> Tuple[str, str]:
+        """
+        Can this account comment on that channel AT ALL? One cheap read, no posting.
+
+        A channel only has comments if it has a ``linked_chat`` (the discussion group);
+        writing also requires that the account isn't banned/restricted there. Checking
+        this proactively means a dead target is flagged on the next engine tick instead
+        of after a failed publication (or never).
+        """
+        if not self._credentials_ok():
+            return "degraded", "нет учётных данных Telegram у аккаунта"
+        async with self._build_client() as app:
+            try:
+                chat = await app.get_chat(channel_ref)
+            except Exception as e:
+                return "blocked", str(e)
+
+            chat_type = str(getattr(chat, "type", ""))
+            # Groups/supergroups are commented in directly — nothing to link.
+            if "CHANNEL" not in chat_type.upper():
+                return "ok", "группа — комментируем напрямую"
+
+            linked = getattr(chat, "linked_chat", None)
+            if linked is None:
+                return "blocked", "no discussion thread (comments disabled / no linked group)"
+            try:
+                member = await app.get_chat_member(linked.id, "me")
+                status = str(getattr(member, "status", "")).upper()
+                if "BANNED" in status or "RESTRICTED" in status:
+                    return "blocked", "USER_BANNED_IN_CHANNEL"
+                return "ok", "обсуждение доступно, аккаунт состоит в группе"
+            except UserNotParticipant:
+                # Not a member yet — the driver joins on first comment, so this is
+                # workable, not blocked.
+                return "degraded", "аккаунт ещё не вступил в группу обсуждения"
+            except Exception as e:
+                return "degraded", str(e)
+
+    def check_comment_capability(self, channel_ref: str) -> Tuple[str, str]:
+        """Sync wrapper: returns (health, reason)."""
+        token = self._await_session_lock()
+        try:
+            return self._run(self._check_comment_capability_async(channel_ref))
+        except Exception as e:
+            return "degraded", str(e)
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
     def execute_comment(self, target_url: str, text: str, text_provider=None,
                         watch_meta: Optional[dict] = None, pre_media_context: str = "") -> bool:
         # Serialize all use of this agent's Telegram session (mission posting,
@@ -711,12 +789,19 @@ class TelegramDriver:
     # ── Target-channel post scanning (polled by target_engine) ─────────────
 
     def fetch_new_posts(self, channels: List[dict], since_map: Dict[str, int],
-                        per_channel_limit: int = 5) -> List[dict]:
+                        per_channel_limit: int = 5, threads_for: int = 0,
+                        thread_limit: int = 8) -> List[dict]:
         """
         For each target channel, read its most recent posts and return the ones
         newer than the last-seen id. Read-only; one session under the lock.
         ``channels``: [{chat_id, username}]; ``since_map``: {chat_id: last_seen_id}.
-        Returns [{chat_id, username, newest, first_seen, posts:[{post_id,text}]}].
+        Returns [{chat_id, username, newest, first_seen, posts:[{post_id,text,
+        has_media,comment_count,thread}]}].
+
+        ``threads_for`` — read the discussion under this many NEWEST posts per channel
+        (Stage 38). The engine judges relevance *knowing what people are already saying*
+        and can prefer a post with a live discussion over a silent fresh one; reading it
+        here reuses the already-open session instead of costing a session per post.
         """
         if not self._credentials_ok():
             return []
@@ -725,14 +810,16 @@ class TelegramDriver:
             return []
         try:
             return self._run(
-                self._fetch_new_posts_async(channels, since_map, per_channel_limit))
+                self._fetch_new_posts_async(channels, since_map, per_channel_limit,
+                                            threads_for, thread_limit))
         except Exception as e:
             logger.error("TelegramDriver [%s]: fetch_new_posts crashed: %s", self.agent_id, e)
             return []
         finally:
             dialogue_store.release_session_lock(self.agent_id, token)
 
-    async def _fetch_new_posts_async(self, channels, since_map, limit) -> List[dict]:
+    async def _fetch_new_posts_async(self, channels, since_map, limit,
+                                     threads_for: int = 0, thread_limit: int = 8) -> List[dict]:
         app = self._build_client()
         out: List[dict] = []
         async with app:
@@ -766,6 +853,33 @@ class TelegramDriver:
                         "first_seen": False, "posts": [], "error": str(e),
                     })
                     continue
+                # Stage 38 — read the live discussion under the newest posts so the
+                # relevance gate judges the CONVERSATION, not a post in a vacuum, and
+                # the engine can prefer a post people are actually arguing under.
+                if threads_for:
+                    for p in sorted(posts, key=lambda x: x["post_id"], reverse=True)[:threads_for]:
+                        lines, count = [], 0
+                        try:
+                            async for msg in app.get_discussion_replies(ref, p["post_id"]):
+                                txt = (getattr(msg, "text", None)
+                                       or getattr(msg, "caption", None) or "").strip()
+                                if not txt:
+                                    continue
+                                count += 1
+                                if len(lines) < thread_limit:
+                                    u = getattr(msg, "from_user", None)
+                                    who = "кто-то"
+                                    if u is not None:
+                                        who = u.username or u.first_name or str(u.id)
+                                        if getattr(u, "is_self", False):
+                                            who = "я (мой прошлый коммент)"
+                                    lines.append(f"{who}: {txt[:200]}")
+                        except Exception:
+                            # No discussion for this post (comments off) — not an error.
+                            pass
+                        p["comment_count"] = count
+                        p["thread"] = "\n".join(lines[-thread_limit:])
+
                 out.append({
                     "chat_id": cid, "username": username, "newest": newest,
                     "first_seen": (since == 0), "posts": posts,

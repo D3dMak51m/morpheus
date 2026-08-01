@@ -35,6 +35,7 @@ from app.persona import (
 from app.guardrails import OutputGuardrails
 from app.coordination import generate_beta_subtasks
 from app.simulation import handle_simulation_generation
+from app import textutil
 from app.telemetry import emit as emit_event
 import threading
 import asyncio
@@ -247,110 +248,164 @@ def _channel_context(cp: Optional[dict]) -> str:
     return " ".join(parts)
 
 
-# Generic mission vocabulary that carries no topical signal — excluded from the
-# relevance entity anchors / keyword override so it can't trigger false matches
-# (e.g. "против", "развитие" appearing in an unrelated post).
-_MISSION_STOPWORDS = {
-    "поддерживать", "поддержка", "поддержки", "против", "продвигать", "продвижение",
-    "развитие", "развития", "развитой", "удобный", "удобного", "системно", "системный",
-    "решаются", "решать", "проблема", "проблемы", "нужно", "важно", "нельзя", "также",
-    "всегда", "будет", "более", "менее", "очень", "может", "чтобы", "потому", "вместе",
-    "целью", "цель", "миссия", "миссии", "наша", "наши", "сторонник", "позиция",
-}
+def _channel_alignment(channel_profile: Optional[dict], entities: list[str]) -> bool:
+    """
+    Is the CHANNEL itself substantially on the mission's theme?
+
+    Used only as a TIE-BREAKER: a merely "weak" post on a thematic channel is still
+    worth acting on. It deliberately does NOT license a blanket "yes" — a general
+    city channel that happens to list «пробки» among seven topics made the gate accept
+    everything on it (measured live: a story about a fleeing security guard was judged
+    "прямо наша тема" for a public-transport mission). Hence: at least TWO distinct
+    mission words must appear in the channel's own vocabulary.
+    """
+    if not channel_profile or len(entities) < 2:
+        return False
+    blob = " ".join([
+        " ".join(str(t) for t in (channel_profile.get("topics") or [])),
+        " ".join(str(t.get("theme", "")) for t in (channel_profile.get("recent_themes") or [])),
+        str(channel_profile.get("summary") or ""),
+    ]).lower()
+    return textutil.keyword_hit(blob, entities, min_hits=2)
 
 
-def _mission_entities(goal: str, stance: str, limit: int = 12) -> list[str]:
-    """Topical anchor words for a mission (its subject + adversaries), drawn from the
-    goal and stance. Used both to GROUND the relevance prompt (so the weak LLM judges
-    against concrete terms, not an abstract goal) and as a recall-override keyword set
-    (a post mentioning a mission entity is relevant even if the LLM hedges to НЕТ).
-    Generic verbs/prepositions are stripped; the channel's own geo is NOT included
-    here (that would match purely local off-topic posts like weather)."""
-    seen: list[str] = []
-    for tok in re.findall(r"[а-яёa-z]{5,}", f"{goal} {stance}".lower()):
-        if tok in _MISSION_STOPWORDS or tok in seen:
-            continue
-        seen.append(tok)
-        if len(seen) >= limit:
-            break
-    return seen
+def _parse_verdict(answer: str) -> str:
+    """Map the model's word to yes | weak | no. Robust to case/punctuation/garbling."""
+    a = re.sub(r"[^а-яёa-z]", " ", (answer or "").lower())
+    tokens = a.split()
+    head = tokens[0] if tokens else ""
+    for tok in tokens[:3]:
+        if tok.startswith(("слаб", "weak", "част", "möglich", "maybe")):
+            return "weak"
+        if tok.startswith(("да", "yes")):
+            return "yes"
+        if tok.startswith(("нет", "no", "не")):
+            return "no"
+    if head.startswith("1"):
+        return "yes"
+    return "no"
 
 
-def _entity_hit(post_text: str, entities: list[str]) -> bool:
-    """Recall-override: does the post mention any mission entity (declension-tolerant
-    via a 5-char stem)? Deliberately lenient — the channel is an operator-chosen
-    mission target, so missing an on-topic post is worse than a loose match (rate
-    caps prevent spam)."""
-    t = (post_text or "").lower()
-    for ent in entities:
-        stem = ent[:5]
-        if len(stem) >= 5 and stem in t:
-            return True
-    return False
+def _build_relevance_prompt(goal: str, stance: str, post: str, channel_ctx: str,
+                            thread: str, entities: list[str], aligned: bool) -> str:
+    """
+    The gate's question, rewritten (Stage 38).
+
+    The old prompt asked "is this message ABOUT the mission's subject?" — for a channel
+    with a general news flow the honest answer is almost always "no" (measured: НЕТ in
+    50/50 live calls), so the swarm sat silent on posts it could easily have joined.
+    Influence work is the other question: *can our person plausibly enter THIS
+    conversation from our position?* Three graded answers give the engine something to
+    rank candidates by instead of a coin flip.
+    """
+    ent_line = ("Ключевые слова темы: " + ", ".join(entities) + ".\n") if entities else ""
+    # NB: channel alignment is context, never a licence to accept everything — telling
+    # the model "any post here will do" made it call a random crime story "прямо наша
+    # тема" for a transport mission. The bonus lives in the caller's ranking instead.
+    aligned_line = (
+        "Аудитория канала близка нашей теме — пиши для неё.\n" if aligned else ""
+    )
+    thread_block = f"\nЧто уже пишут в комментариях:\n{thread[:600]}\n" if thread else ""
+    return (
+        "Ты — редактор, который решает, стоит ли нашему человеку вступать в обсуждение.\n\n"
+        + (f"О канале: {channel_ctx[:400]}\n" if channel_ctx else "")
+        + f"Наша тема: {goal[:250]}\n"
+        + (f"Наша позиция: {stance[:250]}\n" if stance else "")
+        + ent_line + aligned_line
+        + f"\nПост:\n\"{post[:600]}\"\n"
+        + thread_block
+        + "\nМожет ли наш человек естественно и по делу вступить в обсуждение этого поста: "
+        "поддержать, поспорить, привести довод, пример или личный опыт со своей позиции?\n"
+        "Ответь ОДНИМ словом:\n"
+        "ДА — тема прямо наша, есть что сказать;\n"
+        "СЛАБО — связь есть, но косвенная;\n"
+        "НЕТ — говорить не о чем (реклама, анонс, программа передач, чужая тема)."
+    )
 
 
 def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     """
-    Cheap LLM relevance gate for the target engine: given the agent's mission +
-    interests, decide whether a candidate post is worth commenting on. A tiny
-    YES/НЕТ generation (num_predict≈5) — much cheaper than a full comment. Returns
-    {status, relevant} on the request's reply_key.
+    Relevance gate for the target engine: can our agent join this discussion?
+
+    Returns ``{status, relevant, verdict, reason}`` on the request's reply_key, where
+    ``verdict`` is ``yes|weak|no`` so the engine can rank several candidate posts and
+    pick the best one instead of taking the first that scraped a "yes".
     """
     reply_key = req.get("reply_key")
     agent_id = req.get("agent_id")
-    post_text = (req.get("post_text") or "").strip()
-    result = {"status": "ok", "relevant": False}
+    raw_post = (req.get("post_text") or "").strip()
+    result = {"status": "ok", "relevant": False, "verdict": "no", "reason": ""}
     try:
         profile = persona_engine.get_all_profiles().get(agent_id) or {}
-        # Mission-driven relevance (preferred): judge against the mission's goal/stance.
         m_goal = (req.get("goal") or "").strip()
         m_stance = (req.get("stance") or "").strip()
-        entities = _mission_entities(m_goal, m_stance) if (m_goal or m_stance) else []
+        thread = (req.get("thread_context") or "").strip()
+        channel_profile = req.get("channel_profile")
+
+        # Hygiene first: promo tails, links and OCR'd TV schedules are what made the
+        # weak model answer "нет" to everything.
+        post = textutil.judging_text(raw_post, req.get("media_context") or "")
+        if not post:
+            result["reason"] = "нечего обсуждать (реклама/расписание/пусто)"
+            logger.info("Relevance %s agent=%s → no (empty after cleaning)",
+                        req.get("request_id"), agent_id)
+            _reply(redis_client, reply_key, result, ttl=120)
+            return
+
         if m_goal or m_stance:
-            cp_ctx = _channel_context(req.get("channel_profile"))
-            # Ground the question in CONCRETE mission terms (subject + adversaries),
-            # not the abstract goal/stance — a weak 3B model reliably says НЕТ to an
-            # ideological "позиция" salad but answers a plain "связано ли с темой?".
-            ent_hint = (" или упоминает: " + ", ".join(entities)) if entities else ""
-            prompt = (
-                (cp_ctx + "\n\n" if cp_ctx else "")
-                + f"Тема миссии: {m_goal[:300]}\n\n"
-                f"Сообщение в этом канале: \"{post_text[:400]}\"\n\n"
-                "Связано ли это сообщение с темой миссии — с её предметом, сторонниками "
-                "или противниками, причинами или последствиями" + ent_hint + " — хотя бы "
-                "косвенно, как новость, мнение, жалоба или эмоция? Ответь одним словом: ДА или НЕТ."
-            )
+            entities = textutil.keywords(m_goal, m_stance)
+            aligned = _channel_alignment(channel_profile, entities)
+            prompt = _build_relevance_prompt(
+                m_goal, m_stance, post, _channel_context(channel_profile),
+                thread, entities, aligned)
         else:
-            mission = profile.get("core_mission") or ""
-            interests = profile.get("interests") or []
-            interests_str = ", ".join(i for i in interests if isinstance(i, str))[:200]
-            occupation = (profile.get("identity", {}) or {}).get("occupation") or ""
-            prompt = (
-                f"Темы и интересы человека: {interests_str}.\n"
-                f"Профессия: {occupation}.\n"
-                f"Цель: {mission[:200]}\n\n"
-                f"Пост: \"{post_text[:400]}\"\n\n"
-                "Может ли этот человек ЕСТЕСТВЕННО вступить в обсуждение этого поста, "
-                "исходя из своих интересов или профессии? Даже косвенная связь считается «да». "
-                "Ответь СТРОГО одним словом: ДА или НЕТ."
+            entities = textutil.keywords(
+                profile.get("core_mission") or "",
+                " ".join(i for i in (profile.get("interests") or []) if isinstance(i, str)),
             )
-        answer = generate_text(prompt, max_tokens=5, temperature=0.2, penalties=False).strip().lower()
-        llm_yes = ("да" in answer) or ("yes" in answer) or answer.startswith("1")
-        # Recall-override: a post mentioning a mission entity is relevant even if the
-        # weak model hedged to НЕТ (operator-chosen target → bias toward engaging).
-        kw_yes = bool(entities) and _entity_hit(post_text, entities)
-        result["relevant"] = llm_yes or kw_yes
-        logger.info("Relevance %s agent=%s → %s (llm=%r kw=%s)", req.get("request_id"), agent_id,
-                    result["relevant"], answer[:20], kw_yes)
+            aligned = _channel_alignment(channel_profile, entities)
+            prompt = _build_relevance_prompt(
+                " ".join(i for i in (profile.get("interests") or []) if isinstance(i, str)),
+                profile.get("core_mission") or "", post,
+                _channel_context(channel_profile), thread, entities, aligned)
+
+        answer = generate_text(prompt, max_tokens=6, temperature=0.1, penalties=False)
+        verdict = _parse_verdict(answer)
+
+        # Recall-override: an explicit mention of the mission's own vocabulary is a
+        # concrete opening even when the model hedged — but it can only raise a "no"
+        # to "weak", never fabricate a strong "yes".
+        kw_hit = bool(entities) and textutil.keyword_hit(post, entities)
+        if verdict == "no" and kw_hit:
+            verdict = "weak"
+        # On a channel dedicated to our theme, a "weak" is worth acting on.
+        result["verdict"] = verdict
+        result["relevant"] = verdict == "yes" or (verdict == "weak" and (aligned or kw_hit))
+        result["reason"] = {
+            "yes": "тема прямо наша",
+            "weak": "связь косвенная" + (" (канал по нашей теме)" if aligned else ""),
+            "no": "говорить не о чем",
+        }[verdict]
+        logger.info(
+            "Relevance %s agent=%s → %s (verdict=%s llm=%r kw=%s aligned=%s)",
+            req.get("request_id"), agent_id, result["relevant"], verdict,
+            (answer or "").strip()[:20], kw_hit, aligned,
+        )
     except Exception as exc:
         logger.warning("Relevance check failed: %s", exc)
-        result = {"status": "error", "relevant": False}
-    if reply_key:
-        try:
-            redis_client.lpush(reply_key, json.dumps(result, ensure_ascii=False))
-            redis_client.expire(reply_key, 120)
-        except Exception:
-            pass
+        result = {"status": "error", "relevant": False, "verdict": "no", "reason": str(exc)[:120]}
+    _reply(redis_client, reply_key, result, ttl=120)
+
+
+def _reply(redis_client, reply_key: Optional[str], payload: dict, ttl: int = 300) -> None:
+    """Push a request/reply answer back to the caller (best-effort)."""
+    if not reply_key:
+        return
+    try:
+        redis_client.lpush(reply_key, json.dumps(payload, ensure_ascii=False))
+        redis_client.expire(reply_key, ttl)
+    except Exception as exc:
+        logger.error("Failed to push reply to %s: %s", reply_key, exc)
 
 
 def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
@@ -370,8 +425,12 @@ def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
     thread = (req.get("thread_context") or "").strip()
     if not post_text and not thread:
         return "soft_support"  # no signal to read → gentle default, skip the LLM call
+    # The mood is judged against OUR SIDE when the mission states it explicitly —
+    # a free-text stance is often a tag salad the model cannot read as a position.
+    position = req.get("position") or {}
+    side = (position.get("our_side") or "").strip() or (req.get("stance") or "").strip()
     raw = generate_text(
-        build_mood_prompt((req.get("stance") or "").strip(), thread, post_text),
+        build_mood_prompt(side, thread, post_text),
         max_tokens=6, temperature=0.2, penalties=False,
     )
     return tactic_from_mood(raw, post_text, thread)

@@ -13,9 +13,11 @@ RUN apt-get update && \
         tesseract-ocr-uzb tesseract-ocr-uzb-cyrl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 
 COPY app/ ./app/
+# Test suite (run with: docker compose exec myrmidon python -m pytest tests -q)
+COPY tests/ ./tests/
 
 CMD ["python", "-m", "app.main"]

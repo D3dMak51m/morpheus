@@ -150,8 +150,10 @@ so any frontend change needs `docker compose build daedalus`.
   `_profile_channels_for_mission` (hybrid-cadence channel profiling, Redis-gated, runs BEFORE
   commenting), then the roster alpha scans the target channels, LLM-relevance-checks newest
   posts vs the mission's goal/stance **in the channel's profile context** (`_get_channel_profile`;
-  caption-less media posts are "read" first so relevance is grounded in the photo/audio), seeds
-  a comment (then `swarm.py` amplifies). Emits `media_read`/`relevance`/`rate_skip` to Live Ops.
+  caption-less media posts are "read" first so relevance is grounded in the photo/audio). Stage 38
+  reads a bounded live thread *before* relevance, ranks all candidates (strong verdict → discussion
+  size → freshness), proactively checks target health and skips freshly blocked targets; then it
+  seeds a comment (and `swarm.py` amplifies). Emits `media_read`/`relevance`/`rate_skip` to Live Ops.
   Also `_suggest_targets_for_mission` (bots propose new mission targets) and per-agent **news
   ingest** (role=news → DAEDALUS knowledge).
 - `dialogue_engine.py` + `dialogue_store.py` — poll watched comments for human replies →
@@ -193,9 +195,11 @@ Channels: **`agent_channel_prefs`** (per-agent channel classification role targe
 + cached enumeration), **`channel_profiles`** (per-channel, NOT per-agent: `geo_layers`
 [same closed set as knowledge], `geo_label`, `topics`, `recent_themes`, `summary` — built by
 `channel_profiler`, used by relevance/comments).
-Missions: **`missions`** (permanent: `stance`, `status` active|paused, `agent_mode`,
-`dynamic_count`, `tactic` — default `dynamic` = per-post tactic from thread mood vs stance),
-**`mission_targets`** (kind channel|post, status active|suggested|rejected,
+Missions: **`missions`** (permanent: `stance`, explicit position `our_side` / `opponent` /
+`key_points` / `red_lines`, `status` active|paused, `agent_mode`, `dynamic_count`, `tactic` —
+default `dynamic` = per-post tactic from thread mood vs our side),
+**`mission_targets`** (kind channel|post, status active|suggested|rejected, target health
+`unknown`|`ok`|`blocked`|`degraded`,
 source operator|agent), **`mission_squads`** (roster, caste role).
 Knowledge: **`knowledge_facts`** (pgvector RAG), `scraping_landscape` (sources),
 `captured_raw_events`, `scouted_targets`, `social_post_targets`, `campaigns`.
@@ -238,7 +242,7 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
    (goal+stance+tactic+mission_id+media_context) → MYRMIDON: ORPHEUS picks a **dynamic per-post
    tactic** (post+thread mood vs stance → `amplify`|`soft_support`|`aggressive_displacement`|
    `sentiment_shift`), then writes the comment (persona + RAG + memory + thread mood + **media
-   context** + stance, anti-echo, anti-repeat, regen) → posts it → registers a dialogue watch →
+   context** + explicit mission position, anti-echo, anti-repeat, regen) → posts it → registers a dialogue watch →
    **swarm amplification**: mission-roster **beta** drops a cheap lite comment (inheriting the
    alpha's tactic), **gamma** an emoji reaction.
    *Also:* roster bots propose new mission targets from their own channels
@@ -324,6 +328,31 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
 - Relevance judges a post **in a vacuum** by default → a vague but on-topic phrase (`«опять эти
   машины»` on a Tashkent traffic channel) is missed. **Channel Profiling** (built) feeds the
   channel's topic/geo/news context into the gate so a post is judged IN context, not blind.
+- **Ask the gate whether we can JOIN, not whether the post is ON our subject** (Stage 38). The old
+  question («связано ли сообщение с темой миссии?») is honestly answered «нет» for almost every post
+  on a general-news channel — measured: `llm='нет'` in **50/50** live calls, every positive verdict
+  came from the crude keyword override. Reframed to «может ли наш человек естественно вступить в это
+  обсуждение со своей позицией?» with a graded ДА/СЛАБО/НЕТ, the same model on the same 14 posts
+  accepts 11 (all by its own judgement, 3/3 stable). See `DIAGNOSIS.md`.
+- **Clean the post before judging it.** OCR dumps of TV schedules/posters («25 ИЮЛЯ 13:55
+  КОММЕНТАТОРЫ: …»), promo tails («Наш канал в MAX») and link soup make a 3B model answer «нет» to
+  everything. `orpheus/app/textutil.py` strips them and drops schedule dumps outright.
+- **`nomic-embed-text` does NOT separate topics on this corpus.** A traffic-jam query scores
+  «Град уничтожил бойцов ВСУ» at 0.74 and a genuinely relevant fact at 0.85 — no absolute threshold
+  splits that (the old floor of 0.5 admitted everything, which is why "RAG didn't seem to affect the
+  answers"). Similarity now only fetches candidates; admission is **lexical** (shared mission/post
+  vocabulary), similarity breaks ties. Empty context is honest — never pad the prompt with noise.
+  Also: nomic's `search_query:`/`search_document:` prefixes made separation *worse* here — measured,
+  don't add them.
+- **`403 CHAT_GUEST_SEND_FORBIDDEN` is a generic RPCError in Pyrogram**, not `ChatWriteForbidden` —
+  so the join-and-retry branch never fired and every mission comment on such a channel died (3/3 on
+  `@Match_TV`). Handle it explicitly: join the discussion group, retry once.
+- **"Post has comments disabled" is a POST-level fact, not a target-level one.** Blocking the whole
+  channel on it kills a working target (`myrmidon/app/target_health.py` separates the two scopes).
+- **A mission needs an explicit side.** With only free-text `narrative_goal` + `stance` the model
+  guesses whose side it is on — and a contradiction between them (goal «Аргентина должна была
+  выиграть» vs stance «Аргентина проиграла из-за тренера») yields comments arguing against the
+  mission's own goal. Fill `our_side` / `opponent` / `key_points` / `red_lines`.
 - `app/main.py` registers signal handlers at import — guarded to main-thread only (daemon
   threads re-import it).
 - Mission DAG reconciler is legacy; it only touches `running`/`amplifying` so new

@@ -169,17 +169,20 @@ channel profiles, target suggestions, decision log, device status, activity).
 
 ### 1.14 Mission Deck  🟢 `#/missions`  ("Миссии")
 - **Purpose:** the permanent narrative goals — create, edit, target, staff, run/pause.
-- **Capabilities:** create mission (title, goal, stance, tactic, agent_mode, dynamic_count,
-  targets); per-mission detail with tabs — Overview (edit title/goal/stance/tactic, delete),
+- **Capabilities:** create mission (title, goal, stance, explicit side/opponent/arguments/red
+  lines, tactic, agent_mode, dynamic_count, targets); per-mission detail with tabs — Overview
+  (edit title/goal/stance/position/tactic, delete),
   Targets (add channel/post, approve/reject agent-suggested, delete), Agents (roster + remove,
   **eligible-agents pick-list** with match scores, auto-assign 1α/2β/1γ); pause/resume.
 - **API:** `GET /missions`, `GET /missions/{id}`, `POST /missions`, `PUT /missions/{id}`,
   `POST /missions/{id}/status`, `DELETE /missions/{id}`, targets: `POST /missions/{id}/targets`,
   `POST /missions/{id}/targets/{tid}/{approve|reject}`, `DELETE /missions/{id}/targets/{tid}`,
-  squad: `POST /missions/{id}/squad`, `DELETE /missions/{id}/squad/{sid}`,
+  squad: `POST /missions/{id}/squad`, `DELETE /missions/{id}/squad/{sid}`; target health:
+  `POST /missions/internal/target-health` 🔒,
   `GET /missions/{id}/eligible-agents`, `POST /missions/{id}/auto-assign`. (🔒
   `POST /missions/internal/suggest-target`.)
-- **Data:** `missions`, `mission_targets`, `mission_squads`.
+- **Data:** `missions` (also `our_side`, `opponent`, `key_points`, `red_lines`),
+  `mission_targets` (also `health`, `health_reason`, `health_checked_at`), `mission_squads`.
 - **Redesign gaps:** detail is a drawer → full mission screen wanted; no mission analytics
   (comments posted, reach, target activity); the agent picker is the model to generalize.
 

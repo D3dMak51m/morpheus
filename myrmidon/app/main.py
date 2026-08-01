@@ -304,11 +304,16 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "target_url": task.get("target_url"),
         "post_text": post_text or "",
         "author": author or "",
-        "thread_context": thread_context or "",
+        # Prefer the thread the driver just read; fall back to the one captured when
+        # the engine picked this post (so the tactic is never decided on emptiness).
+        "thread_context": thread_context or task.get("thread_context") or "",
         "media_context": media_context or "",
         "channel_profile": task.get("channel_profile"),  # ground the comment in the channel
         "narrative_goal": task.get("narrative_goal") or "",
         "stance": task.get("stance") or "",
+        # Explicit position (our side / opponent / arguments / red lines) — so the bot
+        # never has to infer whose side it is on.
+        "position": task.get("position") or {},
         "tactic": task.get("tactic") or "soft_support",
         "role": task.get("role") or "alpha",
         "forced_context": task.get("forced_context"),
@@ -461,6 +466,31 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
             target_url, text_to_publish, text_provider=text_provider, watch_meta=watch_meta,
             pre_media_context=task.get("media_context") or "",
         )
+
+        # Stage 38 — record whether this target is actually commentable, so a channel
+        # with comments disabled / an account that may not write there is flagged for
+        # the operator and skipped by the engine instead of failing every 300 s.
+        if task.get("mission_id") and task.get("action_type") == "comment":
+            try:
+                from app import target_health
+                from app.telemetry import emit as emit_event
+                ref = target_health.url_channel_ref(target_url)
+                if success:
+                    target_health.report_success(ref, task.get("mission_id"))
+                else:
+                    raw = driver.last_failure or "публикация не удалась"
+                    verdict, reason, scope = target_health.report_failure(
+                        ref, raw, task.get("mission_id"))
+                    if scope == "post":
+                        # One post with comments off — the channel stays in play.
+                        emit_event(agent_id, "post_closed", f"{ref}: {reason}",
+                                   status="info", target=target_url)
+                    else:
+                        emit_event(agent_id,
+                                   "target_blocked" if verdict == "blocked" else "target_degraded",
+                                   f"цель {ref}: {reason}", status="warn", target=target_url)
+            except Exception as e:
+                logger.warning("Task %s — target health report skipped: %s", task_id, e)
 
         if success:
              logger.info("Task %s completed successfully on Telegram.", task_id)
