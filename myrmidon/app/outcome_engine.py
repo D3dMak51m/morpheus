@@ -13,8 +13,15 @@ Deliberate choices:
 
 * the SAME 3-way judgement (AGREE/NEUTRAL/OPPOSE) as the entry reading, asked with the
   same prompt in ORPHEUS — a delta between two differently-worded questions is noise;
+* the verdict is taken on the conversation AFTER our first comment, not on the whole
+  thread. Measured in the polygon on a real 21-comment thread: one comment — and then a
+  coordinated three — left the aggregate verdict at OPPOSE every time, because three
+  replies out of 24 cannot move an average. A whole-thread reading is structurally blind
+  to the intervention it exists to judge;
 * a thread that did not grow is reported as such rather than as "tone unchanged". The
   two are different outcomes and collapsing them would report silence as success;
+* nobody speaking after us yields a NULL verdict, not "unchanged" — the conversation
+  ended, which is a different fact;
 * a thread we can no longer read closes the row as `unreadable` with a NULL verdict.
   "We do not know" is honest; "no change" would be a fabrication;
 * read-only. This loop never posts, joins or reacts.
@@ -134,10 +141,34 @@ def _measure_one(sf, outcome: dict) -> None:
     human_replies = sum(1 for c in comments
                         if c.get("parent_id") in ours and not c.get("is_self"))
 
-    thread_text = "\n".join(f"{c.get('author', 'кто-то')}: {c.get('text', '')}"
-                            for c in comments[-25:])
-    mood = _mood_via_orpheus(outcome.get("our_side") or outcome.get("stance") or "",
-                             post.get("text") or "", thread_text)
+    # Measure the CONVERSATION AFTER we spoke, not the whole thread.
+    #
+    # Measured in the polygon on a real 21-comment thread: one comment, then a
+    # coordinated three, left the aggregate verdict at OPPOSE every time. That is not
+    # the swarm failing — three replies out of 24 cannot move an average, so a verdict
+    # over the whole thread is structurally blind to the intervention it is meant to
+    # judge. Splitting at our first comment asks the question that was actually
+    # intended: did the discussion change direction after we entered?
+    ours_idx = next((i for i, c in enumerate(comments) if c.get("is_self")), None)
+    side = outcome.get("our_side") or outcome.get("stance") or ""
+    post_text = post.get("text") or ""
+
+    def _fmt(seq):
+        return "\n".join(f"{c.get('author', 'кто-то')}: {c.get('text', '')}" for c in seq[-25:])
+
+    if ours_idx is None:
+        # We never actually appeared there (deleted, or the comment failed).
+        mood = _mood_via_orpheus(side, post_text, _fmt(comments))
+    else:
+        after = [c for c in comments[ours_idx + 1:] if not c.get("is_self")]
+        if not after:
+            # Nobody spoke after us: the tone did not "stay the same", the conversation
+            # simply ended. Recording a verdict here would invent a result.
+            mood = None
+            logger.info("outcome_engine: %s — после нашего захода никто не писал.",
+                        outcome.get("post_url"))
+        else:
+            mood = _mood_via_orpheus(side, post_text, _fmt(after))
     _report(outcome["id"], mood, len(comments), human_replies)
     logger.info("outcome_engine: %s — тон %s → %s, комментариев %d→%d, ответов людей %d",
                 outcome.get("post_url"), outcome.get("mood_before"), mood,
