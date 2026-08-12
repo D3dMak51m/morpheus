@@ -321,9 +321,10 @@ export function KnowledgeModal({ opened, onClose, api, worldId, onChanged }: {
 
 // ── Landscape scraping ─────────────────────────────────────────────────────
 
-export function LandscapeModal({ opened, onClose, api, worldId, channels, onChanged }: {
+export function LandscapeModal({ opened, onClose, api, worldId, channels, onChanged,
+                                 initialTab = 'scrape' }: {
   opened: boolean; onClose: () => void; api: SimApi; worldId: number;
-  channels: SimChannel[]; onChanged: () => void;
+  channels: SimChannel[]; onChanged: () => void; initialTab?: string;
 }) {
   const [form, setForm] = useState({
     kind: 'rss', url: '', limit: 20, as_knowledge: false, target_channel_id: '',
@@ -338,6 +339,8 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
   // and lives under "Дополнительно".
   const [tgAgents, setTgAgents] = useState<{ agent_id: string; codename: string }[]>([]);
   const [tgMore, setTgMore] = useState(false);
+  const [tab, setTab] = useState(initialTab);
+  useEffect(() => { if (opened) setTab(initialTab); }, [opened, initialTab]);
   const [tg, setTg] = useState({
     source: '', agent_id: '', post_limit: 10, comment_limit: 100, target_channel_id: '',
   });
@@ -399,8 +402,8 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} size="lg" centered title="Ландшафт — наполнение полигона">
-      <Tabs defaultValue="scrape">
+    <Modal opened={opened} onClose={onClose} size="lg" centered title="Наполнение полигона">
+      <Tabs value={tab} onChange={v => setTab(v || 'scrape')}>
         <Tabs.List mb="sm">
           <Tabs.Tab value="scrape">Скрапинг</Tabs.Tab>
           <Tabs.Tab value="telegram">Импорт тредов</Tabs.Tab>

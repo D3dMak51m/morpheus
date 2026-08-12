@@ -59,6 +59,9 @@ export default function SimulationScreen({ token, selectedId, onOpen, onBack }: 
   const [massGenOpen, setMassGenOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [landscapeOpen, setLandscapeOpen] = useState(false);
+  // Which tab the Landscape modal opens on — the thread import is a distinct
+  // action in the operator's head, not a sub-mode of scraping.
+  const [landscapeTab, setLandscapeTab] = useState('scrape');
 
   const worldId = state?.world.id ?? 0;
   const channel = state?.channels.find(c => c.id === channelId) || null;
@@ -287,7 +290,8 @@ export default function SimulationScreen({ token, selectedId, onOpen, onBack }: 
             onNewPost={() => setPostModal({ open: true, target: null })}
             onMassGen={() => setMassGenOpen(true)}
             onKnowledge={() => setKnowledgeOpen(true)}
-            onLandscape={() => setLandscapeOpen(true)}
+            onLandscape={() => { setLandscapeTab('scrape'); setLandscapeOpen(true); }}
+            onImportThread={() => { setLandscapeTab('telegram'); setLandscapeOpen(true); }}
             onQuickComment={quickComment}
             onInspect={setInspect}
           />
@@ -330,7 +334,7 @@ export default function SimulationScreen({ token, selectedId, onOpen, onBack }: 
       <KnowledgeModal opened={knowledgeOpen} onClose={() => setKnowledgeOpen(false)}
         api={api} worldId={worldId} onChanged={refreshAll} />
 
-      <LandscapeModal opened={landscapeOpen} onClose={() => setLandscapeOpen(false)}
+      <LandscapeModal opened={landscapeOpen} onClose={() => setLandscapeOpen(false)} initialTab={landscapeTab}
         api={api} worldId={worldId} channels={state.channels} onChanged={refreshAll} />
     </Box>
   );

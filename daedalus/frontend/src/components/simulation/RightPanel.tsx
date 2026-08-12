@@ -9,7 +9,7 @@ import {
   SimpleGrid, Stack, Text, TextInput, Textarea, Tooltip,
 } from '@mantine/core';
 import {
-  Bot, Brain, Globe, MessageSquarePlus, Plus, Search, Send, Sparkles, Target, User, Eye, Pencil,
+  Bot, Brain, Download, Globe, MessageSquarePlus, Plus, Search, Send, Sparkles, Target, User, Eye, Pencil,
 } from 'lucide-react';
 import {
   SimAccount, SimApi, SimChannel, SimMission, SimPersona, SimPost, initialsOf,
@@ -39,6 +39,7 @@ interface Props {
   onMassGen: () => void;
   onKnowledge: () => void;
   onLandscape: () => void;
+  onImportThread: () => void;
   onQuickComment: (payload: { authorKind: 'account' | 'persona'; id: number; text: string }) => void;
   onInspect: (t: InspectTarget) => void;
 }
@@ -48,7 +49,7 @@ export default function RightPanel(props: Props) {
     api, channels, accounts, personas, missions, selectedChannelId, activePost, inspect,
     onSelectChannel, onCreateChannel, onEditChannel, onCreateAccount, onEditAccount,
     onCreatePersona, onEditPersona, onOpenMissions, onCreateMission, onNewPost, onMassGen,
-    onKnowledge, onLandscape, onQuickComment, onInspect,
+    onKnowledge, onLandscape, onImportThread, onQuickComment, onInspect,
   } = props;
 
   const [query, setQuery] = useState('');
@@ -139,10 +140,14 @@ export default function RightPanel(props: Props) {
           </SimpleGrid>
           <Button fullWidth size="xs" variant="light" leftSection={<Sparkles size={14} />}
             onClick={onMassGen} disabled={!activePost}>Массовая генерация</Button>
+          {/* The one people look for by name: bring a real Telegram post — with the
+              comments real people left under it — into the polygon. */}
+          <Button fullWidth size="xs" variant="filled" leftSection={<Download size={14} />}
+            onClick={onImportThread}>Импорт поста из Telegram</Button>
           <Button fullWidth size="xs" variant="light" leftSection={<Brain size={14} />}
             onClick={onKnowledge}>Импорт знаний</Button>
           <Button fullWidth size="xs" variant="light" leftSection={<Globe size={14} />}
-            onClick={onLandscape}>Ландшафт-скрапинг</Button>
+            onClick={onLandscape}>Ландшафт-скрапинг (RSS/веб)</Button>
           {!activePost && (
             <Text size="xs" c="dimmed">Массовая генерация включается, когда открыт пост.</Text>
           )}

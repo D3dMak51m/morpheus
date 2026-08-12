@@ -116,7 +116,8 @@ DAEDALUS  /generate | /generate/post | /generate/batch
 сценарии полигона) · `history` (реальные реплики роя из `agent_activity_logs`).
 
 **Импорт постов ВМЕСТЕ с комментариями реальных людей**
-— в UI: **Ландшафт → вкладка «Импорт тредов»** (`POST /simulation/import/telegram`):
+— в UI: правая колонка → **«Импорт поста из Telegram»**
+(`POST /simulation/import/telegram`):
 
 ```json
 {"source": "https://t.me/tashkent_news333/35"}
