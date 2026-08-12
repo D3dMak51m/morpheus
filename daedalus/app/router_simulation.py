@@ -1675,18 +1675,32 @@ def import_telegram(body: TelegramImportIn, db: Session = Depends(get_db),
             posts_new += 1
 
         # Telegram id → polygon id, so a reply keeps pointing at its parent.
+        #
+        # Walk the thread CHRONOLOGICALLY. Telegram returns discussion replies
+        # newest-first, so a reply arrives before the comment it answers and the
+        # parent is not in the map yet — measured, every nested reply landed as its
+        # own top-level comment (2 of 8 on one post). Sorting by message id restores
+        # the order; ids grow monotonically within a chat.
         id_map: dict[int, int] = {}
-        for c in p.get("comments") or []:
+        deferred: list[tuple[SimComment, int]] = []
+        thread = sorted(p.get("comments") or [], key=lambda c: c.get("id") or 0)
+        for c in thread:
             comments_seen += 1
             tg_id = c.get("id")
+            parent_tg = c.get("parent_id")
             existing = (db.query(SimComment)
                         .filter(SimComment.post_id == post.id,
                                 SimComment.meta["tg_id"].astext == str(tg_id))
                         .first())
             if existing is not None:
                 id_map[tg_id] = existing.id
+                # Re-running repairs a tree imported before this fix.
+                if existing.parent_id is None and parent_tg:
+                    deferred.append((existing, parent_tg))
                 continue
-            parent_local = id_map.get(c.get("parent_id")) if c.get("parent_id") else None
+            # A parent that is not itself a comment is the channel post forwarded into
+            # the discussion group — that is what a top-level comment replies to.
+            parent_local = id_map.get(parent_tg) if parent_tg else None
             row = SimComment(
                 post_id=post.id, parent_id=parent_local,
                 author_kind="external",
@@ -1700,7 +1714,17 @@ def import_telegram(body: TelegramImportIn, db: Session = Depends(get_db),
             db.add(row)
             db.flush()
             id_map[tg_id] = row.id
+            if parent_tg and parent_local is None:
+                deferred.append((row, parent_tg))
             comments_new += 1
+
+        # Parents that only became resolvable later. One that never resolves is a
+        # reply to something outside the imported window — it stays top-level, which
+        # is the honest representation of a thread we only partly hold.
+        for row, parent_tg in deferred:
+            local = id_map.get(parent_tg)
+            if local and local != row.id:
+                row.parent_id = local
 
     log_event(db, world.id, "import",
               f"Импорт из {username}: постов {posts_new}/{posts_seen}, "
