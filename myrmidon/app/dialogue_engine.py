@@ -162,6 +162,11 @@ def _log_reply(agent_id: str, watch: dict) -> None:
     """Record an answered human reply in the durable activity log (best-effort)."""
     try:
         url = ""
+        mission_id = watch.get("mission_id")
+        try:
+            mission_id = int(mission_id) if mission_id not in (None, "", "None") else None
+        except (TypeError, ValueError):
+            mission_id = None
         ch, pid = watch.get("channel_ref"), watch.get("post_id")
         if ch and pid:
             ref = ch if str(ch).startswith("@") else f"@{ch}" if not str(ch).lstrip("-").isdigit() else ch
@@ -169,6 +174,7 @@ def _log_reply(agent_id: str, watch: dict) -> None:
         payload = {
             "agent_id": agent_id, "platform": "telegram", "action_type": "reply",
             "target_url": url, "text_content": None, "status": "SUCCESS",
+            "mission_id": mission_id,
         }
         with httpx.Client(timeout=10.0) as client:
             client.post(f"{DAEDALUS_URL}/api/v1/analytics/internal/activity",

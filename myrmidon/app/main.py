@@ -487,6 +487,9 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
             "narrative_goal": task.get("narrative_goal") or "",
             "tactic": task.get("tactic") or "soft_support",
             "role": task.get("role") or "alpha",
+            # Carried so a reply written later in this conversation is attributable to
+            # the mission that started it.
+            "mission_id": task.get("mission_id"),
         }
 
         success = driver.execute_comment(
@@ -666,8 +669,16 @@ def main() -> None:
     try:
         from app.target_engine import start_target_engine
         start_target_engine(db_session_factory)
+    except Exception as exc:
+        logger.error("Could not start target engine: %s", exc)
+
+    try:
+        # Stage 42 — comes back to discussions the swarm entered and records whether
+        # the tone moved and whether real people answered. Read-only.
+        from app.outcome_engine import start_outcome_engine
+        start_outcome_engine(db_session_factory)
     except Exception as e:
-        logger.warning("Target engine failed to start: %s (non-fatal)", e)
+        logger.warning("Outcome engine failed to start: %s (non-fatal)", e)
 
     # Verify execution queue
     queue_depth = redis_client.llen(EXECUTION_TASKS_QUEUE)

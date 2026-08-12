@@ -79,6 +79,7 @@ def register_watch(
     role: str = "alpha",
     depth: int = 0,
     opponent_id: Optional[str] = None,
+    mission_id: Optional[int] = None,
 ) -> Optional[str]:
     """
     Start listening on a comment the bot just posted. Returns the watch_id, or
@@ -93,6 +94,9 @@ def register_watch(
         "post_id": post_id,
         "disc_chat_id": disc_chat_id,
         "bot_msg_id": bot_msg_id,
+        # Stage 42 — so a reply the bot writes in this conversation is attributable to
+        # the mission that started it, like every other action.
+        "mission_id": mission_id,
         "post_context": (post_context or "")[:600],
         "narrative_goal": narrative_goal or "",
         "tactic": tactic or "soft_support",

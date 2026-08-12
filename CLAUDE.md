@@ -291,7 +291,16 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
    emoji reaction only (no LLM).
 6. **Reliability:** short FloodWait → wait+retry; long → cooldown; PeerFlood → 1h cooldown;
    fatal session errors → account `banned` (+ profile suspended), dropped from the active pool.
-7. **Active hours:** posting (seed/amplify/reply) only inside the persona's
+7. **Outcome measurement (Stage 42):** when a mission first speaks in a discussion,
+   MYRMIDON opens a `mission_outcomes` row with the crowd's stance toward us
+   (`AGREE|NEUTRAL|OPPOSE`, the verdict ORPHEUS already computes to pick the tactic and
+   used to discard). `outcome_engine` returns after `MISSION_OUTCOME_AFTER_HOURS` (6),
+   re-reads the same thread read-only, asks ORPHEUS the SAME question (`mode=mood`) and
+   records the delta plus how many real people answered OUR comments. A thread that
+   cannot be read is closed as `unreadable` with a NULL verdict — "we don't know" is
+   honest, "no change" would be invented. `thread_grew` keeps "the tone did not move"
+   distinct from "nobody said anything".
+8. **Active hours:** posting (seed/amplify/reply) only inside the persona's
    `active_hours_start`..`_end` window (`schedule.in_active_hours`, swarm tz); read-only news/
    profiling run 24/7. So the swarm has a human daily rhythm, not 24/7 chatter.
 

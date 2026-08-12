@@ -11,7 +11,7 @@ operator to approve/reject. Per-post tactic is chosen dynamically at runtime.
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -376,6 +376,76 @@ def outcome_entry(
         row.our_comments = (row.our_comments or 0) + 1
     db.commit()
     return {"status": "ok", "outcome_id": row.id, "our_comments": row.our_comments}
+
+
+# How long a discussion is left to develop before we judge whether the tone moved.
+OUTCOME_MEASURE_AFTER_HOURS = int(os.getenv("MISSION_OUTCOME_AFTER_HOURS", "6"))
+
+
+@router.get("/internal/outcomes/pending")
+def outcomes_pending(
+    limit: int = 20,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Discussions the swarm entered that are due a second reading.
+
+    Measured too early, a thread has not had time to react and every mission would
+    look inert; measured never, the mission has no idea whether it achieved anything.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=OUTCOME_MEASURE_AFTER_HOURS)
+    rows = (db.query(MissionOutcome, Mission)
+            .join(Mission, Mission.id == MissionOutcome.mission_id)
+            .filter(MissionOutcome.measured_at.is_(None),
+                    MissionOutcome.entered_at <= cutoff)
+            .order_by(MissionOutcome.entered_at.asc())
+            .limit(min(max(limit, 1), 100))
+            .all())
+    return {"outcomes": [{
+        "id": o.id, "mission_id": o.mission_id, "post_url": o.post_url,
+        "channel_ref": o.channel_ref, "mood_before": o.mood_before,
+        "thread_size_before": o.thread_size_before,
+        "our_side": m.our_side or "", "stance": m.stance or "",
+    } for o, m in rows]}
+
+
+class OutcomeMeasureIn(BaseModel):
+    outcome_id: int
+    mood_after: Optional[str] = None
+    thread_size_after: int = 0
+    human_replies: int = 0
+    unreadable: bool = False
+
+
+@router.post("/internal/outcome-measure")
+def outcome_measure(
+    body: OutcomeMeasureIn,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Record the second reading of a discussion.
+
+    ``unreadable`` closes the row without a verdict (the thread was deleted, the
+    channel blocked us). Marking it measured anyway keeps it from being retried
+    forever, and a NULL `mood_after` is honest — we do not know, rather than "no
+    change".
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    row = db.query(MissionOutcome).filter(MissionOutcome.id == body.outcome_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Outcome not found.")
+    if not body.unreadable:
+        row.mood_after = body.mood_after
+        row.thread_size_after = body.thread_size_after
+        row.thread_grew = body.thread_size_after > (row.thread_size_before or 0)
+        row.human_replies = max(row.human_replies or 0, body.human_replies)
+    row.measured_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "ok", "mood_before": row.mood_before, "mood_after": row.mood_after,
+            "thread_grew": row.thread_grew}
 
 
 @router.get("/{mission_id}/validate")

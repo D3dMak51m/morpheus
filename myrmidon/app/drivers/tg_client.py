@@ -582,6 +582,7 @@ class TelegramDriver:
                 role=meta.get("role", "alpha"),
                 depth=depth,
                 opponent_id=meta.get("opponent_id"),
+                mission_id=meta.get("mission_id"),
             )
         except Exception as e:
             logger.error("TelegramDriver [%s]: failed to register dialogue watch: %s", self.agent_id, e)

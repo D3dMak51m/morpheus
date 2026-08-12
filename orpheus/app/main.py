@@ -323,6 +323,37 @@ def _build_relevance_prompt(goal: str, stance: str, post: str, channel_ctx: str,
     )
 
 
+def handle_mood(req: dict, redis_client) -> None:
+    """
+    Re-read a discussion and judge the crowd's stance toward OUR position.
+
+    This is the "after" half of the mission's success measure: the same 3-way verdict
+    taken when we entered, re-run on the same thread later, so the pair is the tone
+    delta the operator actually cares about. Deliberately the SAME prompt and the same
+    penalties-off classification settings as the entry reading — a delta between two
+    differently-asked questions would be noise.
+    """
+    reply_key = req.get("reply_key")
+    result = {"status": "ok", "mood": "NEUTRAL"}
+    try:
+        side = (req.get("our_side") or req.get("stance") or "").strip()
+        raw = generate_text(
+            build_mood_prompt(side, (req.get("thread_context") or "").strip(),
+                              (req.get("post_text") or "").strip()),
+            max_tokens=6, temperature=0.2, penalties=False,
+        )
+        up = (raw or "").strip().upper()
+        for m in ("AGREE", "OPPOSE", "NEUTRAL"):
+            if m in up:
+                result["mood"] = m
+                break
+        logger.info("Mood re-measure %s → %s", req.get("request_id"), result["mood"])
+    except Exception as exc:
+        logger.warning("Mood re-measure failed: %s", exc)
+        result = {"status": "error", "mood": None, "reason": str(exc)[:120]}
+    _reply(redis_client, reply_key, result, ttl=120)
+
+
 def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     """
     Relevance gate for the target engine: can our agent join this discussion?
@@ -613,6 +644,9 @@ def main() -> None:
                     gen_req = json.loads(payload)
                 except json.JSONDecodeError as exc:
                     logger.error("Malformed mission-gen request: %s", exc)
+                    continue
+                if gen_req.get("mode") == "mood":
+                    handle_mood(gen_req, redis_client)
                     continue
                 if gen_req.get("mode") == "relevance":
                     handle_relevance(gen_req, redis_client, persona_engine)
