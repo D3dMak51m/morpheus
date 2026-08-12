@@ -281,6 +281,12 @@ def _ingest_news(text_content: str, source_url: str, layers: list[str]) -> bool:
                 json={"content": text_content[:4000], "source_url": source_url, "default_layers": layers},
                 headers={"X-Internal-Token": INTERNAL_API_TOKEN},
             )
+            # Stage 39 — 422 means DAEDALUS judged the text to be site boilerplate
+            # rather than news (a promo tail, a bare forward header). That is the gate
+            # doing its job, not a fault: report it quietly instead of as a failure.
+            if resp.status_code == 422:
+                logger.info("target_engine: post skipped as boilerplate (%s)", source_url)
+                return False
             resp.raise_for_status()
         return True
     except Exception as exc:

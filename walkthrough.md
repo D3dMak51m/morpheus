@@ -83,6 +83,10 @@ gazeta.uz 354 → **2078**, foxnews 240 → **1439**, CNN 1080 → **1332**, kun
 183 → **1139**. RT stays on its feed text by design; daryo.uz does not expose article bodies in its
 HTML at all and is flagged `degraded`.
 
+Follow-up after the batch went live: MYRMIDON's `target_engine._ingest_news` logged the new 422
+("this is site boilerplate, not news") as `knowledge ingest failed`. The gate refusing a promo tail
+is it working, not faulting — it is an INFO line now, so a real ingest failure stays visible.
+
 Housekeeping in the same batch: the production RSS scraper moved out of `huginn/test_rss.py` into
 `huginn/app/scrapers/rss_scraper.py`; the duplicate feed loop was removed from
 `social_feed_scraper`; the News Hub is fed as pure observability (no queue, no generation);
@@ -592,9 +596,24 @@ the best candidate and repairs guest-send publication failures. New code include
 `orpheus/app/textutil.py`, `myrmidon/app/target_health.py` and offline suites for both services;
 the Mission editor shows position and target-health state.
 
-Live data note: mission **#10** ("Поддержка общественного транспорта") is **active** with
-a full alpha/beta/gamma roster and target `@tashkent_news333` — the live engine keeps
-working it (≤1 comment/channel/hr). Pause it via the UI if you want it quiet.
+Live data note (12 Aug): mission **#10** ("Поддержка общественного транспорта") is the only
+**active** one, with a full alpha/beta/gamma roster and target `@tashkent_news333` — the live
+engine keeps working it (≤1 comment/channel/hr). Pause it via the UI if you want it quiet.
+
+**#13, #14 and #16 were paused on 12 Aug.** All four missions had run active with empty
+`our_side`/`opponent`/`key_points`/`red_lines`, and the single comment that published in six hours
+proved the documented failure: mission #14 is «За аргентину», and the bot posted «…тренер был
+главной причиной поражения» — agreeing with the defeat it exists to argue against (plus a junk
+`#Кубок` tail). Filling those fields is the operator's message and must not be invented, so the
+missions were paused instead; #10's goal and stance do not contradict each other, so it stayed on.
+Re-activate any of them from the Missions screen once a position is written.
+
+Also measured that session: 11 of 12 attempts FAILED — six posts on `@kunuzofficial` /
+`@burchakostida` had comments disabled (the engine keeps selecting such posts even though
+`@kunuzofficial`'s target health is already `blocked`), Match_TV's discussion group answers
+`400 INVITE_REQUEST_SENT` (it requires approval, so the pending request never resolves and the beta
+retries), and a gamma reaction failed with `400 MESSAGE_ID_INVALID`. None of these are Stage 39
+regressions, but they are the dominant limiter on actual publication now.
 `clone_alpha_91eea738.core_interests` was set to `["пробки","транспорт","свет"]` during P4
 testing (raw SQL) — harmless, adjust in the editor if desired.
 
