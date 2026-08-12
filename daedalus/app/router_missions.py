@@ -154,6 +154,9 @@ class TargetResponse(BaseModel):
 
 
 class MissionResponse(BaseModel):
+    # Stage 45 — lifecycle phase, alongside the legacy on/off `status`.
+    phase: str = "draft"
+    recon_at: Any = None
     id: int
     title: str
     platform: str
@@ -226,7 +229,9 @@ def _serialize(mission: Mission, db: Optional[Session] = None) -> MissionRespons
     return MissionResponse(
         id=mission.id, title=mission.title, platform=mission.platform,
         narrative_goal=mission.narrative_goal, stance=mission.stance,
-        tactic=mission.tactic, status=mission.status, agent_mode=mission.agent_mode,
+        tactic=mission.tactic, status=mission.status,
+        phase=mission.phase or "draft", recon_at=mission.recon_at,
+        agent_mode=mission.agent_mode,
         dynamic_count=mission.dynamic_count, forced_context=mission.forced_context,
         our_side=mission.our_side, opponent=mission.opponent,
         key_points=list(mission.key_points or []), red_lines=list(mission.red_lines or []),
@@ -439,6 +444,68 @@ def dossier_operator(
     } for r in rows], "total": len(rows)}
 
 
+MISSION_PHASES = ("draft", "recon", "ready", "active", "paused")
+
+
+class PhaseRequest(BaseModel):
+    phase: str = Field(..., description=" | ".join(MISSION_PHASES))
+
+
+@router.post("/{mission_id}/phase", response_model=MissionResponse)
+def set_phase(
+    mission_id: int,
+    body: PhaseRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> MissionResponse:
+    """
+    Move a mission through its lifecycle: draft → recon → ready → active → paused.
+
+    Going `active` is refused while the mission has no case file. That is the whole
+    point of having a phase instead of a switch: the previous model let a mission start
+    arguing before anyone had established what was true, and recon on mission #10 later
+    found its own key terms in 0 of 1252 facts — it had been ready to argue about
+    transport without one fact about transport.
+    """
+    phase = (body.phase or "").strip().lower()
+    if phase not in MISSION_PHASES:
+        raise HTTPException(status_code=400,
+                            detail=f"Фаза должна быть из {list(MISSION_PHASES)}.")
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Миссия не найдена.")
+
+    if phase == "active":
+        facts = (db.query(MissionDossier)
+                 .filter(MissionDossier.mission_id == mission_id,
+                         MissionDossier.kind == "fact")
+                 .count())
+        if facts == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Миссия не может выйти в бой без досье: не установлено ни одного "
+                       "факта. Запустите разведку — она скажет, каких источников не хватает.")
+        checks = mission_validate.validate_mission({
+            "goal": mission.narrative_goal, "stance": mission.stance,
+            "our_side": mission.our_side, "opponent": mission.opponent,
+            "key_points": mission.key_points or [], "red_lines": mission.red_lines or [],
+            "status": "active",
+        }, deep=False)
+        blocking = [i for i in checks["issues"] if i["severity"] == "error"]
+        if blocking:
+            raise HTTPException(
+                status_code=409,
+                detail="Миссия описана противоречиво: "
+                       + "; ".join(i["message"][:120] for i in blocking))
+
+    mission.phase = phase
+    # `status` stays the switch the engines read, so nothing downstream has to change.
+    mission.status = "active" if phase == "active" else "paused"
+    db.commit()
+    db.refresh(mission)
+    return _serialize(mission, db)
+
+
 @router.post("/{mission_id}/recon")
 def mission_recon_run(
     mission_id: int,
@@ -452,9 +519,21 @@ def mission_recon_run(
     comment. This gathers them once, for the whole roster, with sources.
     """
     try:
-        return mission_recon.run_recon(db, mission_id)
+        report = mission_recon.run_recon(db, mission_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Миссия не найдена.")
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if mission is not None:
+        mission.recon_at = datetime.now(timezone.utc)
+        # A recon that found something moves the mission on; one that found nothing
+        # leaves it in `recon`, which is the honest state — it still knows nothing.
+        if report.get("filed") and mission.phase in ("draft", "recon"):
+            mission.phase = "ready"
+        elif mission.phase == "draft":
+            mission.phase = "recon"
+        db.commit()
+    report["phase"] = mission.phase if mission else None
+    return report
 
 
 class OutcomeEntryIn(BaseModel):

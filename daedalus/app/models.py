@@ -365,14 +365,34 @@ class ProfileHistory(Base):
 
 class Mission(Base):
     """
-    Stage 17 — A coordinated, multi-agent narrative campaign executed as a DAG.
+    A mission is an autonomous TEAM working a position — not a template with a target
+    list, and not a comment generator.
 
-    Lifecycle (status):
-        pending   → created, squad assembled, not yet launched.
-        running   → Alpha tasks dispatched to Redis; Beta/Gamma locked.
-        amplifying→ Alpha reported SUCCESS; Beta/Gamma unlocked & dispatched.
-        completed → every squad member reached a terminal state.
-        failed    → Alpha failed; downstream waves never released.
+    Stage 45 rewrites the model itself, because the previous one contradicted what a
+    mission is for:
+
+    * **One claim, not three.** `narrative_goal`, `stance` and `our_side` all expressed
+      "what we argue", in three free-text fields with no rule about which wins. The
+      operator naturally wrote them as different thoughts — a goal as a fact about the
+      world, a stance as an explanation — and the model picked between them at random.
+      Live consequence: mission «За аргентину» (goal «должна была выиграть», stance
+      «проиграл из-за тренера») published a comment agreeing with the defeat. Now
+      `our_side` is THE claim the team asserts and the only thing fed as the position;
+      `narrative_goal` is what the AUDIENCE should end up thinking, which is a
+      different question and no longer competes with it; `stance` is legacy.
+
+    * **A phase, not an on/off switch.** `status` said only active|paused, so a mission
+      could start arguing before anyone had established what was true. Recon on
+      mission #10 found its distinctive terms in 0 of 1252 facts — the swarm was about
+      to argue about transport with no fact about transport. `phase` makes the
+      investigation a state the mission has to pass through: draft → recon → ready →
+      active.
+
+    * **Roles are a division of labour, not a volume knob.** alpha/beta/gamma described
+      how expensive a generation was: the alpha spoke and the others repeated it more
+      cheaply. That is an echo, not a team. `MissionSquad.assigned_role` now says what
+      a member DOES (scout / opener / support / closer); `caste` keeps the cost tier,
+      which is a separate axis.
     """
     __tablename__ = "missions"
 
@@ -382,13 +402,19 @@ class Mission(Base):
     # target_url is legacy/optional (real targets live in mission_targets).
     target_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     platform: Mapped[str] = mapped_column(String(30), default="telegram", nullable=False)
-    narrative_goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # what to advance
-    # The mission's worldview / "truth" / side — its stance the agents argue from.
+    # What the AUDIENCE should end up thinking — the effect, not the argument.
+    narrative_goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # LEGACY. Kept so existing missions are not silently emptied; new work states the
+    # claim in `our_side`. It is no longer injected as a competing instruction.
     stance: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Default/fallback tactic; per-post tactic is chosen dynamically at runtime.
     tactic: Mapped[str] = mapped_column(String(50), default="soft_support", nullable=False)
     # Permanent lifecycle: 'active' (in-progress) | 'paused'. Never "completed".
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
+    # draft → recon → ready → active → paused. The mission must pass through
+    # investigation before it may speak; `active` without a dossier is refused.
+    phase: Mapped[str] = mapped_column(String(20), default="draft", nullable=False, index=True)
+    recon_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Roster mode: 'manual' (operator-picked squad) | 'dynamic' (auto-fill to count).
     agent_mode: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
     dynamic_count: Mapped[int] = mapped_column(Integer, default=3, nullable=False)

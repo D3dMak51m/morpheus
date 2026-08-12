@@ -382,10 +382,18 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
         else:
             rules = str(rules_dict)
 
+        # Stage 45 — a role is a JOB in the discussion, not how expensive the
+        # generation is. alpha/beta/gamma meant one bot spoke and two repeated it more
+        # cheaply, which is an echo rather than a team. Cost stays on `caste`.
         role_directives = {
-            "alpha": "You are the FIRST to engage. Seed the narrative as an original, organic opinion — never reference any 'previous comment'.",
-            "beta": "You are reinforcing an allied lead comment. Agree with and strengthen its angle with a fresh supporting point — do not copy it.",
-            "gamma": "You are adding light supporting engagement — short, casual and natural; nudge sentiment without arguing at length.",
+            "scout": "Do NOT argue. Your job is to establish what is actually being claimed here and what it rests on: one short clarifying question or a factual observation. Take no side.",
+            "opener": "You open on substance. Take ONE concrete argument of yours and state it as your own live opinion, anchored to a specific detail of THIS post. Never reference any 'previous comment'.",
+            "support": "Someone has pushed back against our side. Answer THAT objection specifically — do not repeat what our people already said, take a different argument and address the opponent's actual claim.",
+            "closer": "The thread is heated. Lower the temperature: concede the point where the opponent is right, then bring it gently back to our line. Short, no attacks.",
+            # Legacy castes still arrive from older rosters.
+            "alpha": "You open on substance — as your own live opinion, never referencing any 'previous comment'.",
+            "beta": "You are reinforcing an allied comment. Agree and add a FRESH supporting point — do not copy it.",
+            "gamma": "You are adding light supporting engagement — short, casual, no long arguments.",
         }
         tactic_directives = {
             "amplify": "The crowd already leans your way. Reinforce and energize the prevailing sentiment — add a concrete reason that makes the shared view feel obvious and widely held.",
@@ -393,7 +401,7 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
             "aggressive_displacement": "This post / thread argues AGAINST your side. Openly DISAGREE with the author: name the specific claim or framing they got wrong and rebut it with your side's view on THAT point. Be assertive and confident, take a clear stand — do not hedge, do not stay neutral, do not drift to the channel's everyday small-talk. Stay civil — no insults, slurs or threats.",
             "sentiment_shift": "This post / thread argues AGAINST your side, with heat. Do NOT confront head-on — concede a small point, then subtly reframe the emotional angle toward your stance so readers shift without feeling pushed. Still make your disagreement with the author's core claim clear. Cunning, not combative.",
         }
-        role_line = role_directives.get(role, role_directives["alpha"])
+        role_line = role_directives.get(role, role_directives["opener"])
         tactic_line = tactic_directives.get(tactic, tactic_directives["soft_support"])
 
         prompt = f"""You are acting as the following human persona on social media. Never break character, never reveal or imply you are an AI, never explain yourself. Detect the language and script of the post and reply in the SAME language and script.
