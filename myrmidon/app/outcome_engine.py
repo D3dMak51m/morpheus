@@ -136,10 +136,19 @@ def _measure_one(sf, outcome: dict) -> None:
 
     post = posts[0]
     comments = post.get("comments") or []
-    ours = {c["id"] for c in comments if c.get("is_self")}
-    # Engagement = a real person answering one of OUR comments, not merely talking.
+    swarm = swarm_identities(sf)
+
+    def _is_ours(c: dict) -> bool:
+        if c.get("is_self"):
+            return True
+        author = str(c.get("author") or "").lstrip("@").lower()
+        return bool(author and author in swarm)
+
+    ours = {c["id"] for c in comments if _is_ours(c)}
+    # Engagement = someone who is NOT us answering one of our comments. Using
+    # Telegram's `is_self` alone counted the swarm's own beta and gamma as strangers.
     human_replies = sum(1 for c in comments
-                        if c.get("parent_id") in ours and not c.get("is_self"))
+                        if c.get("parent_id") in ours and not _is_ours(c))
 
     # Measure the CONVERSATION AFTER we spoke, not the whole thread.
     #
@@ -149,7 +158,7 @@ def _measure_one(sf, outcome: dict) -> None:
     # over the whole thread is structurally blind to the intervention it is meant to
     # judge. Splitting at our first comment asks the question that was actually
     # intended: did the discussion change direction after we entered?
-    ours_idx = next((i for i, c in enumerate(comments) if c.get("is_self")), None)
+    ours_idx = next((i for i, c in enumerate(comments) if _is_ours(c)), None)
     side = outcome.get("our_side") or outcome.get("stance") or ""
     post_text = post.get("text") or ""
 
@@ -160,7 +169,7 @@ def _measure_one(sf, outcome: dict) -> None:
         # We never actually appeared there (deleted, or the comment failed).
         mood = _mood_via_orpheus(side, post_text, _fmt(comments))
     else:
-        after = [c for c in comments[ours_idx + 1:] if not c.get("is_self")]
+        after = [c for c in comments[ours_idx + 1:] if not _is_ours(c)]
         if not after:
             # Nobody spoke after us: the tone did not "stay the same", the conversation
             # simply ended. Recording a verdict here would invent a result.
@@ -173,6 +182,56 @@ def _measure_one(sf, outcome: dict) -> None:
     logger.info("outcome_engine: %s — тон %s → %s, комментариев %d→%d, ответов людей %d",
                 outcome.get("post_url"), outcome.get("mood_before"), mood,
                 outcome.get("thread_size_before") or 0, len(comments), human_replies)
+
+
+def swarm_identities(sf) -> set:
+    """
+    Telegram usernames/ids of every account in the swarm, cached for a day.
+
+    Telegram's `is_self` marks only the READING session's own messages, so a thread
+    exported under the alpha shows the beta and gamma as strangers. Counting those as
+    engagement would have the swarm congratulating itself: a beta replying to its own
+    alpha would score as "a real person answered us". Engagement has to mean someone
+    who is not us.
+    """
+    cache_key = "morpheus:swarm_identities"
+    try:
+        cached = _get_redis().smembers(cache_key)
+        if cached:
+            return set(cached)
+    except Exception:
+        pass
+
+    from sqlalchemy import text as sql
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+
+    ids: set = set()
+    try:
+        with sf() as session:
+            rows = session.execute(sql(
+                "SELECT a.agent_id FROM agent_profiles a "
+                "JOIN souls_accounts s ON s.agent_id = a.agent_id "
+                "WHERE s.platform='telegram' AND s.status='active'")).fetchall()
+        for (agent_id,) in rows:
+            creds = get_agent_credentials(sf, agent_id, "telegram")
+            if not creds:
+                continue
+            me = TelegramDriver(agent_id, creds).whoami()
+            for value in (me.get("username"), me.get("id")):
+                if value:
+                    ids.add(str(value).lstrip("@").lower())
+    except Exception as exc:
+        logger.warning("swarm_identities: could not resolve: %s", exc)
+
+    if ids:
+        try:
+            r = _get_redis()
+            r.sadd(cache_key, *ids)
+            r.expire(cache_key, 86400)
+        except Exception:
+            pass
+    return ids
 
 
 def _any_reader(sf) -> Optional[str]:

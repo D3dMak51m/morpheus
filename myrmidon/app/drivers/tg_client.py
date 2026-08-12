@@ -787,6 +787,25 @@ class TelegramDriver:
                 })
         return out
 
+    def whoami(self) -> dict:
+        """This account's own Telegram identity (id/username), for swarm self-recognition."""
+        if not self._credentials_ok():
+            return {}
+        token = self._await_session_lock()
+        try:
+            return self._run(self._whoami_async())
+        except Exception as e:
+            logger.debug("TelegramDriver [%s]: whoami failed: %s", self.agent_id, e)
+            return {}
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
+    async def _whoami_async(self) -> dict:
+        app = self._build_client()
+        async with app:
+            me = await app.get_me()
+            return {"id": me.id, "username": me.username, "first_name": me.first_name}
+
     # ── Structured export for the SIMULATION polygon ───────────────────────
 
     def export_thread(self, channel_ref: str, post_limit: int = 10,
