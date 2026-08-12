@@ -189,6 +189,11 @@ class MissionIn(BaseModel):
     goal: Optional[str] = None
     stance: Optional[str] = None
     worldview: Optional[str] = None
+    # Stage 41 — the same explicit position production carries.
+    our_side: Optional[str] = None
+    opponent: Optional[str] = None
+    key_points: list[str] = Field(default_factory=list)
+    red_lines: list[str] = Field(default_factory=list)
     tactic: str = "dynamic"
     mode: str = "comment"
     status: str = "active"
@@ -427,7 +432,10 @@ def mission_out(db: Session, m: SimMission) -> dict[str, Any]:
     )
     return {
         "id": m.id, "world_id": m.world_id, "title": m.title, "goal": m.goal,
-        "stance": m.stance, "worldview": m.worldview, "tactic": m.tactic, "mode": m.mode,
+        "stance": m.stance, "worldview": m.worldview,
+        "our_side": m.our_side, "opponent": m.opponent,
+        "key_points": m.key_points or [], "red_lines": m.red_lines or [],
+        "tactic": m.tactic, "mode": m.mode,
         "status": m.status, "scope": m.scope or {}, "settings": m.settings or {},
         "agents": agents, "comments_produced": produced,
         "created_at": m.created_at, "updated_at": m.updated_at,
@@ -1177,7 +1185,9 @@ def create_mission(body: MissionIn, db: Session = Depends(get_db),
     world = get_world(db, body.world_id)
     mission = SimMission(
         world_id=world.id, title=body.title, goal=body.goal, stance=body.stance,
-        worldview=body.worldview, tactic=body.tactic, mode=body.mode, status=body.status,
+        worldview=body.worldview, our_side=body.our_side, opponent=body.opponent,
+        key_points=body.key_points, red_lines=body.red_lines,
+        tactic=body.tactic, mode=body.mode, status=body.status,
         scope=body.scope, settings=body.settings,
     )
     db.add(mission)
@@ -1203,6 +1213,10 @@ def update_mission(mission_id: int, body: MissionIn, db: Session = Depends(get_d
     mission.goal = body.goal
     mission.stance = body.stance
     mission.worldview = body.worldview
+    mission.our_side = body.our_side
+    mission.opponent = body.opponent
+    mission.key_points = body.key_points
+    mission.red_lines = body.red_lines
     mission.tactic = body.tactic
     mission.mode = body.mode
     mission.status = body.status

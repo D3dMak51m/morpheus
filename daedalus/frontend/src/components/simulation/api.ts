@@ -41,6 +41,9 @@ export interface SimMissionAgent { id: number; persona_id: number; role: string;
 export interface SimMission {
   id: number; world_id: number; title: string; goal: string | null; stance: string | null;
   worldview: string | null; tactic: string; mode: string; status: string;
+  // The explicit position, mirroring production `missions`.
+  our_side: string | null; opponent: string | null;
+  key_points: string[]; red_lines: string[];
   scope: { channel_ids?: number[]; post_id?: number }; settings: Record<string, any>;
   agents: SimMissionAgent[]; comments_produced: number;
 }

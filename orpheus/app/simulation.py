@@ -105,6 +105,28 @@ def _channel_block(channel: dict) -> str:
     return line
 
 
+def _position_block(position: dict) -> str:
+    """The mission's explicit side, formatted exactly as the live engine formats it."""
+    our_side = str(position.get("our_side") or "").strip()
+    opponent = str(position.get("opponent") or "").strip()
+    key_points = [str(p).strip() for p in (position.get("key_points") or []) if str(p).strip()][:5]
+    red_lines = [str(p).strip() for p in (position.get("red_lines") or []) if str(p).strip()][:5]
+    if not (our_side or opponent or key_points or red_lines):
+        return ""
+    block = "[Твоя сторона в этом споре]\n"
+    if our_side:
+        block += f"Ты за: {our_side}\n"
+    if opponent:
+        block += f"Противоположная сторона: {opponent}. Ты с ней НЕ согласен.\n"
+    if key_points:
+        block += "Твои доводы (используй ОДИН, тот что уместен здесь):\n"
+        block += "".join(f"- {p}\n" for p in key_points)
+    if red_lines:
+        block += "Никогда не говори следующее:\n"
+        block += "".join(f"- {p}\n" for p in red_lines)
+    return block.rstrip()
+
+
 def build_sim_prompt(req: dict) -> str:
     """
     Assemble the polygon prompt. ``prompt_override`` short-circuits everything —
@@ -132,6 +154,9 @@ def build_sim_prompt(req: dict) -> str:
         "stance": mission.get("stance") or "",
         "worldview": mission.get("worldview") or "",
         "tactic": mission.get("tactic") or "",
+        # Exposed as a placeholder too, so a prompt_override experiment can move the
+        # position block around instead of losing it.
+        "position": _position_block(mission.get("position") or {}),
         "incoming": incoming.get("text") or "",
         "incoming_author": incoming.get("author") or "",
         "tone": req.get("tone") or "",
@@ -218,6 +243,15 @@ def build_sim_prompt(req: dict) -> str:
         )
         if fields["goal"]:
             parts.append("Цель, которую продвигаешь: " + fields["goal"])
+
+        # Stage 41 — the mission as an explicit POSITION, identical to the block the
+        # live engine builds in `persona.assemble_mission_prompt`. Without it the
+        # polygon rehearsed a weaker mission than production runs: free-text goal +
+        # stance leaves the model to guess whose side it is on, and a contradiction
+        # between the two produces comments arguing against the mission's own goal.
+        if fields["position"]:
+            parts.append(fields["position"])
+
         if fields["stance"]:
             parts.append(
                 "Позиция, с которой ты споришь (никогда не иди против неё): " + fields["stance"])

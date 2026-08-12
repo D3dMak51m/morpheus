@@ -225,6 +225,14 @@ def mission_payload(m: Optional[SimMission]) -> dict[str, Any]:
     return {
         "id": m.id, "title": m.title, "goal": m.goal, "stance": m.stance,
         "worldview": m.worldview, "tactic": m.tactic, "mode": m.mode,
+        # Stage 41 — same shape production sends as `position`, so ORPHEUS builds
+        # the identical block for a polygon run and for a live one.
+        "position": {
+            "our_side": m.our_side or "",
+            "opponent": m.opponent or "",
+            "key_points": list(m.key_points or []),
+            "red_lines": list(m.red_lines or []),
+        },
         "settings": m.settings or {},
     }
 

@@ -497,9 +497,14 @@ def import_activity_history(db: Session, world_id: int, limit: int = 100) -> int
 
 def import_missions(db: Session, world_id: int, mission_ids: Optional[list[int]] = None) -> int:
     """
-    Copy production mission definitions in as simulation-only scenarios (goal /
-    stance / tactic). The copy has no link back: running it here can never touch
-    the real mission, its targets or its squad.
+    Copy production mission definitions in as simulation-only scenarios. The copy has
+    no link back: running it here can never touch the real mission, its targets or its
+    squad.
+
+    Stage 41 — the explicit position (`our_side` / `opponent` / `key_points` /
+    `red_lines`) travels with it. Dropping it, as this did, meant the polygon rehearsed
+    a weaker mission than production runs: without a declared side the model guesses
+    one, which is the very failure those fields exist to remove.
     """
     from app.models import Mission
 
@@ -513,6 +518,8 @@ def import_missions(db: Session, world_id: int, mission_ids: Optional[list[int]]
         db.add(SimMission(
             world_id=world_id, title=f"{m.title} (копия)", goal=m.narrative_goal,
             stance=m.stance, worldview=m.forced_context, tactic=m.tactic or "dynamic",
+            our_side=m.our_side, opponent=m.opponent,
+            key_points=list(m.key_points or []), red_lines=list(m.red_lines or []),
             mode="comment", status="paused",
             scope={}, settings={"imported_from_production_mission_id": m.id},
         ))

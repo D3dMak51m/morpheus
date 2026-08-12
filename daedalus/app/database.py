@@ -128,6 +128,12 @@ def init_tables() -> None:
         ("knowledge_facts", "geo_tags", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         # Stage 39 — source publication date (freshness must not mean "scraped today").
         ("knowledge_facts", "published_at", "TIMESTAMPTZ"),
+        # Stage 41 — polygon missions carry the same explicit position as production,
+        # so what is tuned in the polygon transfers to the live engine unchanged.
+        ("sim_missions", "our_side", "TEXT"),
+        ("sim_missions", "opponent", "TEXT"),
+        ("sim_missions", "key_points", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("sim_missions", "red_lines", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         # Stage 39 — scraping source health. A dead feed (kun.uz returned HTML with
         # HTTP 200 → 0 entries) was indistinguishable from "no new items"; HUGINN now
         # reports every pass so the operator can see a source stop producing.

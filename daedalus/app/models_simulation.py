@@ -324,6 +324,15 @@ class SimMission(SimBase):
     goal: Mapped[Optional[str]] = mapped_column(Text, nullable=True)        # цель
     stance: Mapped[Optional[str]] = mapped_column(Text, nullable=True)      # мировоззрение / сторона
     worldview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)   # дополнительный контекст
+    # Stage 41 — the mission as an explicit POSITION, mirroring production `missions`.
+    # Without these the polygon tested a strictly weaker mission than the live engine
+    # runs: free-text goal+stance makes the model guess whose side it is on, which is
+    # exactly the failure Stage 38 introduced these fields to remove. A polygon that
+    # cannot express the production position cannot predict production behaviour.
+    our_side: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    opponent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    key_points: Mapped[list] = mapped_column(JSONCol, nullable=False, default=list)
+    red_lines: Mapped[list] = mapped_column(JSONCol, nullable=False, default=list)
     # dynamic | soft_support | aggressive_displacement | sentiment_shift | amplify
     tactic: Mapped[str] = mapped_column(String(50), default="dynamic", nullable=False)
     # comment | reply | mixed — what the mission's agents produce.

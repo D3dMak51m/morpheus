@@ -225,7 +225,8 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
   onSaved: () => void; onJobStarted: (msg: string) => void;
 }) {
   const [form, setForm] = useState({
-    title: '', goal: '', stance: '', worldview: '', tactic: 'dynamic', mode: 'comment',
+    title: '', goal: '', stance: '', worldview: '', our_side: '', opponent: '',
+    key_points: [] as string[], red_lines: [] as string[], tactic: 'dynamic', mode: 'comment',
     status: 'active', agent_ids: [] as string[], channel_ids: [] as string[],
   });
   const [run, setRun] = useState({ post_id: '', per_agent: 1, mode: 'generate_publish', pace_sec: 0 });
@@ -237,11 +238,15 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
     setError('');
     setForm(mission ? {
       title: mission.title, goal: mission.goal || '', stance: mission.stance || '',
-      worldview: mission.worldview || '', tactic: mission.tactic, mode: mission.mode,
+      worldview: mission.worldview || '',
+      our_side: mission.our_side || '', opponent: mission.opponent || '',
+      key_points: mission.key_points || [], red_lines: mission.red_lines || [],
+      tactic: mission.tactic, mode: mission.mode,
       status: mission.status, agent_ids: mission.agents.map(a => String(a.persona_id)),
       channel_ids: (mission.scope?.channel_ids || []).map(String),
     } : {
-      title: '', goal: '', stance: '', worldview: '', tactic: 'dynamic', mode: 'comment',
+      title: '', goal: '', stance: '', worldview: '', our_side: '', opponent: '',
+      key_points: [], red_lines: [], tactic: 'dynamic', mode: 'comment',
       status: 'active', agent_ids: [], channel_ids: [],
     });
     setRun(r => ({ ...r, post_id: mission?.scope?.post_id ? String(mission.scope.post_id) : '' }));
@@ -252,7 +257,9 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
     try {
       const body = {
         world_id: worldId, title: form.title, goal: form.goal, stance: form.stance,
-        worldview: form.worldview, tactic: form.tactic, mode: form.mode, status: form.status,
+        worldview: form.worldview, our_side: form.our_side, opponent: form.opponent,
+        key_points: form.key_points, red_lines: form.red_lines,
+        tactic: form.tactic, mode: form.mode, status: form.status,
         scope: {
           channel_ids: form.channel_ids.map(Number),
           ...(run.post_id ? { post_id: Number(run.post_id) } : {}),
@@ -302,6 +309,23 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
         <Textarea label="Мировоззрение / позиция" autosize minRows={2} value={form.stance}
           onChange={e => setForm({ ...form, stance: e.currentTarget.value })}
           placeholder="сторона, с которой спорят агенты — пишите утверждением, а не списком тегов" />
+        {/* The explicit position — same four fields the live engine reads. Without
+            them the model guesses whose side it is on, which is how a mission ends up
+            arguing against its own goal. */}
+        <Divider label="Сторона в споре — как в боевой миссии" labelPosition="left" />
+        <Textarea label="Ты за" autosize minRows={2} value={form.our_side}
+          onChange={e => setForm({ ...form, our_side: e.currentTarget.value })}
+          placeholder="утверждение, которое агент защищает" />
+        <Textarea label="Противоположная сторона" autosize minRows={1} value={form.opponent}
+          onChange={e => setForm({ ...form, opponent: e.currentTarget.value })}
+          placeholder="с чем агент НЕ согласен" />
+        <TagsInput label="Ключевые доводы" value={form.key_points}
+          onChange={v => setForm({ ...form, key_points: v })}
+          description="агент возьмёт ОДИН, уместный для конкретного поста (максимум 5)" />
+        <TagsInput label="Красные линии" value={form.red_lines}
+          onChange={v => setForm({ ...form, red_lines: v })}
+          description="чего агент не скажет никогда (максимум 5)" />
+        <Divider />
         <Textarea label="Дополнительный контекст" autosize minRows={2} value={form.worldview}
           onChange={e => setForm({ ...form, worldview: e.currentTarget.value })} />
         <Group grow>
