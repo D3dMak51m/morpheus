@@ -426,6 +426,28 @@ def dossier_get(
     return {"dossier": out}
 
 
+@router.get("/{mission_id}/outcomes")
+def mission_outcomes(
+    mission_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> dict[str, Any]:
+    """What the mission achieved, discussion by discussion — tone moved, people engaged."""
+    rows = (db.query(MissionOutcome)
+            .filter(MissionOutcome.mission_id == mission_id)
+            .order_by(MissionOutcome.entered_at.desc())
+            .limit(min(max(limit, 1), 200)).all())
+    return {"outcomes": [{
+        "id": o.id, "post_url": o.post_url, "channel_ref": o.channel_ref,
+        "mood_before": o.mood_before, "mood_after": o.mood_after,
+        "thread_size_before": o.thread_size_before, "thread_size_after": o.thread_size_after,
+        "thread_grew": o.thread_grew, "our_comments": o.our_comments,
+        "human_replies": o.human_replies, "entered_at": o.entered_at,
+        "measured_at": o.measured_at,
+    } for o in rows], "total": len(rows)}
+
+
 @router.get("/{mission_id}/dossier")
 def dossier_operator(
     mission_id: int,

@@ -33,6 +33,7 @@ function TargetHealthBadge({ health }: { health: string }) {
 interface Mission {
   id: number; title: string; platform: string; narrative_goal: string | null; stance: string | null;
   our_side: string | null; opponent: string | null; key_points: string[]; red_lines: string[];
+  phase: string; recon_at: string | null;
   tactic: string; status: string; agent_mode: string; dynamic_count: number; forced_context: string | null;
   squad: SquadMember[]; targets: MTarget[];
   summary: {
@@ -41,6 +42,27 @@ interface Mission {
   };
 }
 interface EligibleAgent { agent_id: string; codename: string | null; caste: string; status: string; active_mission_load: number; at_capacity: boolean; already_enlisted: boolean; match_score: number; match_reasons: string[]; }
+
+export interface DossierEntry {
+  id: number; kind: string; content: string; source_url: string | null;
+  added_by: string; post_url: string | null; times_used: number;
+}
+export interface Outcome {
+  id: number; post_url: string; channel_ref: string;
+  mood_before: string | null; mood_after: string | null;
+  thread_size_before: number; thread_size_after: number; thread_grew: boolean;
+  our_comments: number; human_replies: number; measured_at: string | null;
+}
+const PHASES = [
+  { value: 'draft', label: 'Черновик', hint: 'формулируется' },
+  { value: 'recon', label: 'Разведка', hint: 'собирает факты, не спорит' },
+  { value: 'ready', label: 'Готова', hint: 'досье собрано, ждёт запуска' },
+  { value: 'active', label: 'В работе', hint: 'действует' },
+];
+const PHASE_COLOR: Record<string, string> = {
+  draft: 'gray', recon: 'blue', ready: 'yellow', active: 'teal', paused: 'orange',
+};
+const MOOD_RU: Record<string, string> = { AGREE: 'за нас', NEUTRAL: 'нейтрально', OPPOSE: 'против нас' };
 
 export interface MissionPrefill { target_url: string; title: string; narrative_goal: string; }
 interface Props {
@@ -76,8 +98,10 @@ export default function MissionsScreen({ token, selectedId, onOpen, onBack, pref
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill]);
 
-  const setStatus = async (m: Mission, status: string) => {
-    const r = await fetch(`/api/v1/missions/${m.id}/status`, { method: 'POST', headers, body: JSON.stringify({ status }) });
+  // Stage 45 — the list drives PHASES, not the old on/off status: a mission may not
+  // go active before its dossier exists, and the phase endpoint enforces that.
+  const setPhaseFromList = async (m: Mission, phase: string) => {
+    const r = await fetch(`/api/v1/missions/${m.id}/phase`, { method: 'POST', headers, body: JSON.stringify({ phase }) });
     if (r.ok) { const u = await r.json(); setMissions(prev => prev.map(x => x.id === u.id ? u : x)); }
   };
 
@@ -89,14 +113,19 @@ export default function MissionsScreen({ token, selectedId, onOpen, onBack, pref
     if (!m) return <DetailPage onBack={onBack} title="Загрузка…" subtitle={selectedId}><Text c="dimmed">Миссия загружается…</Text></DetailPage>;
     return <MissionDetail key={m.id} token={token} mission={m} onBack={onBack}
       onChanged={(u) => setMissions(prev => prev.map(x => x.id === u.id ? u : x))}
-      onStatus={setStatus} onDeleted={() => { fetchMissions(); onBack(); }} goTo={goTo} />;
+      onDeleted={() => { fetchMissions(); onBack(); }} goTo={goTo} />;
   }
 
   const columns: Col<Mission>[] = [
     { key: 'title', header: 'Миссия', minWidth: 320, sortValue: m => m.title.toLowerCase(),
       render: m => (<Stack gap={2}><Text fw={600}>{m.title}</Text>{m.narrative_goal && <Text size="xs" c="dimmed" lineClamp={1}>🎯 {m.narrative_goal}</Text>}</Stack>) },
     { key: 'status', header: 'Статус', minWidth: 120, sortValue: m => m.status,
-      render: m => <Badge color={m.status === 'active' ? 'teal' : 'orange'} variant="light">{m.summary.status_label}</Badge> },
+      render: m => (
+        <Badge color={PHASE_COLOR[m.phase] || 'gray'} variant="light"
+               style={{ cursor: 'pointer' }}
+               onClick={e => { e.stopPropagation(); setPhaseFromList(m, m.phase === 'active' ? 'paused' : 'active'); }}>
+          {PHASES.find(p => p.value === m.phase)?.label || m.phase}
+        </Badge>) },
     { key: 'agents', header: 'Агенты', minWidth: 90, align: 'right', sortValue: m => m.summary.agents.total || 0,
       render: m => m.summary.agents.total || 0 },
     { key: 'targets', header: 'Цели', minWidth: 170, align: 'right', sortValue: m => m.summary.targets.active || 0,
@@ -178,9 +207,9 @@ function MissionCreate({ token, prefill, onCreated, onBack, onOpen }: {
 }
 
 // ── Detail ──
-function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted, goTo }: {
+function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
   token: string; mission: Mission; onBack: () => void; onChanged: (m: Mission) => void;
-  onStatus: (m: Mission, s: string) => void; onDeleted: () => void; goTo?: (view: string, id?: string) => void;
+  onDeleted: () => void; goTo?: (view: string, id?: string) => void;
 }) {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [m, setM] = useState<Mission>(mission);
@@ -201,6 +230,46 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
   // with the defeat it existed to dispute. Advisory only: it never blocks saving.
   const [issues, setIssues] = useState<{ field: string; severity: string; message: string }[]>([]);
   const [checking, setChecking] = useState(false);
+  // Stage 45 — the mission has a lifecycle, not a switch. It must pass through
+  // investigation before it may argue, so the header drives phases and the engine
+  // refuses `active` while the dossier is empty.
+  const [dossier, setDossier] = useState<DossierEntry[]>([]);
+  const [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const [reconBusy, setReconBusy] = useState(false);
+  const [phaseError, setPhaseError] = useState('');
+  const [reconReport, setReconReport] = useState<any>(null);
+
+  const loadDossier = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/v1/missions/${m.id}/dossier`, { headers });
+      if (r.ok) setDossier((await r.json()).entries || []);
+    } catch { /* advisory */ }
+    try {
+      const r = await fetch(`/api/v1/missions/${m.id}/outcomes`, { headers });
+      if (r.ok) setOutcomes((await r.json()).outcomes || []);
+    } catch { /* advisory */ }
+  }, [m.id, token]);
+  useEffect(() => { loadDossier(); }, [loadDossier]);
+
+  const setPhase = async (phase: string) => {
+    setPhaseError('');
+    const r = await fetch(`/api/v1/missions/${m.id}/phase`, {
+      method: 'POST', headers, body: JSON.stringify({ phase }) });
+    if (r.ok) apply(await r.json());
+    else setPhaseError((await r.json()).detail || 'не удалось сменить фазу');
+  };
+
+  const runRecon = async () => {
+    setReconBusy(true); setPhaseError(''); setReconReport(null);
+    try {
+      const r = await fetch(`/api/v1/missions/${m.id}/recon`, { method: 'POST', headers });
+      const rep = await r.json();
+      setReconReport(rep);
+      loadDossier();
+      const mr = await fetch(`/api/v1/missions/${m.id}`, { headers });
+      if (mr.ok) apply(await mr.json());
+    } catch (e: any) { setPhaseError(String(e)); } finally { setReconBusy(false); }
+  };
 
   const apply = (u: Mission) => { setM(u); onChanged(u); };
 
@@ -257,7 +326,6 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
     if (r.ok) onDeleted();
   };
 
-  const isActive = m.status === 'active';
   const freeEligible = eligible.filter(e => !e.already_enlisted && !e.at_capacity);
 
   return (
@@ -266,23 +334,59 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
       title={m.title}
       subtitle={<Text span size="sm" c="dimmed">постоянная цель · {m.summary.agents.total || 0} агент(ов) · {m.summary.targets.active || 0} цел.</Text>}
       headerRight={
-        <>
-          <Badge size="lg" color={isActive ? 'teal' : 'orange'} variant="light">{m.summary.status_label}</Badge>
-          {isActive
-            ? <Button variant="light" color="orange" leftSection={<Pause size={15} />} onClick={() => onStatus(m, 'paused')}>Пауза</Button>
-            : <Button variant="light" color="teal" leftSection={<Play size={15} />} onClick={() => onStatus(m, 'active')}>Возобновить</Button>}
-        </>
+        <Group gap="xs">
+          <Badge size="lg" color={PHASE_COLOR[m.phase] || 'gray'} variant="light">
+            {PHASES.find(p => p.value === m.phase)?.label || m.phase}
+          </Badge>
+          {m.phase !== 'active'
+            ? <Button variant="light" color="teal" leftSection={<Play size={15} />}
+                onClick={() => setPhase('active')}>В работу</Button>
+            : <Button variant="light" color="orange" leftSection={<Pause size={15} />}
+                onClick={() => setPhase('paused')}>Пауза</Button>}
+        </Group>
       }
     >
       <Tabs defaultValue="overview" keepMounted={false}>
         <Tabs.List mb="md">
           <Tabs.Tab value="overview">Обзор</Tabs.Tab>
+          <Tabs.Tab value="dossier">Досье ({dossier.length})</Tabs.Tab>
+          <Tabs.Tab value="results">Результат ({outcomes.length})</Tabs.Tab>
           <Tabs.Tab value="targets">Цели ({m.summary.targets.active || 0}){(m.summary.targets.suggested || 0) > 0 ? ` · ⏳${m.summary.targets.suggested}` : ''}</Tabs.Tab>
           <Tabs.Tab value="agents">Агенты ({m.summary.agents.total || 0})</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="overview">
           <Stack gap="md" maw={720}>
+            {/* The lifecycle, in the order it is meant to happen. A mission may not
+                argue about something it has not established. */}
+            <Paper withBorder p="sm" radius="sm">
+              <Group justify="space-between" mb={6}>
+                <Text fw={600} size="sm">Этап миссии</Text>
+                <Button size="compact-xs" variant="light" loading={reconBusy} onClick={runRecon}>
+                  Запустить разведку
+                </Button>
+              </Group>
+              <Group gap={6} wrap="wrap">
+                {PHASES.map(p => (
+                  <Badge key={p.value} variant={m.phase === p.value ? 'filled' : 'light'}
+                         color={m.phase === p.value ? PHASE_COLOR[p.value] : 'gray'}
+                         style={{ cursor: 'pointer' }} onClick={() => setPhase(p.value)}>
+                    {p.label}
+                  </Badge>
+                ))}
+              </Group>
+              <Text size="xs" c="dimmed" mt={6}>
+                {PHASES.find(p => p.value === m.phase)?.hint || 'на паузе'} · фактов в досье:{' '}
+                {dossier.filter(d => d.kind === 'fact').length}
+              </Text>
+              {phaseError && <Alert color="red" mt="sm">{phaseError}</Alert>}
+              {reconReport && (
+                <Alert color={reconReport.filed ? 'teal' : 'yellow'} mt="sm">
+                  Просмотрено {reconReport.scanned}, взято в досье {reconReport.filed}.
+                  {reconReport.reason ? ` ${reconReport.reason}` : ''}
+                </Alert>
+              )}
+            </Paper>
             {issues.length > 0 && (
               <Alert color={issues.some(i => i.severity === 'error') ? 'red' : 'yellow'}
                      title="Проверка миссии">
@@ -318,6 +422,76 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
               <Button loading={saving} onClick={save}>Сохранить</Button>
               <Button variant="subtle" color="red" leftSection={<Trash2 size={15} />} onClick={remove}>Удалить миссию</Button>
             </Group>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="dossier">
+          <Stack gap="sm" maw={860}>
+            <Text size="sm" c="dimmed">
+              Общая память команды: что установлено, что говорит другая сторона и какие
+              доводы наши уже использовали. Ростер читает её целиком, поэтому агенты не
+              повторяют друг друга.
+            </Text>
+            {dossier.length === 0 && (
+              <Alert color="yellow">
+                Досье пустое — миссия не выйдет в работу. Запустите разведку на вкладке «Обзор».
+              </Alert>
+            )}
+            {['fact', 'opponent', 'counter', 'said'].map(kind => {
+              const rows = dossier.filter(d => d.kind === kind);
+              if (!rows.length) return null;
+              const title = { fact: 'Установленные факты', opponent: 'Доводы другой стороны',
+                              counter: 'Наши контрдоводы', said: 'Уже сказано нашими' }[kind];
+              return (
+                <Paper key={kind} withBorder p="sm" radius="sm">
+                  <Text fw={600} size="sm" mb={6}>{title} ({rows.length})</Text>
+                  <Stack gap={4}>
+                    {rows.slice(0, 25).map(d => (
+                      <Group key={d.id} justify="space-between" wrap="nowrap" align="flex-start">
+                        <Text size="sm" style={{ minWidth: 0 }}>{d.content}</Text>
+                        <Group gap={4} wrap="nowrap">
+                          {d.times_used > 1 && <Badge size="xs" variant="light">×{d.times_used}</Badge>}
+                          <Badge size="xs" variant="light" color="gray">{d.added_by}</Badge>
+                        </Group>
+                      </Group>
+                    ))}
+                  </Stack>
+                </Paper>
+              );
+            })}
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="results">
+          <Stack gap="sm" maw={860}>
+            <Text size="sm" c="dimmed">
+              Успех — это сдвиг тона обсуждения и живые люди, втянувшиеся в разговор.
+              Тон замеряется по репликам ПОСЛЕ нашего захода: одна реплика среди двадцати
+              не двигает среднее по всей ветке, поэтому среднее ничего и не показывало.
+            </Text>
+            {outcomes.length === 0 && <Text c="dimmed" size="sm">Пока нет ни одного замера.</Text>}
+            {outcomes.map(o => {
+              const moved = o.mood_after && o.mood_before && o.mood_after !== o.mood_before;
+              return (
+                <Paper key={o.id} withBorder p="sm" radius="sm">
+                  <Group justify="space-between" wrap="nowrap">
+                    <Text size="sm" style={{ minWidth: 0 }} lineClamp={1}>{o.post_url}</Text>
+                    {!o.measured_at
+                      ? <Badge size="sm" variant="light" color="gray">ждёт замера</Badge>
+                      : <Badge size="sm" variant="light" color={moved ? 'teal' : 'gray'}>
+                          {moved ? 'тон сдвинулся' : 'без сдвига'}
+                        </Badge>}
+                  </Group>
+                  <Text size="xs" c="dimmed" mt={4}>
+                    тон: {MOOD_RU[o.mood_before || ''] || '—'} →{' '}
+                    {o.measured_at ? (MOOD_RU[o.mood_after || ''] || 'после нас никто не писал') : '—'}
+                    {' · '}ветка: {o.thread_size_before} → {o.thread_size_after}
+                    {' · '}наших реплик: {o.our_comments}
+                    {' · '}ответили живые: {o.human_replies}
+                  </Text>
+                </Paper>
+              );
+            })}
           </Stack>
         </Tabs.Panel>
 
