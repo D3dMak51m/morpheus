@@ -271,6 +271,10 @@ class AgentActivityLog(Base):
     target_url: Mapped[str] = mapped_column(String(500), nullable=False)
     text_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="dispatched", nullable=False)
+    # Stage 42 — which mission caused this. Without it a mission could not see its own
+    # output: 46 published comments existed and not one was attributable, so a mission
+    # could neither remember what it had already argued nor tell whether it worked.
+    mission_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
@@ -747,6 +751,54 @@ class ChannelProfile(Base):
 
     def __repr__(self) -> str:
         return f"<ChannelProfile(platform='{self.platform}', ref='{self.channel_ref}', geo={self.geo_layers})>"
+
+
+class MissionOutcome(Base):
+    """
+    Stage 42 — what a mission actually ACHIEVED in one discussion.
+
+    The operator's definition of success is: the tone of the discussion changed, and
+    real people were drawn into dialogue. Both were already computable and both were
+    thrown away — the 3-way mood verdict (AGREE/NEUTRAL/OPPOSE) was calculated to pick
+    a tactic and discarded, and human replies were logged without any link to the
+    mission that provoked them.
+
+    One row per (mission, discussion). ``mood_before`` is the verdict recorded at the
+    moment we entered; ``mood_after`` is the same judgement re-run on the same thread
+    later, so the pair is the tone delta. ``thread_grew`` separates "the tone did not
+    move" from "nobody said anything at all" — collapsing those two into one number
+    would quietly report failure as success, and vice versa.
+    """
+    __tablename__ = "mission_outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mission_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(30), default="telegram", nullable=False)
+    channel_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    post_url: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
+
+    # AGREE | NEUTRAL | OPPOSE — the crowd's stance toward OUR position.
+    mood_before: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    mood_after: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Comments in the thread when we entered / when we re-measured.
+    thread_size_before: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    thread_size_after: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    thread_grew: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Engagement: replies by real humans to our comments in this thread.
+    our_comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    human_replies: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    entered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    measured_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (UniqueConstraint("mission_id", "post_url", name="uq_mission_outcome"),)
+
+    def __repr__(self) -> str:
+        return (f"<MissionOutcome(mission={self.mission_id}, {self.mood_before}→"
+                f"{self.mood_after}, replies={self.human_replies})>")
 
 
 class DecisionEvent(Base):

@@ -433,6 +433,16 @@ def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
         build_mood_prompt(side, thread, post_text),
         max_tokens=6, temperature=0.2, penalties=False,
     )
+    # Stage 42 — keep the verdict itself, not just the tactic derived from it. The
+    # operator measures success as a CHANGE of tone, and this is the "before" reading;
+    # it used to be computed and thrown away on every single comment.
+    verdict = "NEUTRAL"
+    up = (raw or "").strip().upper()
+    for m in ("AGREE", "OPPOSE", "NEUTRAL"):
+        if m in up:
+            verdict = m
+            break
+    req["_mood"] = verdict
     return tactic_from_mood(raw, post_text, thread)
 
 
@@ -526,7 +536,10 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                 # Return the resolved tactic so MYRMIDON can propagate it to the
                 # mission's beta/gamma amplification (squad coherence).
                 result = {"status": "ok", "text": final_text, "reason": "",
-                          "tactic": req.get("tactic")}
+                          "tactic": req.get("tactic"),
+                          # The crowd's stance toward us at the moment we entered.
+                          "mood": req.get("_mood"),
+                          "thread_size": req.get("thread_size") or 0}
                 emit_event(agent_id, "generated",
                            ("готов ответ: " if is_reply else "готов комментарий: ") + final_text[:60],
                            status="ok", target=req.get("author") or "")

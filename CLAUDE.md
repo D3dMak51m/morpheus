@@ -230,7 +230,13 @@ wordings a merge superseded, `published_at` = the SOURCE's date — freshness mu
 today"), `scraping_landscape` (sources + health: `health`, `health_reason`, `last_item_count`,
 `consecutive_empty`, `last_scraped_at`), `captured_raw_events` (News Hub, display only),
 `scouted_targets`, `social_post_targets`, `campaigns`.
-Activity: **`agent_activity_logs`** (durable: comment|reply|react), **`decision_events`**
+Activity: **`agent_activity_logs`** (durable: comment|reply|react; `mission_id` = which
+mission caused it — added Stage 42, before which 46 published comments belonged to nobody
+and no mission could be measured), **`mission_outcomes`** (one row per mission×discussion:
+`mood_before`/`mood_after` = the crowd's stance toward us before and after we spoke,
+`thread_grew` separating "tone did not move" from "nobody said anything", `our_comments`,
+`human_replies` — the operator's success measure is tone change + people drawn into
+dialogue), **`decision_events`**
 (durable WHY the swarm did/didn't act: kind relevance|skip|comment, detail = recognized text/
 reason, verdict), `account_audit_logs`, `virtual_devices`.
 Simulation (**isolated polygon, never production**): `sim_worlds`, `sim_channels`, `sim_posts`,

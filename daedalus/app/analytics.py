@@ -794,6 +794,7 @@ class ActivityLogRequest(BaseModel):
     target_url: str
     text_content: Optional[str] = None
     status: str
+    mission_id: Optional[int] = None
 
 @router.post("/internal/activity", status_code=201)
 def internal_log_activity(
@@ -814,6 +815,7 @@ def internal_log_activity(
         target_url=request.target_url,
         text_content=request.text_content,
         status=request.status,
+        mission_id=request.mission_id,
     )
     db.add(log_entry)
     db.commit()

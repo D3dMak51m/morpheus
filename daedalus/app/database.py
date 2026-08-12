@@ -128,6 +128,9 @@ def init_tables() -> None:
         ("knowledge_facts", "geo_tags", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         # Stage 39 — source publication date (freshness must not mean "scraped today").
         ("knowledge_facts", "published_at", "TIMESTAMPTZ"),
+        # Stage 42 — which mission an action belongs to, so a mission can see its own
+        # output and be measured at all.
+        ("agent_activity_logs", "mission_id", "INTEGER"),
         # Stage 41 — polygon missions carry the same explicit position as production,
         # so what is tuned in the polygon transfers to the live engine unchanged.
         ("sim_missions", "our_side", "TEXT"),

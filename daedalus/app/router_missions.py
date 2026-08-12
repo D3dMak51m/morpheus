@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, Mission, MissionSquad, MissionTarget, AgentProfile
+from app.models import (AdminUser, AgentProfile, Mission, MissionOutcome,
+                        MissionSquad, MissionTarget)
 from app.rbac import require_permission
 from app import mission_control, mission_validate
 
@@ -331,6 +332,50 @@ def update_mission(
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
+
+
+class OutcomeEntryIn(BaseModel):
+    mission_id: int
+    platform: str = "telegram"
+    channel_ref: str = ""
+    post_url: str
+    mood_before: Optional[str] = None
+    thread_size_before: int = 0
+
+
+@router.post("/internal/outcome-entry")
+def outcome_entry(
+    body: OutcomeEntryIn,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Open (or top up) the outcome row for one discussion a mission entered.
+
+    Success, as the operator defines it, is a CHANGE of tone plus real people drawn
+    into dialogue. This records the "before" reading — the crowd's stance toward us at
+    the moment we first spoke there — which until now was computed to pick a tactic and
+    immediately discarded. One row per (mission, post): a second comment in the same
+    thread increments the counter, it does not reset the baseline.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    row = (db.query(MissionOutcome)
+           .filter(MissionOutcome.mission_id == body.mission_id,
+                   MissionOutcome.post_url == body.post_url)
+           .first())
+    if row is None:
+        row = MissionOutcome(
+            mission_id=body.mission_id, platform=body.platform,
+            channel_ref=body.channel_ref or "", post_url=body.post_url,
+            mood_before=body.mood_before, thread_size_before=body.thread_size_before,
+            our_comments=1,
+        )
+        db.add(row)
+    else:
+        row.our_comments = (row.our_comments or 0) + 1
+    db.commit()
+    return {"status": "ok", "outcome_id": row.id, "our_comments": row.our_comments}
 
 
 @router.get("/{mission_id}/validate")

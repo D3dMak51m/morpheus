@@ -251,6 +251,10 @@ def _log_activity_to_daedalus(task: dict, status: str) -> None:
         "target_url": task.get("target_url", ""),
         "text_content": task.get("text_to_publish", ""),
         "status": status,
+        # Stage 42 — attribution. The execution task already carries the mission that
+        # produced it; not passing it on is why 46 published comments belonged to
+        # nobody and no mission could be measured.
+        "mission_id": task.get("mission_id"),
     }
     
     headers = {"X-Internal-Token": INTERNAL_API_TOKEN}
@@ -262,6 +266,24 @@ def _log_activity_to_daedalus(task: dict, status: str) -> None:
             logger.debug("Activity logged to Daedalus: %s (status=%s)", task.get("task_id"), status)
     except Exception as exc:
         logger.error("Failed to log activity to Daedalus: %s", exc)
+
+
+def _record_outcome_entry(task: dict, mood: str, thread_size: int) -> None:
+    """Open a mission-outcome row for this discussion (best-effort, never blocks)."""
+    from app import target_health
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            client.post(
+                f"{DAEDALUS_URL}/api/v1/missions/internal/outcome-entry",
+                json={"mission_id": task.get("mission_id"),
+                      "platform": task.get("target_platform") or "telegram",
+                      "channel_ref": target_health.url_channel_ref(task.get("target_url") or ""),
+                      "post_url": task.get("target_url") or "",
+                      "mood_before": mood, "thread_size_before": int(thread_size or 0)},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+    except Exception as exc:
+        logger.debug("outcome entry failed: %s", exc)
 
 
 # ── Cognitive comment generation (ORPHEUS request/reply over Redis) ────────
@@ -336,6 +358,11 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
             resolved_tactic = data.get("tactic")
             if resolved_tactic and resolved_tactic != "dynamic":
                 task["tactic"] = resolved_tactic
+            # Stage 42 — the crowd's stance toward us at the moment we entered. This is
+            # the "before" half of the operator's success measure (did the tone move?),
+            # recorded once per discussion when the mission first speaks there.
+            if data.get("mood") and task.get("mission_id"):
+                _record_outcome_entry(task, data.get("mood"), data.get("thread_size") or 0)
             logger.info("Task %s — ORPHEUS comment ready (%d chars).", task.get("task_id"), len(data["text"]))
             return data["text"]
         logger.warning("Task %s — ORPHEUS returned no text (%s); using fallback.", task.get("task_id"), data.get("reason"))
