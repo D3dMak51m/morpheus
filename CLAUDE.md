@@ -230,6 +230,16 @@ wordings a merge superseded, `published_at` = the SOURCE's date — freshness mu
 today"), `scraping_landscape` (sources + health: `health`, `health_reason`, `last_item_count`,
 `consecutive_empty`, `last_scraped_at`), `captured_raw_events` (News Hub, display only),
 `scouted_targets`, `social_post_targets`, `campaigns`.
+Mission recon: **`mission_recon.py`** (`POST /missions/{id}/recon`) builds the mission's
+factual base into the dossier before it speaks. Retrieval is **lexical-first**, unlike
+per-comment RAG, and measured: asked for the transport mission, the top-40 by cosine were
+Novorossiysk transport, Trump/Ukraine, weightlifters and a fire, so an embedding-first
+recon reports "we know nothing" falsely. Terms are weighted by **IDF over the scanned
+slice**, because a plain share-of-words test admits articles reusing the mission's filler
+(«развитие», «город»). When nothing is filed it returns `missing_terms` — the mission's own
+words the corpus never mentions — which is the actionable half: on mission #10 «пробки»,
+«полоса» and «решают» appeared in 0 of 1252 facts, i.e. the swarm was about to argue from
+an empty base.
 Mission state: **`mission_dossier`** (the team's shared case file — `kind` =
 `fact` (with source) | `opponent` (what the other side argues here) | `counter` |
 `said` (an argument our side already used, scoped to a post_url). Anti-repeat used to be

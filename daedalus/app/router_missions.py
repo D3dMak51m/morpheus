@@ -22,7 +22,7 @@ from app.database import get_db
 from app.models import (AdminUser, AgentProfile, Mission, MissionDossier,
                         MissionOutcome, MissionSquad, MissionTarget)
 from app.rbac import require_permission
-from app import mission_control, mission_validate
+from app import mission_control, mission_recon, mission_validate
 
 logger = logging.getLogger("daedalus.router_missions")
 
@@ -437,6 +437,24 @@ def dossier_operator(
         "added_by": r.added_by, "related_id": r.related_id, "post_url": r.post_url,
         "times_used": r.times_used, "created_at": r.created_at,
     } for r in rows], "total": len(rows)}
+
+
+@router.post("/{mission_id}/recon")
+def mission_recon_run(
+    mission_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """
+    Build the mission's factual base from the knowledge store, into its dossier.
+
+    A mission used to argue from whatever four facts happened to surface for one
+    comment. This gathers them once, for the whole roster, with sources.
+    """
+    try:
+        return mission_recon.run_recon(db, mission_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Миссия не найдена.")
 
 
 class OutcomeEntryIn(BaseModel):
