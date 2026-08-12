@@ -223,7 +223,16 @@ def _active_missions(sf) -> list[dict]:
                                              float(checked) if checked else None):
                     logger.info("target_engine: mission %s — skipping blocked target %s.", mid, ident)
                     continue
-                if (health or "unknown") == "unknown":
+                # Re-probe anything we cannot vouch for: never-checked targets AND ones
+                # whose `blocked` backoff has just expired (reaching this line means it
+                # did — `should_skip` would have dropped it otherwise). Stage 39: an
+                # expired-backoff target used to go straight into the full cycle —
+                # fetch, relevance, generation, publish — and fail on "no discussion
+                # thread", and because the failure path never reports health, the
+                # timestamp stayed frozen (`@kunuzofficial`: 26 Jul) so the backoff
+                # never re-engaged. One cheap capability probe replaces that whole
+                # wasted round trip and re-arms the 6h window.
+                if (health or "unknown") in ("unknown", "blocked"):
                     unchecked.append(ident)
                 usable.append((ident, ttl))
             tgts = usable

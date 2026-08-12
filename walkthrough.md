@@ -608,6 +608,25 @@ proved the documented failure: mission #14 is «За аргентину», and t
 missions were paused instead; #10's goal and stance do not contradict each other, so it stayed on.
 Re-activate any of them from the Missions screen once a position is written.
 
+**Publication failures fixed after that measurement (Stage 39 follow-up 2):**
+* an expired-backoff `blocked` target was re-entering the FULL cycle (fetch → relevance →
+  generation → publish → fail) because the cheap re-probe list only took `unknown` targets, and
+  the failure path never reports health — so `@kunuzofficial`'s `health_checked_at` sat at 26 Jul
+  and the 6h backoff never re-armed. Blocked-and-expired targets are re-probed now; verified live,
+  the timestamp refreshed and the next cycle logged "skipping blocked target".
+* `INVITE_REQUEST_SENT` now has its own reason — the group needs an admin to approve the pending
+  request, so retrying only re-sends it. Nothing in the swarm can resolve this; a human must.
+* `MESSAGE_ID_INVALID` was NOT matched by the existing `MSG_ID_INVALID`/`MsgIdInvalid` markers
+  (Telegram spells it out in full), so one vanished message fell through to the generic branch and
+  degraded the whole channel. It is post-level now. Classification suite: 7/7.
+
+Note on the operator's test setup: comments are deleted ~2s after publication by an AyuGram plugin
+holding all three accounts. That silently disables two subsystems — `dialogue_engine` watches a
+message that no longer exists (so no human reply can ever arrive; 6 replies exist in the log, all
+between 16 Jun and 20 Jul, none since), and caste amplification breaks because beta/gamma reinforce
+the alpha's comment: the 12 Aug chain shows alpha SUCCESS 05:52, gamma reacting at 05:58 to a
+comment deleted six minutes earlier. Use the SIMULATION polygon to exercise those paths.
+
 Also measured that session: 11 of 12 attempts FAILED — six posts on `@kunuzofficial` /
 `@burchakostida` had comments disabled (the engine keeps selecting such posts even though
 `@kunuzofficial`'s target health is already `blocked`), Match_TV's discussion group answers

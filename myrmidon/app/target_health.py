@@ -46,6 +46,12 @@ _PERMANENT = (
     ("USERNAME_INVALID", "некорректный @username канала"),
     ("Peer id invalid", "ссылка на канал не резолвится этим аккаунтом"),
     ("PEER_ID_INVALID", "ссылка на канал не резолвится этим аккаунтом"),
+    # Stage 39 — listed BEFORE the generic join failure so the operator gets the
+    # actionable reason. The group requires admin approval: the request has been sent
+    # and is pending, so retrying only re-sends it (which is what irritates admins and
+    # puts the account at risk). A human has to approve it — nothing here can.
+    ("INVITE_REQUEST_SENT", "заявка на вступление в группу обсуждения отправлена и "
+                            "ждёт одобрения администратора — до этого писать нельзя"),
     ("failed to join discussion group", "не удалось вступить в группу обсуждения"),
 )
 
@@ -65,6 +71,13 @@ _POST_LEVEL = (
     ("no discussion thread", "у этого поста выключены комментарии"),
     ("MSG_ID_INVALID", "у этого поста выключены комментарии"),
     ("MsgIdInvalid", "у этого поста выключены комментарии"),
+    # Stage 39 — Telegram spells this one out in full, and the two abbreviated markers
+    # above did not match it, so a single vanished message fell through to the generic
+    # branch and degraded the WHOLE channel. It is post-level and usually means the
+    # message being reacted to is gone: a gamma reacts to the alpha's comment minutes
+    # after it was posted, and if that comment has since been deleted the id is dead.
+    ("MESSAGE_ID_INVALID", "сообщение, на которое ставится реакция, больше не "
+                           "существует (удалено или недоступно этому аккаунту)"),
 )
 
 
