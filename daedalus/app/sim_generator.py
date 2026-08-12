@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.models_simulation import (
     SimAccount,
+    SimMissionDossier,
     SimChannel,
     SimComment,
     SimEvent,
@@ -138,6 +139,52 @@ def retrieve_knowledge(
         if len(out) >= limit:
             break
     return out
+
+
+def dossier_for(db: Session, mission_id: Optional[int], post_id: Optional[int],
+                said_limit: int = 6) -> dict:
+    """
+    The mission's shared case file, as production hands it to ORPHEUS.
+
+    `said` is scoped to THIS post: the roster must not replay an argument in the same
+    thread, which is what makes three accounts read as one bot. Reusing it elsewhere is
+    what a person would do anyway.
+    """
+    if not mission_id:
+        return {}
+    rows = (db.query(SimMissionDossier)
+            .filter(SimMissionDossier.mission_id == mission_id)
+            .order_by(SimMissionDossier.created_at.desc())
+            .limit(200).all())
+    out: dict[str, list] = {"fact": [], "opponent": [], "counter": [], "said": []}
+    for r in rows:
+        if r.kind == "said":
+            if post_id and r.post_id != post_id:
+                continue
+            if len(out["said"]) >= said_limit:
+                continue
+        out.setdefault(r.kind, []).append(
+            {"id": r.id, "content": r.content, "source_url": r.source_url,
+             "added_by": r.added_by, "times_used": r.times_used})
+    return out
+
+
+def record_said(db: Session, mission_id: Optional[int], post_id: Optional[int],
+                text: str, added_by: str) -> None:
+    """File the argument just used, so the rest of the roster does not replay it."""
+    if not mission_id or not (text or "").strip():
+        return
+    content = " ".join(text.split())[:600]
+    existing = (db.query(SimMissionDossier)
+                .filter(SimMissionDossier.mission_id == mission_id,
+                        SimMissionDossier.kind == "said",
+                        SimMissionDossier.content == content)
+                .first())
+    if existing is not None:
+        existing.times_used = (existing.times_used or 0) + 1
+        return
+    db.add(SimMissionDossier(mission_id=mission_id, kind="said", content=content,
+                             added_by=added_by or "system", post_id=post_id, times_used=1))
 
 
 def system_rules(db: Session, world_id: int) -> list[str]:
@@ -328,6 +375,7 @@ def build_request(
         (mission.stance if mission else "") or "",
     ]))
     facts = retrieve_knowledge(db, world_id, query, limit=rag_limit)
+    dossier = dossier_for(db, mission.id if mission else None, post.id)
     payload = {
         "mode": mode,
         "persona": persona_payload(persona),
@@ -335,6 +383,9 @@ def build_request(
         "channel": channel_payload(channel),
         "post": post_payload(post),
         "thread": thread_payload(db, post.id, branch_of=parent.id if parent else None),
+        # Same shape production sends: what the team established, what the other side
+        # argues, and what our people already said in THIS thread.
+        "dossier": dossier,
         "knowledge": [{"title": f.title, "content": f.content, "tags": f.tags or []} for f in facts],
         "rules": system_rules(db, world_id),
         "tone": tone or "",

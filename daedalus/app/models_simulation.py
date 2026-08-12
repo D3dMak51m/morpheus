@@ -370,6 +370,60 @@ class SimMissionAgent(SimBase):
     __table_args__ = (UniqueConstraint("mission_id", "persona_id", name="uq_sim_mission_agent"),)
 
 
+class SimMissionDossier(SimBase):
+    """
+    The polygon's copy of a mission's shared case file (production `mission_dossier`).
+
+    The polygon exists to predict production, so it has to reproduce the thing that
+    makes a roster a team rather than three individuals: one memory. Without it the
+    polygon's alpha, beta and gamma each write as if the others had not spoken, which
+    is precisely the behaviour production was fixed to stop — so a polygon run would
+    flatter or damn a configuration for the wrong reason.
+
+    `kind`: fact | opponent | counter | said. `said` is scoped to a post, because
+    repeating yourself in one thread is what gives a swarm away, while reusing a good
+    argument in another thread is normal.
+    """
+    __tablename__ = "sim_mission_dossier"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mission_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sim_missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    added_by: Mapped[str] = mapped_column(String(50), default="system", nullable=False)
+    related_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    post_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    times_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class SimMissionOutcome(SimBase):
+    """
+    What a polygon run achieved, measured the same way production measures it.
+
+    Success is a change of tone plus real people engaging. In the polygon the "after"
+    reading needs no waiting: the thread is ours, so the same 3-way verdict is taken
+    over the conversation before our comment and after it, in one pass — which is what
+    makes the polygon the right place to compare mission wordings, and the live channel
+    only the place to verify delivery.
+    """
+    __tablename__ = "sim_mission_outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mission_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sim_missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    post_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sim_posts.id", ondelete="CASCADE"), nullable=False, index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    mood_before: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    mood_after: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    thread_size_before: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    our_comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
 class SimKnowledge(SimBase):
     """
     Знания — the simulation's own RAG base. Facts, news, system rules, prompts,

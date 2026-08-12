@@ -105,6 +105,32 @@ def _channel_block(channel: dict) -> str:
     return line
 
 
+def _dossier_blocks(dossier: dict) -> str:
+    """
+    The mission's shared memory, rendered exactly as the live prompt renders it.
+
+    Without this the polygon's roster writes as three strangers — each agent unaware
+    of what the others just argued — so a configuration would be judged on behaviour
+    production no longer has.
+    """
+    dossier = dossier or {}
+    facts = [str(x.get("content", "")).strip() for x in (dossier.get("fact") or [])][:4]
+    opponent = [str(x.get("content", "")).strip() for x in (dossier.get("opponent") or [])][:4]
+    said = [str(x.get("content", "")).strip() for x in (dossier.get("said") or [])][:6]
+    parts = []
+    if facts:
+        parts.append("[Что установлено по этой теме — можешь опираться как на правду]\n"
+                     + "".join(f"- {f[:220]}\n" for f in facts if f))
+    if opponent:
+        parts.append("[Что говорит противоположная сторона — будь готов возразить]\n"
+                     + "".join(f"- {o[:200]}\n" for o in opponent if o))
+    if said:
+        parts.append("[Наши в этой ветке УЖЕ говорили это — не повторяй ни мысль, "
+                     "ни формулировку, зайди с другого довода]\n"
+                     + "".join(f"- {s[:200]}\n" for s in said if s))
+    return "\n".join(p.rstrip() for p in parts)
+
+
 def _position_block(position: dict) -> str:
     """The mission's explicit side, formatted exactly as the live engine formats it."""
     our_side = str(position.get("our_side") or "").strip()
@@ -157,6 +183,7 @@ def build_sim_prompt(req: dict) -> str:
         # Exposed as a placeholder too, so a prompt_override experiment can move the
         # position block around instead of losing it.
         "position": _position_block(mission.get("position") or {}),
+        "dossier": _dossier_blocks(req.get("dossier") or {}),
         "incoming": incoming.get("text") or "",
         "incoming_author": incoming.get("author") or "",
         "tone": req.get("tone") or "",
@@ -251,6 +278,8 @@ def build_sim_prompt(req: dict) -> str:
         # between the two produces comments arguing against the mission's own goal.
         if fields["position"]:
             parts.append(fields["position"])
+        if fields["dossier"]:
+            parts.append(fields["dossier"])
 
         if fields["stance"]:
             parts.append(

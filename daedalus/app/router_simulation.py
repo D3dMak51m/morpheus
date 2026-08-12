@@ -1855,6 +1855,12 @@ def generate_one(body: GenerateIn, db: Session = Depends(get_db),
         published_at=_now() if (ok and body.mode == "generate_publish") else None,
     )
     db.add(comment)
+    # File the argument in the mission's shared memory, exactly as MYRMIDON does after
+    # a live comment publishes — otherwise the polygon's roster keeps replaying each
+    # other and a configuration gets judged on behaviour production no longer has.
+    if ok:
+        sim_generator.record_said(db, mission.id if mission else None, post.id,
+                                  text, persona.agent_key or persona.codename)
     db.commit()
     db.refresh(comment)
 
