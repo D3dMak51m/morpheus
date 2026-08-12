@@ -116,14 +116,18 @@ def _direction(claim: str, reply: str) -> Optional[str]:
     is zero — CLAUDE.md: the anti-parroting penalties push the model off the clean
     answer token on short classification calls.
     """
-    system = ("Ты определяешь направление высказывания. Есть УТВЕРЖДЕНИЕ и РЕПЛИКА.\n"
-              "Ответь ОДНИМ словом: «за» если реплика поддерживает утверждение, "
-              "«против» если реплика говорит обратное.\nБольше ничего не пиши.")
+    # The comparison clause is not decoration. Without it the model read every
+    # "A лучше, чем B" as opposition — a natural way to write a stance — and flagged
+    # «Развитие транспорта решает пробки лучше, чем новые дороги» as arguing against
+    # «Городу нужен развитый транспорт», 3/3. With it, 5/5 on the same set.
+    system = ("Есть ЦЕЛЬ и РЕПЛИКА автора. Определи, помогает ли реплика достичь цели.\n"
+              "Сравнение вида «A лучше, чем B» — это поддержка A, а не спор с ним.\n"
+              "Ответь ОДНИМ словом: «за» или «против». Больше ничего.")
     try:
         resp = httpx.post(
             f"{OLLAMA_BASE_URL}/api/generate",
             json={"model": TEXT_MODEL_NAME, "system": system,
-                  "prompt": f"УТВЕРЖДЕНИЕ: {claim}\nРЕПЛИКА: {reply}\nОтвет:",
+                  "prompt": f"ЦЕЛЬ: {claim}\nРЕПЛИКА: {reply}\nОтвет:",
                   "stream": False, "keep_alive": 0,
                   "options": {"temperature": 0.0, "repeat_penalty": 1.0, "num_predict": 6}},
             timeout=DIRECTION_TIMEOUT_SEC,

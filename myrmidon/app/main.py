@@ -461,6 +461,26 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
 
         configure_proxy(proxy)
 
+    # Step 2a: Reject an unusable target BEFORE sleeping on it.
+    #
+    # The delay is slept in the single consumer loop, so a task that can never succeed
+    # still holds the whole swarm hostage for its full pacing delay. Observed live: four
+    # tasks with target "Self" (a leftover from the mobile "post to your own feed" path)
+    # sat in front of a real mission comment with 725 + 5 + 1314 + 120 seconds of delay
+    # between them — 36 minutes of queue blocked to publish nothing at all.
+    if platform == "telegram" and action_type == "comment":
+        from app.drivers.tg_client import parse_target
+        raw_target = task.get("target_url", "")
+        chat_ref, post_id = parse_target(raw_target)
+        # A comment needs a POST to hang off. `parse_target("Self")` yields a truthy
+        # ref with no post id, so checking the ref alone would let it through — which
+        # is exactly how four unpublishable tasks got to sleep 36 minutes between them.
+        if not chat_ref or not post_id:
+            logger.error("Task %s FAILED — %r is not a commentable post; dropping "
+                         "instead of waiting %ds on it.", task_id, raw_target, execution_delay)
+            _log_activity_to_daedalus(task, "FAILED")
+            return
+
     # Step 2: Apply execution delay (mimics human reading + thinking)
     if execution_delay > 0:
         logger.info("Task %s — waiting %ds before execution...", task_id, execution_delay)
