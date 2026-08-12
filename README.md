@@ -23,12 +23,17 @@ A single operator runs everything from the **DAEDALUS** web console.
   them, carrying a thread for several turns.
 - **Caste hierarchy** — **alpha** (smartest, full pipeline) seeds; **beta** (cheap, "lite")
   reinforces; **gamma** (cheapest) just reacts with emoji. No bot acts identically.
-- **Missions as permanent goals** — a mission has its own explicit position (*our side*,
-  opponent, arguments and red lines), many target channels, and a roster. Its alpha seeds on
-  relevant discussions, choosing a **tactic per
-  post** (amplify / soft-support / displace / cunning sentiment-shift) from the thread's mood
-  versus the stance; its beta/gamma amplify. Missions never "complete" — only **active** or
-  **paused**.
+- **Missions are teams with a lifecycle** — a mission moves **draft → recon → ready → active**, and
+  it may **not** go active until reconnaissance has built its case file: no facts, no arguing. It
+  states ONE claim (*our side*) plus the opponent, the arguments and the red lines, and separately
+  what the audience should end up thinking. Its roster has **jobs, not volume levels** — scout
+  (establish what is claimed), opener (first substantive argument), support (answer the objection
+  actually raised), closer (de-escalate) — and shares **one memory**, so three accounts do not
+  replay each other's argument in one thread. The tactic is still chosen per post from the thread's
+  mood versus our side.
+- **Missions are measured** — for each discussion the swarm enters: the crowd's stance toward us
+  before and after, whether the thread grew, and how many real people answered *us*. Tone is read
+  over the replies **after** our entry, because one comment among twenty cannot move an average.
 - **Knowledge base** — channels marked *news*, RSS feeds and web sources are ingested,
   LLM-classified, embedded and deduplicated into a pgvector RAG store the bots reason from. The
   scrapers open the **full article**, not the feed's announcement (measured: 4–44× more text),
@@ -70,8 +75,8 @@ Microservices over Docker Compose, glued by Redis (queues/streams) and Postgres+
 ```
 news channels ──> MYRMIDON ──> DAEDALUS /knowledge/ingest ──> classify+embed+dedup ──> knowledge_facts (RAG)
                                                                                           │
-active Mission ──> alpha scans targets ──> ORPHEUS relevance (goal+stance) ──> comment ◄─┘
-                                              (persona + RAG + memory + mood + stance)
+active Mission ──> recon builds the dossier ──> roster scans targets ──> ORPHEUS relevance ──┘
+                                              (persona + RAG + memory + mood + position + dossier)
                                                           │ posts via MYRMIDON
                                                           ├─> dialogue watch ──> human reply ──> ORPHEUS reply ──> answer (multi-turn)
                                                           └─> swarm amplify ──> beta (lite comment) + gamma (reaction)
@@ -110,8 +115,11 @@ Open the console at **http://localhost:8000** and log in with `SUPERADMIN_USERNA
    Pyrogram session on a `souls_accounts` row.
 2. **Souls / Агенты** — bind the account to a persona (caste alpha/beta/gamma), edit the
    persona, classify the account's channels (target/news), pause/resume.
-3. **Mission Deck** — create a permanent Mission: its goal, its **stance/"truth"**, target
-   channels, and a roster (manual or auto-assigned). Activate it.
+3. **Миссии** — create a Mission: what the audience should end up thinking, the ONE claim it
+   asserts (*our side*), the opponent, its arguments and red lines, target channels and a roster
+   with jobs (scout / opener / support / closer). Then **run reconnaissance** — the mission cannot
+   go active until it has facts, and if the knowledge base holds none it says which sources are
+   missing. Watch the **Досье** and **Результат** tabs as it works.
 4. Watch it work in **Live Ops** and **Рой** (swarm dashboard); review what it learned in
    **Знания роя**.
 
@@ -123,8 +131,10 @@ Open the console at **http://localhost:8000** and log in with `SUPERADMIN_USERNA
   think, comment, reply, react, amplify, ingest) with a per-agent status rail.
 - **Рой (Swarm Dashboard)** — comments/replies/reactions/knowledge by caste and agent;
   click any number to drill into the actual records.
-- **Mission Deck** — permanent-goal missions: stance, targets (+ approve agent-suggested
-  ones), roster, pause/resume.
+- **Миссии** — permanent-goal missions: lifecycle phase (draft → recon → ready → active, with
+  activation refused until the case file exists), the position, targets (+ approve agent-suggested
+  ones), roster by job, the shared **dossier**, and per-discussion **results** (did the tone move,
+  did anyone engage).
 - **Souls / Агенты** — persona editor, pause/resume, account channel manager.
 - **Знания роя** — the RAG knowledge base (search by text/source).
 - **Профили каналов** — what the swarm knows about each channel: geo, topics, what's being

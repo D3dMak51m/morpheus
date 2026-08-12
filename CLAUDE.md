@@ -219,12 +219,21 @@ Channels: **`agent_channel_prefs`** (per-agent channel classification role targe
 + cached enumeration), **`channel_profiles`** (per-channel, NOT per-agent: `geo_layers`
 [same closed set as knowledge], `geo_label`, `topics`, `recent_themes`, `summary` — built by
 `channel_profiler`, used by relevance/comments).
-Missions: **`missions`** (permanent: `stance`, explicit position `our_side` / `opponent` /
-`key_points` / `red_lines`, `status` active|paused, `agent_mode`, `dynamic_count`, `tactic` —
+Missions: **`missions`** (permanent. **`phase`** draft|recon|ready|active is the lifecycle —
+a mission may NOT go active while its dossier holds no fact, because the old on/off `status` let it
+start arguing before anyone established what was true; `status` remains the switch the engines read.
+**`our_side` is THE claim the team asserts**, `narrative_goal` is what the AUDIENCE should end up
+thinking, and **`stance` is LEGACY** — the three used to express the same thing with no rule about
+which wins, which is how «За аргентину» published a comment agreeing with the defeat it existed to
+dispute. Plus `opponent` / `key_points` / `red_lines`, `agent_mode`, `dynamic_count`, `tactic` —
 default `dynamic` = per-post tactic from thread mood vs our side),
 **`mission_targets`** (kind channel|post, status active|suggested|rejected, target health
 `unknown`|`ok`|`blocked`|`degraded`,
-source operator|agent), **`mission_squads`** (roster, caste role).
+source operator|agent), **`mission_squads`** (roster; `assigned_role` = **scout | opener | support |
+closer** — what the member DOES. alpha/beta/gamma described how expensive the generation was, so the
+"team" was one bot speaking and two repeating it more cheaply; `caste` keeps that cost axis).
+**`mission_dossier`** (the team's shared case file — see below).
+**`mission_outcomes`** (did the tone move, did anyone engage — see below).
 Knowledge: **`knowledge_facts`** (pgvector RAG; `geo_tags` = canonical PLACES only, `variants` =
 wordings a merge superseded, `published_at` = the SOURCE's date — freshness must not mean "scraped
 today"), `scraping_landscape` (sources + health: `health`, `health_reason`, `last_item_count`,
@@ -303,9 +312,26 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
 3. **Conversations:** a watch on the bot's comment is polled; a real human reply → ORPHEUS
    reply-mode → MYRMIDON answers (and watches its own answer → multi-turn).
 4. **Memory:** every comment/reply summary is saved to MUNINN per agent↔opponent; recalled next time.
-5. **Castes:** alpha = full cognitive (smart, human-like; picks the per-post tactic). beta =
-   cheap "lite" support (no RAG/memory/thread, short; inherits the alpha's tactic). gamma =
-   emoji reaction only (no LLM).
+5. **Roles vs castes — two different axes (Stage 45).** A **role** is the JOB in the discussion:
+   `scout` (establish what is claimed, take no side), `opener` (first substantive argument),
+   `support` (answer the objection actually raised), `closer` (de-escalate). A **caste** is the COST
+   tier: alpha = full cognitive, beta = cheap "lite" (no RAG/memory/thread, inherits the tactic),
+   gamma = emoji reaction only. They were conflated, so the "team" was one bot speaking and two
+   repeating it more cheaply — an echo, not a division of labour. Legacy castes still resolve as
+   roles so old rosters keep working.
+5a. **Mission phases.** draft → recon → ready → active. `POST /missions/{id}/phase` REFUSES `active`
+   while the dossier holds no fact: recon on mission #10 found its own key terms in 0 of 1252 facts,
+   i.e. the swarm was about to argue about transport with no fact about transport.
+5b. **The dossier is one memory for the roster.** Anti-repeat lived in
+   `morpheus:recent_outputs:<agent>` — per AGENT — so alpha, beta and gamma could each play the same
+   card in one thread. `mission_dossier` (fact | opponent | counter | said, `said` scoped to the post)
+   is filed on publication and fed back as three prompt blocks.
+5c. **Outcome = did the tone move and did anyone engage.** Measured over the replies **AFTER** our
+   first comment, never over the whole thread: one comment — and a coordinated three — left a
+   21-comment thread's aggregate verdict unchanged every time, so a whole-thread reading is
+   structurally blind and would report "no effect" for any implementation. `outcome_engine` re-reads
+   read-only after `MISSION_OUTCOME_AFTER_HOURS`; nobody speaking after us yields a NULL verdict, not
+   "unchanged".
 6. **Reliability:** short FloodWait → wait+retry; long → cooldown; PeerFlood → 1h cooldown;
    fatal session errors → account `banned` (+ profile suspended), dropped from the active pool.
 7. **Outcome measurement (Stage 42):** when a mission first speaks in a discussion,
@@ -438,6 +464,31 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
   `@Match_TV`). Handle it explicitly: join the discussion group, retry once.
 - **"Post has comments disabled" is a POST-level fact, not a target-level one.** Blocking the whole
   channel on it kills a working target (`myrmidon/app/target_health.py` separates the two scopes).
+- **A mission that argues with itself is not a typo.** `narrative_goal`, `stance` and `our_side` all
+  expressed "what we argue" with no rule about precedence, so «За аргентину» (goal «должна была
+  выиграть», stance «проиграл из-за тренера») published a comment agreeing with the defeat.
+  `mission_validate.py` catches it on save. Two measured facts about that check: asking the model
+  «непротиворечиво?» as JSON makes it answer `false` for EVERYTHING (3/6, and only because half the
+  cases were contradictory) — ask for a **direction** («за»/«против») instead, 5/6; and the prompt
+  MUST state that «A лучше, чем B» is support for A, or every comparative stance is flagged as
+  opposition (3/3 false positives on a correct mission).
+- **Tone must be measured AFTER our entry, not over the whole thread.** Measured in the polygon on a
+  real 21-comment thread: one comment, then a coordinated three, left the aggregate verdict at
+  OPPOSE every time. Three replies in 24 cannot move an average — a whole-thread reading is blind to
+  the intervention it exists to judge and would report "no effect" for any implementation ever built.
+- **Telegram's `is_self` means "the reading session's own messages", not "ours".** A thread exported
+  under the alpha shows beta and gamma as strangers, so engagement counted the swarm answering
+  itself. Use `outcome_engine.swarm_identities` (all accounts' ids + usernames, cached a day).
+- **The execution delay is slept in the single consumer loop.** One task blocks every agent and every
+  channel for its full pacing delay. Four junk tasks targeting `"Self"` (from `gamma_noise`, written
+  for the dead mobile "post to your own feed" path) held a real mission comment behind 36 minutes.
+  Targets are validated BEFORE the sleep — and note `parse_target("Self")` returns a truthy ref with
+  no post id, so a comment task must be checked on the PAIR. Per-agent pacing is still open.
+- **Recon must be lexical-first, and IDF-weighted.** Embedding-first retrieval for the transport
+  mission returned Novorossiysk, Trump/Ukraine, weightlifters and a fire; a plain share-of-words test
+  then admitted articles reusing «развитие» and «город». Recon runs once per mission, so it scans.
+  A recon that files nothing returns `missing_terms` — the mission's own words the corpus never
+  mentions — which is the actionable half.
 - **A mission needs an explicit side.** With only free-text `narrative_goal` + `stance` the model
   guesses whose side it is on — and a contradiction between them (goal «Аргентина должна была
   выиграть» vs stance «Аргентина проиграла из-за тренера») yields comments arguing against the

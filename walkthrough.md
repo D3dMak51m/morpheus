@@ -28,6 +28,91 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
   (relevance gate, RAG, target health, mission-as-position). Full evidence and before/after
   numbers in **`DIAGNOSIS.md`**.
 
+### Stage 45 — the mission MODEL rewritten (not more scaffolding around it)
+
+The operator's objection was correct and worth recording: Stages 41–44 built measurement,
+a dossier, recon and validation **around** a mission model already diagnosed as wrong, and
+left the model itself — and its screen — untouched. Three defects, each confirmed against
+the live data before changing anything.
+
+**One claim, not three.** `narrative_goal`, `stance` and `our_side` all expressed "what we
+argue", in free text, with no rule about which wins. The operator naturally wrote them as
+different thoughts — a goal as a fact about the world, a stance as an explanation — and the
+model chose between them at random. That is how «За аргентину» (goal «должна была выиграть»,
+stance «проиграл из-за тренера») published a comment agreeing with the defeat. `our_side` is
+now THE claim; `narrative_goal` is what the AUDIENCE should end up thinking, a different
+question that no longer competes; `stance` is legacy and no longer injected as a rival
+instruction.
+
+**A phase, not a switch.** `status` said active|paused, so a mission could argue before
+anyone established what was true. `phase` (draft → recon → ready → active) makes the
+investigation a state it must pass through, and `POST /missions/{id}/phase` REFUSES `active`
+while the dossier holds no fact. Verified: the refusal fires on mission #10, and a recon that
+finds nothing leaves the mission in `recon` instead of flattering it to `ready`.
+
+**Roles are a division of labour.** alpha/beta/gamma described how expensive a generation
+was — one bot spoke, two repeated it more cheaply. That is an echo. `assigned_role` now says
+what a member DOES: scout (establish what is claimed, take no side), opener (first
+substantive argument), support (answer the objection actually raised), closer (de-escalate).
+`caste` keeps the cost axis; legacy castes still resolve.
+
+The mission screen was rebuilt to match: phase control in the header and list, Run-recon with
+its report (including the useful refusal naming missing sources), a **Досье** tab showing the
+team's shared memory with who filed each entry, and a **Результат** tab showing tone
+before → after and how many real people answered — stating plainly that tone is read over the
+replies AFTER our entry, and why.
+
+Still open: tactic as a choice of technique against the objection actually raised (the last
+unbuilt piece of the operator's model), assigning functional roles from the roster picker,
+per-agent execution pacing, and foreign-script bleed slipping past guardrails.
+
+### Stage 44 — the queue could be held hostage by tasks that could never publish
+
+Reported symptom: a live mission comment never appeared. It had been queued behind four tasks
+targeting `"Self"` — a leftover from the mobile "post to your own feed" path — carrying
+725 + 5 + 1314 + 120 seconds of pacing delay. The delay is slept inside the single consumer
+loop, so any task blocks every other one, for every agent and channel: 36 minutes of queue
+spent publishing nothing. Targets are validated before the sleep (on the chat-ref AND post-id
+pair, since `parse_target("Self")` returns a truthy ref), and `gamma_noise` is off by default.
+
+Also fixed here: engagement counted the swarm answering itself. Telegram's `is_self` marks
+only the READING session's messages, so a thread exported under the alpha showed beta and
+gamma as strangers. `swarm_identities` resolves every account's id and username.
+
+### Stage 43 — dossier and reconnaissance: a team memory, and knowing before speaking
+
+Anti-repeat lived in `morpheus:recent_outputs:<agent>` — per AGENT — so a mission's alpha,
+beta and gamma could each deploy the same argument in the same thread and none would know.
+`mission_dossier` is one file per mission (fact | opponent | counter | said, `said` scoped to
+the post), filed on publication and fed back as three prompt blocks.
+
+`mission_recon` builds the factual base before the mission speaks. Its most useful result so
+far is a refusal: mission #10's distinctive terms («пробки», «полоса», «решают») appear in
+**0 of 1252 facts** — the swarm was about to argue about transport holding no fact about
+transport. Retrieval is lexical-first with IDF weighting, both measured: embedding-first
+returned Novorossiysk, Trump/Ukraine and weightlifters, and a plain share-of-words test then
+admitted articles reusing «развитие» and «город».
+
+### Stage 42 — a mission could not see its own output
+
+`agent_activity_logs` had no `mission_id`, so 46 published comments belonged to nobody;
+`missions` had no progress state; the screen showed no result; analytics had no per-mission
+metric. Both halves of the operator's success measure were already computable and both were
+thrown away — the 3-way mood verdict was calculated to pick a tactic and discarded, and human
+replies were logged with no link to the mission that provoked them.
+
+Added attribution, `mission_outcomes`, ORPHEUS `mode=mood`, and a read-only `outcome_engine`.
+Then the metric itself was tested and failed: on a real 21-comment thread, one comment and
+then a coordinated three left the aggregate verdict at OPPOSE every time. Three replies in 24
+cannot move an average, so the reading is now taken over the replies AFTER our first comment.
+
+### Stage 41 — polygon missions carry the production position
+
+The polygon was rehearsing a strictly weaker mission than production runs: `sim_missions` had
+no `our_side`/`opponent`/`key_points`/`red_lines`, the import dropped them, and the polygon
+prompt never built the position block — so the one mechanism introduced to stop a mission
+arguing against its own goal could not be tested in the place built for testing.
+
 ### Stage 40 — polygon: import real threads, and fix the polygon's own RAG
 
 Two pieces of work in the SIMULATION polygon, the second found while doing the first.
@@ -609,7 +694,13 @@ classes (`.tabs`/`.status-badge`/`.data-grid`, used by ChannelManager) into a sh
 `SoulsContext.css`/`AccountsManager.css`/`LandscapeManager.css` no longer need to be imported in
 `App.tsx`.
 
-**Stage 39 (current batch): the news pipeline is rebuilt end-to-end and verified on live data** —
+**Stage 45 (current batch): the mission MODEL is rewritten**, after the operator pointed out that
+Stages 41–44 had built instruments around a model already diagnosed as wrong. Missions now have a
+lifecycle (draft → recon → ready → active, activation refused without a case file), roles that are
+jobs rather than volume levels, and ONE claim instead of three competing fields. The screen was
+rebuilt to match. See the Stage 45 entry.
+
+**Stage 39: the news pipeline is rebuilt end-to-end and verified on live data** —
 see the entry above. Ingest now merges only genuine duplicates (and never destructively), searches
 a correct nearest neighbour, canonicalises places, judges freshness by publication date, rejects
 site boilerplate at the door, and — the operator's headline complaint — stores the **full article**
