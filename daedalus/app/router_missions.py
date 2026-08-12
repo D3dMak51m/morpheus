@@ -19,8 +19,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import (AdminUser, AgentProfile, Mission, MissionOutcome,
-                        MissionSquad, MissionTarget)
+from app.models import (AdminUser, AgentProfile, Mission, MissionDossier,
+                        MissionOutcome, MissionSquad, MissionTarget)
 from app.rbac import require_permission
 from app import mission_control, mission_validate
 
@@ -332,6 +332,111 @@ def update_mission(
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
+
+
+# How many "already said" entries to hand back — enough to stop repetition without
+# burying the prompt.
+DOSSIER_SAID_LIMIT = int(os.getenv("MISSION_DOSSIER_SAID_LIMIT", "8"))
+
+
+class DossierIn(BaseModel):
+    mission_id: int
+    kind: str = Field(..., description="fact | opponent | counter | said")
+    content: str = Field(..., min_length=1)
+    source_url: Optional[str] = None
+    added_by: str = "system"
+    related_id: Optional[int] = None
+    post_url: Optional[str] = None
+
+
+@router.post("/internal/dossier")
+def dossier_add(
+    body: DossierIn,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Add one entry to a mission's case file.
+
+    De-duplicated on (mission, kind, content) — the same argument recorded twice is
+    still one argument, and a `said` list full of near-duplicates would push the real
+    history out of the prompt.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    normalised = " ".join((body.content or "").split())[:2000]
+    if not normalised:
+        raise HTTPException(status_code=400, detail="Empty content.")
+    existing = (db.query(MissionDossier)
+                .filter(MissionDossier.mission_id == body.mission_id,
+                        MissionDossier.kind == body.kind,
+                        MissionDossier.content == normalised)
+                .first())
+    if existing is not None:
+        existing.times_used = (existing.times_used or 0) + 1
+        db.commit()
+        return {"status": "ok", "id": existing.id, "duplicate": True,
+                "times_used": existing.times_used}
+    row = MissionDossier(
+        mission_id=body.mission_id, kind=body.kind, content=normalised,
+        source_url=body.source_url, added_by=body.added_by,
+        related_id=body.related_id, post_url=body.post_url, times_used=1,
+    )
+    db.add(row)
+    db.commit()
+    return {"status": "ok", "id": row.id, "duplicate": False, "times_used": 1}
+
+
+@router.get("/internal/dossier/{mission_id}")
+def dossier_get(
+    mission_id: int,
+    post_url: Optional[str] = None,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    The case file ORPHEUS reads when writing: established facts, the other side's
+    arguments with our counters, and what our people have ALREADY said.
+
+    `said` is scoped to this discussion when `post_url` is given — repeating yourself
+    in the same thread is what gives a swarm away, while reusing a good argument in a
+    different thread is normal.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    rows = (db.query(MissionDossier)
+            .filter(MissionDossier.mission_id == mission_id)
+            .order_by(MissionDossier.created_at.desc())
+            .limit(300).all())
+    out: dict[str, list] = {"fact": [], "opponent": [], "counter": [], "said": []}
+    for r in rows:
+        if r.kind == "said" and post_url and r.post_url != post_url:
+            continue
+        bucket = out.setdefault(r.kind, [])
+        if r.kind == "said" and len(bucket) >= DOSSIER_SAID_LIMIT:
+            continue
+        bucket.append({"id": r.id, "content": r.content, "source_url": r.source_url,
+                       "added_by": r.added_by, "related_id": r.related_id,
+                       "times_used": r.times_used})
+    return {"dossier": out}
+
+
+@router.get("/{mission_id}/dossier")
+def dossier_operator(
+    mission_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> dict[str, Any]:
+    """Operator view of the case file — how the mission built its position, and by whom."""
+    rows = (db.query(MissionDossier)
+            .filter(MissionDossier.mission_id == mission_id)
+            .order_by(MissionDossier.kind.asc(), MissionDossier.created_at.desc())
+            .limit(500).all())
+    return {"entries": [{
+        "id": r.id, "kind": r.kind, "content": r.content, "source_url": r.source_url,
+        "added_by": r.added_by, "related_id": r.related_id, "post_url": r.post_url,
+        "times_used": r.times_used, "created_at": r.created_at,
+    } for r in rows], "total": len(rows)}
 
 
 class OutcomeEntryIn(BaseModel):

@@ -230,6 +230,13 @@ wordings a merge superseded, `published_at` = the SOURCE's date — freshness mu
 today"), `scraping_landscape` (sources + health: `health`, `health_reason`, `last_item_count`,
 `consecutive_empty`, `last_scraped_at`), `captured_raw_events` (News Hub, display only),
 `scouted_targets`, `social_post_targets`, `campaigns`.
+Mission state: **`mission_dossier`** (the team's shared case file — `kind` =
+`fact` (with source) | `opponent` (what the other side argues here) | `counter` |
+`said` (an argument our side already used, scoped to a post_url). Anti-repeat used to be
+per-AGENT (`morpheus:recent_outputs:<agent>`), so alpha/beta/gamma could each replay the
+same argument in one thread; the dossier is one memory for the whole roster and is fed
+into the prompt as three blocks — established facts, the opponent's lines, and what we
+already said HERE).
 Activity: **`agent_activity_logs`** (durable: comment|reply|react; `mission_id` = which
 mission caused it — added Stage 42, before which 46 published comments belonged to nobody
 and no mission could be measured), **`mission_outcomes`** (one row per mission×discussion:

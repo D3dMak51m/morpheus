@@ -268,6 +268,44 @@ def _log_activity_to_daedalus(task: dict, status: str) -> None:
         logger.error("Failed to log activity to Daedalus: %s", exc)
 
 
+def _dossier_fetch(mission_id, post_url: str) -> dict:
+    """The mission's case file for this discussion (facts, opponent lines, what we said)."""
+    if not mission_id:
+        return {}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(f"{DAEDALUS_URL}/api/v1/missions/internal/dossier/{mission_id}",
+                           params={"post_url": post_url or ""},
+                           headers={"X-Internal-Token": INTERNAL_API_TOKEN})
+            r.raise_for_status()
+            return r.json().get("dossier") or {}
+    except Exception as exc:
+        logger.debug("dossier fetch failed: %s", exc)
+        return {}
+
+
+def _dossier_record_said(task: dict, text: str) -> None:
+    """
+    Log the argument we just deployed into the mission's shared memory.
+
+    Anti-repeat used to be per-agent (`morpheus:recent_outputs:<agent>`), so the
+    roster's alpha, beta and gamma could each play the same card in the same thread
+    without knowing. One file per mission is what makes them a team.
+    """
+    if not task.get("mission_id") or not (text or "").strip():
+        return
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            client.post(f"{DAEDALUS_URL}/api/v1/missions/internal/dossier",
+                        json={"mission_id": task.get("mission_id"), "kind": "said",
+                              "content": text.strip()[:600],
+                              "added_by": task.get("agent_id") or "system",
+                              "post_url": task.get("target_url") or ""},
+                        headers={"X-Internal-Token": INTERNAL_API_TOKEN})
+    except Exception as exc:
+        logger.debug("dossier said-record failed: %s", exc)
+
+
 def _record_outcome_entry(task: dict, mood: str, thread_size: int) -> None:
     """Open a mission-outcome row for this discussion (best-effort, never blocks)."""
     from app import target_health
@@ -333,6 +371,9 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "channel_profile": task.get("channel_profile"),  # ground the comment in the channel
         "narrative_goal": task.get("narrative_goal") or "",
         "stance": task.get("stance") or "",
+        # Stage 43 — the mission's shared case file: established facts, the other
+        # side's lines, and what our own people already said IN THIS THREAD.
+        "dossier": _dossier_fetch(task.get("mission_id"), task.get("target_url") or ""),
         # Explicit position (our side / opponent / arguments / red lines) — so the bot
         # never has to infer whose side it is on.
         "position": task.get("position") or {},
@@ -507,6 +548,9 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
                 ref = target_health.url_channel_ref(target_url)
                 if success:
                     target_health.report_success(ref, task.get("mission_id"))
+                    # The argument is now part of the mission's shared memory, so the
+                    # rest of the roster does not replay it in this same thread.
+                    _dossier_record_said(task, text_to_publish)
                 else:
                     raw = driver.last_failure or "публикация не удалась"
                     verdict, reason, scope = target_health.report_failure(

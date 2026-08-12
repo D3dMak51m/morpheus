@@ -801,6 +801,47 @@ class MissionOutcome(Base):
                 f"{self.mood_after}, replies={self.human_replies})>")
 
 
+class MissionDossier(Base):
+    """
+    Stage 43 — the mission's shared case file: what the team has established, what the
+    other side argues, and what our own people have already said.
+
+    The swarm was a set of individuals holding the same prompt fragment. Anti-repeat
+    lived in ``morpheus:recent_outputs:<agent>`` — per AGENT — so three roster members
+    could deploy the same argument in the same thread and none of them would know. A
+    team needs one memory, not three.
+
+    ``kind``:
+      * ``fact``     — something established to be true, with a source;
+      * ``opponent`` — an argument the other side actually makes here;
+      * ``counter``  — our answer to one (``related_id`` points at the opponent entry);
+      * ``said``     — an argument our side has already used, so it is not repeated.
+
+    Entries are per mission, not per agent, and carry who added them, so the operator
+    can see how the case was built and by whom.
+    """
+    __tablename__ = "mission_dossier"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mission_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    # operator | agent_id | system — who put this in the file.
+    added_by: Mapped[str] = mapped_column(String(50), default="system", nullable=False)
+    # For a `counter`: which opponent argument it answers.
+    related_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Where it was used/observed, so a `said` entry is scoped to a discussion.
+    post_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, index=True)
+    times_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    def __repr__(self) -> str:
+        return f"<MissionDossier(mission={self.mission_id}, {self.kind}: {self.content[:40]})>"
+
+
 class DecisionEvent(Base):
     """
     A durable record of WHY the swarm did (or didn't) act on a post — so the operator

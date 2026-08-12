@@ -502,6 +502,24 @@ Objective to advance: {narrative_goal or core_mission}
         if role in ("beta", "gamma") and alpha_context:
             prompt += f"Allied lead context: {alpha_context}\n"
 
+        # Stage 43 — the mission's shared memory. Anti-repeat used to be per-agent, so
+        # the roster could each deploy the same argument in one thread; these lines are
+        # what the TEAM has already said here, plus what the other side is arguing.
+        dossier = req.get("dossier") or {}
+        said = [str(x.get("content", "")).strip() for x in (dossier.get("said") or [])][:6]
+        opponent_lines = [str(x.get("content", "")).strip() for x in (dossier.get("opponent") or [])][:4]
+        facts = [x for x in (dossier.get("fact") or [])][:4]
+        if facts:
+            prompt += "\n[Что установлено по этой теме — можешь опираться как на правду]\n"
+            prompt += "".join(f"- {str(f.get('content',''))[:220]}\n" for f in facts)
+        if opponent_lines:
+            prompt += "\n[Что говорит противоположная сторона — будь готов возразить]\n"
+            prompt += "".join(f"- {l[:200]}\n" for l in opponent_lines if l)
+        if said:
+            prompt += ("\n[Наши в этой ветке УЖЕ говорили это — не повторяй ни мысль, "
+                       "ни формулировку, зайди с другого довода]\n")
+            prompt += "".join(f"- {l[:200]}\n" for l in said if l)
+
         prompt += recent_block
         prompt += """
 [How To Sound Human — strict]
