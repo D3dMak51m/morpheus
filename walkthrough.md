@@ -28,6 +28,36 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
   (relevance gate, RAG, target health, mission-as-position). Full evidence and before/after
   numbers in **`DIAGNOSIS.md`**.
 
+### Stage 40 — polygon: import real threads, and fix the polygon's own RAG
+
+Two pieces of work in the SIMULATION polygon, the second found while doing the first.
+
+**Comparing mission wordings.** One post, one persona, one mission, varying ONLY the stance —
+run 3× each. Empty stance wanders; a tag-list stance produced «Я бы НЕ сказал что игра должна
+была быть выиграна» (against the mission's own goal); the live contradictory stance reproduced
+the production failure exactly. A stance written as an **argued claim** stayed on message 3/3 and
+used the arguments the stance supplies. This is the evidence for the operator rule already in
+CLAUDE.md — write `stance` as a claim, not a tag salad.
+
+**Three defects in the polygon's own retrieval**, each of which made those results untrustworthy:
+`retrieve_knowledge` admitted every row (the gate was `score > 0` and weight adds 0.25
+unconditionally, so zero overlap still passed — a World Cup post was handed the city transport
+budget, and the model wrote about «электробусики» in a football thread); the same fact held two of
+four prompt slots (ids 1 and 25 were identical); and the query included the persona's interests,
+which production's `rag.fetch_fresh_context` does not — `Clone-1-a738` still carries
+["пробки","транспорт","свет"] from earlier testing, which legitimately matched the transport tag.
+A polygon that does not reproduce the live path cannot predict it.
+
+**Import of real posts WITH real comments** (`POST /simulation/import/telegram`). The documented
+limitation — public `t.me/s/<channel>` shows no discussion — is lifted by delegating the MTProto
+read to MYRMIDON (`GET :8003/api/v1/telegram/{agent}/export`, strictly read-only: nothing posted,
+joined or reacted to). Posts keyed by `external_ref`, comments by telegram id, reply tree and
+ORIGINAL timestamps preserved, `meta.is_our_bot` separating the swarm's own past replies from real
+strangers. Verified live on `@tashkent_news333`: 7 posts / 18 comments imported, and a generation
+on the «Родри — лучший игрок ЧМ» thread carried the real crowd into the prompt («Все смотрят на
+голы, Родри гений центра поля, так что хватит плакать фаны Месси»). Without this the polygon could
+not exercise thread mood, per-post tactic, anti-echo or reply targeting.
+
 ### Stage 39 — the news pipeline: ingest, dedup, geo, freshness, full article text
 
 Operator report: the knowledge base and News Hub are full of junk — bodies that are a headline

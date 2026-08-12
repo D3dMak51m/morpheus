@@ -786,6 +786,103 @@ class TelegramDriver:
                 })
         return out
 
+    # ── Structured export for the SIMULATION polygon ───────────────────────
+
+    def export_thread(self, channel_ref: str, post_limit: int = 10,
+                      comment_limit: int = 40) -> dict:
+        """
+        Export recent posts of a channel together with the REAL comments under them.
+
+        The polygon could previously only import posts (public `t.me/s/<channel>`
+        preview shows no discussion), so its threads were populated by the operator
+        and by agents — which is exactly the crowd whose mood the swarm is supposed
+        to read. Comments live in the linked discussion group and are reachable only
+        over MTProto, which is why this sits in MYRMIDON and not in DAEDALUS.
+
+        Read-only: nothing is posted, joined or reacted to. Returns
+        ``{channel: {...}, posts: [{id, text, date, comments: [...]}], error}``.
+        """
+        if not self._credentials_ok():
+            return {"error": "no credentials", "posts": []}
+        token = self._await_session_lock()
+        try:
+            return self._run(self._export_thread_async(channel_ref, post_limit, comment_limit))
+        except Exception as e:
+            logger.error("TelegramDriver [%s]: export_thread(%s) failed: %s",
+                         self.agent_id, channel_ref, e)
+            return {"error": str(e)[:300], "posts": []}
+        finally:
+            dialogue_store.release_session_lock(self.agent_id, token)
+
+    async def _export_thread_async(self, channel_ref: str, post_limit: int,
+                                   comment_limit: int) -> dict:
+        app = self._build_client()
+        async with app:
+            chat = await app.get_chat(channel_ref)
+            out_posts: List[dict] = []
+            async for msg in app.get_chat_history(chat.id, limit=post_limit):
+                text = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
+                media_type = None
+                for attr in ("photo", "video", "audio", "voice", "document", "animation"):
+                    if getattr(msg, attr, None) is not None:
+                        media_type = attr
+                        break
+                if not text and not media_type:
+                    continue
+
+                comments: List[dict] = []
+                try:
+                    async for reply in app.get_discussion_replies(chat.id, msg.id):
+                        rtext = (getattr(reply, "text", None)
+                                 or getattr(reply, "caption", None) or "").strip()
+                        if not rtext:
+                            continue
+                        u = getattr(reply, "from_user", None)
+                        # Anonymous / channel-signed repliers are real humans too —
+                        # discussion groups often hide the account (privacy settings).
+                        who = "аноним"
+                        if u is not None:
+                            who = (u.username or u.first_name or str(u.id))
+                        elif getattr(reply, "sender_chat", None) is not None:
+                            who = getattr(reply.sender_chat, "title", None) or "канал"
+                        parent = getattr(reply, "reply_to_message_id", None)
+                        comments.append({
+                            "id": reply.id,
+                            "parent_id": parent if parent and parent != msg.id else None,
+                            "author": who,
+                            "is_self": bool(getattr(u, "is_self", False)) if u else False,
+                            "text": rtext,
+                            "date": reply.date.isoformat() if getattr(reply, "date", None) else None,
+                        })
+                        if len(comments) >= comment_limit:
+                            break
+                except Exception as exc:
+                    # Comments disabled on this post, or no linked group — the post is
+                    # still worth importing, just without a crowd.
+                    logger.debug("export_thread: no discussion for %s/%s: %s",
+                                 channel_ref, msg.id, exc)
+
+                out_posts.append({
+                    "id": msg.id,
+                    "text": text,
+                    "media_type": media_type,
+                    "views": getattr(msg, "views", None),
+                    "date": msg.date.isoformat() if getattr(msg, "date", None) else None,
+                    "url": f"https://t.me/{chat.username}/{msg.id}" if chat.username else None,
+                    "comments": comments,
+                })
+
+            return {
+                "channel": {
+                    "chat_id": str(chat.id),
+                    "username": f"@{chat.username}" if chat.username else None,
+                    "title": chat.title or "",
+                    "members": getattr(chat, "members_count", None),
+                },
+                "posts": out_posts,
+                "error": None,
+            }
+
     # ── Target-channel post scanning (polled by target_engine) ─────────────
 
     def fetch_new_posts(self, channels: List[dict], since_map: Dict[str, int],

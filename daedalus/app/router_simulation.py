@@ -16,9 +16,11 @@ rate limits, cooldowns or active-hours gating.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -55,9 +57,29 @@ router = APIRouter(prefix="/api/v1/simulation", tags=["Simulation"])
 view_perm = require_permission("simulation:view")
 edit_perm = require_permission("simulation:manage")
 
+# Reading real Telegram threads needs an MTProto session, which only MYRMIDON holds.
+MYRMIDON_DEVICE_URL = os.getenv("MYRMIDON_DEVICE_URL", "http://myrmidon:8003")
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO timestamp from an import payload; None when absent/unparseable.
+
+    Imported posts and comments keep their ORIGINAL time — a thread whose replies all
+    carry the import moment reads as a burst, and the polygon exists to reproduce how
+    a real discussion unfolded.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────
@@ -1482,6 +1504,134 @@ def run_landscape(source_id: int, db: Session = Depends(get_db),
               actor_kind="operator", actor_label="ландшафт",
               channel_id=report.get("channel_id"), detail=report, commit=True)
     return {**report, "source": landscape_out(row)}
+
+
+class TelegramImportIn(BaseModel):
+    world_id: Optional[int] = None
+    # Which account's session reads the channel. Read-only: MYRMIDON posts nothing.
+    agent_id: str = Field(..., min_length=1)
+    channel: str = Field(..., min_length=1)
+    post_limit: int = Field(10, ge=1, le=50)
+    comment_limit: int = Field(40, ge=0, le=200)
+    target_channel_id: Optional[int] = None
+
+
+@router.post("/import/telegram")
+def import_telegram(body: TelegramImportIn, db: Session = Depends(get_db),
+                    _u: AdminUser = Depends(edit_perm)) -> dict[str, Any]:
+    """
+    Import real posts together with the REAL comments underneath them.
+
+    Until now the polygon could only take posts (the public `t.me/s/<channel>`
+    preview exposes no discussion), so its threads were filled by the operator and
+    by our own agents — which cannot exercise the half of the pipeline that reads a
+    live crowd: thread mood, per-post tactic, anti-echo, reply targeting. Comments
+    live in the linked discussion group and need MTProto, so the read is delegated to
+    MYRMIDON's session; DAEDALUS only stores what comes back.
+
+    Imported comments are `author_kind='external'` / `origin='imported'` so they are
+    never confused with the polygon's own agents. Re-running is safe: posts are keyed
+    by `external_ref` and comments by their Telegram id.
+    """
+    world = get_world(db, body.world_id)
+    try:
+        with httpx.Client(timeout=300.0) as client:
+            resp = client.get(
+                f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{body.agent_id}/export",
+                params={"channel": body.channel, "post_limit": body.post_limit,
+                        "comment_limit": body.comment_limit},
+                headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+            )
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404,
+                                detail=f"У агента {body.agent_id} нет активного Telegram-аккаунта.")
+        resp.raise_for_status()
+        data = resp.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"MYRMIDON не отдал выгрузку: {exc}") from exc
+
+    src = data.get("channel") or {}
+    username = src.get("username") or body.channel
+    if not username.startswith("@") and not username.startswith("-"):
+        username = f"@{username}"
+
+    # Reuse the operator's chosen channel, else match by username, else create one.
+    channel: Optional[SimChannel] = None
+    if body.target_channel_id:
+        channel = db.get(SimChannel, body.target_channel_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail="Целевой канал полигона не найден.")
+        _require_in_world(world.id, channel.world_id)
+    if channel is None:
+        channel = (db.query(SimChannel)
+                   .filter(SimChannel.world_id == world.id, SimChannel.username == username)
+                   .first())
+    if channel is None:
+        channel = SimChannel(world_id=world.id, username=username,
+                             title=src.get("title") or username,
+                             subscribers=src.get("members") or 0,
+                             source="imported", external_ref=src.get("chat_id"))
+        db.add(channel)
+        db.flush()
+
+    posts_new = comments_new = posts_seen = comments_seen = 0
+    for p in data.get("posts") or []:
+        posts_seen += 1
+        ref = p.get("url") or f"{username}/{p.get('id')}"
+        post = (db.query(SimPost)
+                .filter(SimPost.channel_id == channel.id, SimPost.external_ref == ref)
+                .first())
+        if post is None:
+            post = SimPost(
+                channel_id=channel.id, text=p.get("text") or "",
+                views=p.get("views") or 0, source="imported", external_ref=ref,
+                media=[{"kind": p["media_type"]}] if p.get("media_type") else [],
+                published_at=_parse_dt(p.get("date")) or _now(),
+            )
+            db.add(post)
+            db.flush()
+            posts_new += 1
+
+        # Telegram id → polygon id, so a reply keeps pointing at its parent.
+        id_map: dict[int, int] = {}
+        for c in p.get("comments") or []:
+            comments_seen += 1
+            tg_id = c.get("id")
+            existing = (db.query(SimComment)
+                        .filter(SimComment.post_id == post.id,
+                                SimComment.meta["tg_id"].astext == str(tg_id))
+                        .first())
+            if existing is not None:
+                id_map[tg_id] = existing.id
+                continue
+            parent_local = id_map.get(c.get("parent_id")) if c.get("parent_id") else None
+            row = SimComment(
+                post_id=post.id, parent_id=parent_local,
+                author_kind="external",
+                author_label=c.get("author") or "аноним",
+                text=c.get("text") or "",
+                status="published", origin="imported",
+                meta={"tg_id": tg_id, "imported_from": username,
+                      "is_our_bot": bool(c.get("is_self"))},
+                published_at=_parse_dt(c.get("date")) or _now(),
+            )
+            db.add(row)
+            db.flush()
+            id_map[tg_id] = row.id
+            comments_new += 1
+
+    log_event(db, world.id, "import",
+              f"Импорт из {username}: постов {posts_new}/{posts_seen}, "
+              f"комментариев реальных людей {comments_new}/{comments_seen}.",
+              actor_kind="system")
+    db.commit()
+    return {
+        "status": "ok", "channel_id": channel.id, "channel": channel.username,
+        "posts_imported": posts_new, "posts_seen": posts_seen,
+        "comments_imported": comments_new, "comments_seen": comments_seen,
+    }
 
 
 @router.post("/landscape/scrape")

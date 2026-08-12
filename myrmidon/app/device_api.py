@@ -83,6 +83,38 @@ def telegram_channels(
     return {"agent_id": agent_id, "channels": channels, "total": len(channels)}
 
 
+@app.get("/api/v1/telegram/{agent_id}/export")
+def telegram_export(
+    agent_id: str,
+    channel: str,
+    post_limit: int = 10,
+    comment_limit: int = 40,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Export a channel's recent posts WITH the real comments under them.
+
+    Consumed by the SIMULATION polygon's import: a polygon thread populated only by
+    the operator and by our own agents cannot exercise the part of the pipeline that
+    reads a real crowd's mood. Comments live in the linked discussion group and need
+    MTProto, which only MYRMIDON holds.
+
+    Strictly read-only — nothing is posted, joined or reacted to.
+    """
+    _verify_token(x_internal_token)
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+
+    creds = get_agent_credentials(_get_session_factory(), agent_id, "telegram")
+    if creds is None:
+        raise HTTPException(status_code=404, detail="No active Telegram account for this agent.")
+    driver = TelegramDriver(agent_id, creds)
+    data = driver.export_thread(channel, post_limit=post_limit, comment_limit=comment_limit)
+    if data.get("error"):
+        raise HTTPException(status_code=502, detail=f"Export failed: {data['error']}")
+    return {"agent_id": agent_id, **data}
+
+
 @app.get("/api/v1/devices")
 def list_devices(
     x_internal_token: str = Header(None, alias="X-Internal-Token"),
