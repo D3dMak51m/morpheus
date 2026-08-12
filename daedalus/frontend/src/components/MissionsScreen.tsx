@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Box, Group, Stack, Title, Text, Badge, Button, Paper, Tabs, TextInput, Textarea, Select,
+  Alert, Box, Group, Stack, Title, Text, Badge, Button, Paper, Tabs, TextInput, Textarea, Select,
   NumberInput, ActionIcon, SimpleGrid, Tooltip, TagsInput,
 } from '@mantine/core';
 import { Target, Plus, Play, Pause, Trash2, Check, X, Trash, Sparkles, UserPlus } from 'lucide-react';
@@ -196,8 +196,22 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
   const [eligible, setEligible] = useState<EligibleAgent[]>([]);
   const [pickAgent, setPickAgent] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Sanity checks. A mission that argues with itself is not a typo — mission #14
+  // («За аргентину», stance «проиграл из-за тренера») published a comment agreeing
+  // with the defeat it existed to dispute. Advisory only: it never blocks saving.
+  const [issues, setIssues] = useState<{ field: string; severity: string; message: string }[]>([]);
+  const [checking, setChecking] = useState(false);
 
   const apply = (u: Mission) => { setM(u); onChanged(u); };
+
+  const validate = useCallback(async () => {
+    setChecking(true);
+    try {
+      const r = await fetch(`/api/v1/missions/${m.id}/validate`, { headers });
+      if (r.ok) setIssues((await r.json()).issues || []);
+    } catch { /* advisory — never block the editor */ } finally { setChecking(false); }
+  }, [m.id, token]);
+  useEffect(() => { validate(); }, [validate]);
 
   const save = async () => {
     setSaving(true);
@@ -205,6 +219,7 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
         our_side: ourSide, opponent, key_points: keyPoints, red_lines: redLines }) });
     if (r.ok) apply(await r.json());
     setSaving(false);
+    validate();
   };
   const addTarget = async () => {
     const id = newTarget.trim(); if (!id) return;
@@ -268,6 +283,22 @@ function MissionDetail({ token, mission, onBack, onChanged, onStatus, onDeleted,
 
         <Tabs.Panel value="overview">
           <Stack gap="md" maw={720}>
+            {issues.length > 0 && (
+              <Alert color={issues.some(i => i.severity === 'error') ? 'red' : 'yellow'}
+                     title="Проверка миссии">
+                <Stack gap={4}>
+                  {issues.map((i, n) => (
+                    <Text key={n} size="sm">
+                      <b>{i.field}</b> — {i.message}
+                    </Text>
+                  ))}
+                  <Text size="xs" c="dimmed">
+                    Это подсказка, а не запрет — сохранить можно в любом случае.
+                  </Text>
+                </Stack>
+              </Alert>
+            )}
+            {checking && <Text size="xs" c="dimmed">Проверяю формулировки…</Text>}
             <TextInput label="Название" value={title} onChange={e => setTitle(e.currentTarget.value)} />
             <Textarea label="Цель" autosize minRows={2} value={goal} onChange={e => setGoal(e.currentTarget.value)} />
             <Textarea label="«Правда» / сторона" autosize minRows={3} value={stance} onChange={e => setStance(e.currentTarget.value)} />

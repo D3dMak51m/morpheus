@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import sim_generator, sim_landscape
+from app import mission_validate, sim_generator, sim_landscape
 from app.database import get_db
 from app.models import AdminUser, AgentProfile, SoulAccount
 from app.models_simulation import (
@@ -1539,6 +1539,25 @@ def telegram_import_agents(db: Session = Depends(get_db),
         .all()
     )
     return {"agents": [{"agent_id": a, "codename": c or a} for a, c in rows]}
+
+
+@router.get("/missions/{mission_id}/validate")
+def validate_sim_mission(mission_id: int, deep: bool = True,
+                         db: Session = Depends(get_db),
+                         _u: AdminUser = Depends(view_perm)) -> dict[str, Any]:
+    """
+    Same sanity checks the live missions get — the polygon is where a wording is
+    supposed to be caught, before it is copied into a real mission.
+    """
+    mission = db.get(SimMission, mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="Миссия не найдена.")
+    return mission_validate.validate_mission({
+        "goal": mission.goal, "stance": mission.stance,
+        "our_side": mission.our_side, "opponent": mission.opponent,
+        "key_points": mission.key_points or [], "red_lines": mission.red_lines or [],
+        "status": mission.status,
+    }, deep=deep)
 
 
 class TelegramImportIn(BaseModel):

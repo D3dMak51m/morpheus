@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AdminUser, Mission, MissionSquad, MissionTarget, AgentProfile
 from app.rbac import require_permission
-from app import mission_control
+from app import mission_control, mission_validate
 
 logger = logging.getLogger("daedalus.router_missions")
 
@@ -331,6 +331,30 @@ def update_mission(
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
+
+
+@router.get("/{mission_id}/validate")
+def validate_mission_endpoint(
+    mission_id: int,
+    deep: bool = True,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> dict[str, Any]:
+    """
+    Sanity-check a mission: does it argue with itself, and is its position usable?
+
+    Advisory only — nothing is blocked. `deep=false` skips the one LLM call and
+    returns the instant structural checks.
+    """
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Миссия не найдена.")
+    return mission_validate.validate_mission({
+        "goal": mission.narrative_goal, "stance": mission.stance,
+        "our_side": mission.our_side, "opponent": mission.opponent,
+        "key_points": mission.key_points or [], "red_lines": mission.red_lines or [],
+        "status": mission.status,
+    }, deep=deep)
 
 
 @router.post("/{mission_id}/status", response_model=MissionResponse)
