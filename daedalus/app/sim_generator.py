@@ -113,11 +113,31 @@ def retrieve_knowledge(
         body = _tokens(f"{row.title or ''} {row.content}")
         overlap = len(q & body)
         tag_hits = sum(1 for t in (row.tags or []) if _tokens(str(t)) & q)
+        # A row must actually MATCH the query. `weight` only breaks ties between rows
+        # that already earned a place — it must never manufacture one. Because the old
+        # test was `score > 0` and weight contributes 0.25 unconditionally, every row
+        # in the world passed: a post about the World Cup final was handed the city's
+        # transport budget and a channel's "пробки / новые автобусы" themes, and the
+        # model duly wrote about электробусики in a football thread.
+        if overlap <= 0 and tag_hits <= 0:
+            continue
         score = overlap + 2.0 * tag_hits + 0.25 * float(row.weight or 1)
-        if score > 0:
-            scored.append((score, row.id, row))
+        scored.append((score, row.id, row))
     scored.sort(key=lambda x: (-x[0], -x[1]))
-    return [r for _, _, r in scored[:limit]]
+
+    # Same fact imported twice is still one fact — it used to occupy two of the four
+    # prompt slots (ids 1 and 25 carried identical text).
+    out: list[SimKnowledge] = []
+    seen: set[str] = set()
+    for _, _, row in scored:
+        key = " ".join((row.content or "").split()).lower()[:200]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def system_rules(db: Session, world_id: int) -> list[str]:
@@ -287,11 +307,17 @@ def build_request(
 ) -> tuple[dict[str, Any], list[SimKnowledge]]:
     """Assemble one ORPHEUS request + return the RAG rows used (for the trace)."""
     channel = post.channel
+    # Retrieval query = the SITUATION (post) + what the mission argues. Deliberately
+    # NOT the persona's interests, which production's `rag.fetch_fresh_context` also
+    # excludes — the polygon only earns its keep if it reproduces the live path.
+    # Measured here: persona `Clone-1-a738` carries interests ["пробки","транспорт",
+    # "свет"] left over from earlier testing, and including them pulled the city's
+    # transport budget into a comment about the World Cup final. Interests shape the
+    # voice, they must not decide what the swarm is deemed to know about the topic.
     query = " ".join(filter(None, [
         post.text or "",
         (mission.goal if mission else "") or "",
         (mission.stance if mission else "") or "",
-        " ".join(persona.interests or []),
     ]))
     facts = retrieve_knowledge(db, world_id, query, limit=rag_limit)
     payload = {
