@@ -89,6 +89,7 @@ def telegram_export(
     channel: str,
     post_limit: int = 10,
     comment_limit: int = 40,
+    post_id: int = 0,
     x_internal_token: str = Header(None, alias="X-Internal-Token"),
 ) -> Dict[str, Any]:
     """
@@ -109,7 +110,8 @@ def telegram_export(
     if creds is None:
         raise HTTPException(status_code=404, detail="No active Telegram account for this agent.")
     driver = TelegramDriver(agent_id, creds)
-    data = driver.export_thread(channel, post_limit=post_limit, comment_limit=comment_limit)
+    data = driver.export_thread(channel, post_limit=post_limit,
+                                comment_limit=comment_limit, post_id=post_id or None)
     if data.get("error"):
         raise HTTPException(status_code=502, detail=f"Export failed: {data['error']}")
     return {"agent_id": agent_id, **data}

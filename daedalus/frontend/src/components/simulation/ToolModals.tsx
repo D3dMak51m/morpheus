@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert, Badge, Button, Group, Modal, MultiSelect, NumberInput, Paper, Progress, ScrollArea,
+  Alert, Badge, Button, Collapse, Group, Modal, MultiSelect, NumberInput, Paper, Progress, ScrollArea,
   SegmentedControl, Select, Slider, Stack, TagsInput, Text, TextInput, Textarea, Tabs, Loader,
 } from '@mantine/core';
 import { Play, RefreshCw, Trash2, Download, Globe, Plus, Square } from 'lucide-react';
@@ -334,11 +334,14 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Real-thread import: needs a production agent whose Telegram session can read.
+  // Real-thread import. The operator has a LINK — everything else has a sane default
+  // and lives under "Дополнительно".
   const [tgAgents, setTgAgents] = useState<{ agent_id: string; codename: string }[]>([]);
+  const [tgMore, setTgMore] = useState(false);
   const [tg, setTg] = useState({
-    agent_id: '', channel: '', post_limit: 10, comment_limit: 40, target_channel_id: '',
+    source: '', agent_id: '', post_limit: 10, comment_limit: 100, target_channel_id: '',
   });
+  const tgPostId = /\/(\d+)\s*$/.exec(tg.source.trim())?.[1] || '';
 
   const load = useCallback(async () => {
     try { setSources((await api.landscape(worldId)).sources); } catch { /* ignore */ }
@@ -352,19 +355,21 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
   useEffect(() => { if (opened) { setError(''); setMessage(''); load(); } }, [opened, load]);
 
   const importTg = async () => {
-    if (!tg.channel.trim()) { setError('Укажите канал, например @tashkent_news333.'); return; }
-    if (!tg.agent_id) { setError('Нет агента с активным Telegram-аккаунтом.'); return; }
+    if (!tg.source.trim()) { setError('Вставьте ссылку на пост.'); return; }
     setBusy(true); setError(''); setMessage('');
     try {
       const r = await api.importTelegram({
-        world_id: worldId, agent_id: tg.agent_id, channel: tg.channel.trim(),
+        world_id: worldId, source: tg.source.trim(),
         post_limit: tg.post_limit, comment_limit: tg.comment_limit,
+        agent_id: tg.agent_id || null,
         target_channel_id: tg.target_channel_id ? Number(tg.target_channel_id) : null,
       });
-      setMessage(
-        `${r.channel}: постов ${r.posts_imported} из ${r.posts_seen}, ` +
-        `комментариев реальных людей ${r.comments_imported} из ${r.comments_seen}.`,
-      );
+      const already = r.posts_imported === 0 && r.posts_seen > 0;
+      setMessage(already
+        ? `${r.channel}: уже импортировано ранее, дублей не создано ` +
+          `(постов ${r.posts_seen}, комментариев ${r.comments_seen}).`
+        : `${r.channel}: перенесено постов ${r.posts_imported}, ` +
+          `комментариев реальных людей ${r.comments_imported}.`);
       onChanged(); load();
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
@@ -442,38 +447,56 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
 
         <Tabs.Panel value="telegram">
           <Stack gap="sm">
-            <Select label="Чьей сессией читаем" data={tgAgents.map(a => ({
-              value: a.agent_id, label: `${a.codename} — ${a.agent_id}` }))}
-              value={tg.agent_id || null} searchable
-              onChange={v => setTg({ ...tg, agent_id: v || '' })}
-              description="Аккаунт только читает: ничего не публикует, никуда не вступает" />
-            <TextInput label="Канал" required value={tg.channel} placeholder="@tashkent_news333"
-              onChange={e => setTg({ ...tg, channel: e.currentTarget.value })} />
-            <Group grow>
-              <NumberInput label="Постов" min={1} max={50} value={tg.post_limit}
-                onChange={v => setTg({ ...tg, post_limit: Number(v) || 10 })} />
-              <NumberInput label="Комментариев на пост" min={0} max={200} value={tg.comment_limit}
-                onChange={v => setTg({ ...tg, comment_limit: Number(v) || 40 })} />
-              <Select label="Канал полигона (пусто — создать)" clearable searchable
-                data={channels.map(c => ({ value: String(c.id), label: `${c.username} — ${c.title}` }))}
-                value={tg.target_channel_id || null}
-                onChange={v => setTg({ ...tg, target_channel_id: v || '' })} />
-            </Group>
-            <Button loading={busy} leftSection={<Download size={15} />} onClick={importTg}
+            <TextInput
+              label="Ссылка на пост" required size="md" value={tg.source}
+              placeholder="https://t.me/tashkent_news333/35"
+              description={tgPostId
+                ? `Будет перенесён пост №${tgPostId} и все комментарии под ним`
+                : 'Откройте пост в Telegram → «Копировать ссылку» → вставьте сюда'}
+              onChange={e => setTg({ ...tg, source: e.currentTarget.value })} />
+
+            <Select label="В какой канал полигона" clearable searchable
+              placeholder="Создать новый канал по образцу исходного"
+              data={channels.map(c => ({ value: String(c.id), label: `${c.username} — ${c.title}` }))}
+              value={tg.target_channel_id || null}
+              onChange={v => setTg({ ...tg, target_channel_id: v || '' })} />
+
+            <Button loading={busy} size="md" leftSection={<Download size={16} />} onClick={importTg}
               disabled={tgAgents.length === 0}>
-              Импортировать посты с комментариями
+              Импортировать
             </Button>
+
             {tgAgents.length === 0 && (
               <Alert color="yellow">
-                Нет ни одного агента с активным Telegram-аккаунтом — импорт недоступен.
+                Нет ни одного агента с активным Telegram-аккаунтом — читать канал нечем.
               </Alert>
             )}
+
+            <Button variant="subtle" size="compact-xs" onClick={() => setTgMore(v => !v)}>
+              {tgMore ? 'Свернуть' : 'Дополнительно'}
+            </Button>
+            <Collapse in={tgMore}>
+              <Stack gap="sm">
+                <Select label="Чьей сессией читать" clearable searchable
+                  placeholder="Любым доступным аккаунтом"
+                  data={tgAgents.map(a => ({ value: a.agent_id, label: `${a.codename} — ${a.agent_id}` }))}
+                  value={tg.agent_id || null}
+                  onChange={v => setTg({ ...tg, agent_id: v || '' })} />
+                <Group grow>
+                  <NumberInput label="Комментариев на пост" min={0} max={200} value={tg.comment_limit}
+                    onChange={v => setTg({ ...tg, comment_limit: Number(v) || 100 })} />
+                  <NumberInput label="Постов, если ссылка на канал" min={1} max={50}
+                    value={tg.post_limit} disabled={!!tgPostId}
+                    onChange={v => setTg({ ...tg, post_limit: Number(v) || 10 })} />
+                </Group>
+              </Stack>
+            </Collapse>
+
             <Text size="xs" c="dimmed">
-              В отличие от скрапинга, здесь подтягиваются и комментарии реальных людей из группы
-              обсуждения: они видны только по MTProto, поэтому чтение идёт через сессию MYRMIDON.
-              Дерево ответов и исходные даты сохраняются, повторный запуск дублей не создаёт,
-              а прошлые реплики самого роя помечаются отдельно. Нужно, чтобы полигон проверял
-              настроение треда, выбор тактики и адресность ответа на настоящей толпе.
+              Ссылка на пост переносит именно его вместе с веткой обсуждения. Ссылка на канал
+              без номера (<code>@channel</code>) — последние посты. Аккаунт только читает:
+              ничего не публикует, никуда не вступает, реакций не ставит. Дерево ответов и
+              исходные даты сохраняются, повторный запуск дублей не создаёт.
             </Text>
           </Stack>
         </Tabs.Panel>

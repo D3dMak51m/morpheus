@@ -1529,12 +1529,42 @@ def telegram_import_agents(db: Session = Depends(get_db),
 
 class TelegramImportIn(BaseModel):
     world_id: Optional[int] = None
-    # Which account's session reads the channel. Read-only: MYRMIDON posts nothing.
-    agent_id: str = Field(..., min_length=1)
-    channel: str = Field(..., min_length=1)
-    post_limit: int = Field(10, ge=1, le=50)
-    comment_limit: int = Field(40, ge=0, le=200)
+    # What the operator actually has: a link to the post they want. A bare channel
+    # (@name / t.me/name) still works and takes the newest `post_limit` posts.
+    source: str = Field(..., min_length=1)
     target_channel_id: Optional[int] = None
+    comment_limit: int = Field(100, ge=0, le=200)
+    post_limit: int = Field(10, ge=1, le=50)
+    # Optional: pin the reading session. Left empty, any agent with a live Telegram
+    # account is used — which session reads is an implementation detail, not a choice
+    # the operator should have to make.
+    agent_id: Optional[str] = None
+
+
+def _parse_tg_source(source: str) -> tuple[str, Optional[int]]:
+    """
+    Split what the operator pasted into ``(channel, post_id)``.
+
+    Accepts `https://t.me/<channel>/<id>`, `t.me/<channel>`, `@channel`, `channel`,
+    and the private `t.me/c/<internal>/<id>` form.
+    """
+    raw = (source or "").strip()
+    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    raw = raw.strip("/")
+    if not raw:
+        return "", None
+    parts = raw.split("/")
+    if parts[0] == "c" and len(parts) >= 2:
+        post_id = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
+        return f"-100{parts[1]}", post_id
+    channel = parts[0]
+    if not channel.startswith("@") and not channel.startswith("-"):
+        channel = f"@{channel}"
+    post_id = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
+    return channel, post_id
 
 
 @router.post("/import/telegram")
@@ -1550,22 +1580,45 @@ def import_telegram(body: TelegramImportIn, db: Session = Depends(get_db),
     live in the linked discussion group and need MTProto, so the read is delegated to
     MYRMIDON's session; DAEDALUS only stores what comes back.
 
+    The operator pastes what they have — a link to the post. `source` accepts
+    `https://t.me/<channel>/<id>` (that one post and its thread), a bare channel
+    (newest `post_limit` posts), or the private `t.me/c/<internal>/<id>` form.
+
     Imported comments are `author_kind='external'` / `origin='imported'` so they are
     never confused with the polygon's own agents. Re-running is safe: posts are keyed
     by `external_ref` and comments by their Telegram id.
     """
     world = get_world(db, body.world_id)
+    channel_ref, post_id = _parse_tg_source(body.source)
+    if not channel_ref:
+        raise HTTPException(status_code=400,
+                            detail="Не разобрал ссылку. Пример: https://t.me/tashkent_news333/35")
+
+    agent_id = body.agent_id
+    if not agent_id:
+        row = (db.query(AgentProfile.agent_id)
+               .join(SoulAccount, SoulAccount.agent_id == AgentProfile.agent_id)
+               .filter(SoulAccount.platform == "telegram",
+                       SoulAccount.status == "active",
+                       AgentProfile.status == "active")
+               .first())
+        if row is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Нет ни одного агента с активным Telegram-аккаунтом — читать нечем.")
+        agent_id = row[0]
+
     try:
         with httpx.Client(timeout=300.0) as client:
             resp = client.get(
-                f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{body.agent_id}/export",
-                params={"channel": body.channel, "post_limit": body.post_limit,
-                        "comment_limit": body.comment_limit},
+                f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{agent_id}/export",
+                params={"channel": channel_ref, "post_limit": body.post_limit,
+                        "comment_limit": body.comment_limit, "post_id": post_id or 0},
                 headers={"X-Internal-Token": INTERNAL_API_TOKEN},
             )
         if resp.status_code == 404:
             raise HTTPException(status_code=404,
-                                detail=f"У агента {body.agent_id} нет активного Telegram-аккаунта.")
+                                detail=f"У агента {agent_id} нет активного Telegram-аккаунта.")
         resp.raise_for_status()
         data = resp.json()
     except HTTPException:
@@ -1573,8 +1626,14 @@ def import_telegram(body: TelegramImportIn, db: Session = Depends(get_db),
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"MYRMIDON не отдал выгрузку: {exc}") from exc
 
+    if not (data.get("posts") or []):
+        raise HTTPException(
+            status_code=404,
+            detail=f"По ссылке ничего не нашлось: {channel_ref}"
+                   + (f", пост {post_id}" if post_id else "") + ".")
+
     src = data.get("channel") or {}
-    username = src.get("username") or body.channel
+    username = src.get("username") or channel_ref
     if not username.startswith("@") and not username.startswith("-"):
         username = f"@{username}"
 

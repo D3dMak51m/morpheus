@@ -789,7 +789,7 @@ class TelegramDriver:
     # ── Structured export for the SIMULATION polygon ───────────────────────
 
     def export_thread(self, channel_ref: str, post_limit: int = 10,
-                      comment_limit: int = 40) -> dict:
+                      comment_limit: int = 40, post_id: Optional[int] = None) -> dict:
         """
         Export recent posts of a channel together with the REAL comments under them.
 
@@ -799,6 +799,9 @@ class TelegramDriver:
         to read. Comments live in the linked discussion group and are reachable only
         over MTProto, which is why this sits in MYRMIDON and not in DAEDALUS.
 
+        ``post_id`` exports exactly that one post (the operator pasted its link);
+        otherwise the newest ``post_limit`` posts of the channel.
+
         Read-only: nothing is posted, joined or reacted to. Returns
         ``{channel: {...}, posts: [{id, text, date, comments: [...]}], error}``.
         """
@@ -806,7 +809,8 @@ class TelegramDriver:
             return {"error": "no credentials", "posts": []}
         token = self._await_session_lock()
         try:
-            return self._run(self._export_thread_async(channel_ref, post_limit, comment_limit))
+            return self._run(self._export_thread_async(
+                channel_ref, post_limit, comment_limit, post_id))
         except Exception as e:
             logger.error("TelegramDriver [%s]: export_thread(%s) failed: %s",
                          self.agent_id, channel_ref, e)
@@ -815,12 +819,20 @@ class TelegramDriver:
             dialogue_store.release_session_lock(self.agent_id, token)
 
     async def _export_thread_async(self, channel_ref: str, post_limit: int,
-                                   comment_limit: int) -> dict:
+                                   comment_limit: int,
+                                   post_id: Optional[int] = None) -> dict:
         app = self._build_client()
         async with app:
             chat = await app.get_chat(channel_ref)
             out_posts: List[dict] = []
-            async for msg in app.get_chat_history(chat.id, limit=post_limit):
+
+            if post_id:
+                one = await app.get_messages(chat.id, post_id)
+                source_msgs = [one] if one else []
+            else:
+                source_msgs = [m async for m in app.get_chat_history(chat.id, limit=post_limit)]
+
+            for msg in source_msgs:
                 text = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
                 media_type = None
                 for attr in ("photo", "video", "audio", "voice", "document", "animation"):
