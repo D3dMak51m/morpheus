@@ -151,5 +151,13 @@ async def extract_themes(posts: list[str]) -> list[dict]:
         # crude frequency: posts whose text contains the theme's first word
         key = t.split()[0] if t.split() else t
         count = sum(1 for p in low_posts if key and key in p)
+        # Stage 39 — a theme that appears in ZERO of the posts it was extracted from is
+        # not a quiet theme, it is a hallucination. qwen2.5:3b invented `нафыкаси`,
+        # `назарбат чиргилери`, `жакшы ҳуқуқ` and `диоманд` this way, and they went
+        # straight into the channel context block that shapes the bot's tone. The
+        # count is the model's own evidence — no evidence, no theme.
+        if count <= 0:
+            logger.debug("Dropping unsupported channel theme %r (0 posts mention it).", t)
+            continue
         out.append({"theme": t, "count": count})
     return out

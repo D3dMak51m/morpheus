@@ -63,9 +63,13 @@ so any frontend change needs `docker compose build daedalus`.
   — squad eligibility/auto-assign + `reconcile_dynamic_rosters` (the reconciler auto-fills
   `agent_mode='dynamic'` mission rosters to `dynamic_count` at runtime); DAG launch is legacy. `analytics.py` — metrics,
   `/stream` (durable activity), `/live` (telemetry tail), `/swarm` (dashboard aggregate),
-  `/dialogues`. `router_knowledge.py` — RAG facts ingest/search/list + `/knowledge/internal/
-  by-geo` (recent facts by PLACE = `tags` overlap, for channel comment grounding). `landscape.py` —
-  scraping sources. `router_scouting.py`, `router_auth_factory.py` (TG login/code),
+  `/dialogues`. `router_knowledge.py` — RAG facts ingest/search/list, the boilerplate scrubber +
+  junk gate, dedup/merge, `/facts/cleanup` and `/facts/refetch` (backfill) + `/knowledge/internal/
+  by-geo` (recent facts by PLACE = **`geo_tags`** overlap, canonicalised both sides via `geo.py`).
+  `geo.py` — canonical place vocabulary (ru/en/uz, both Uzbek scripts) + `places_in_text` (a place
+  the source never named is a hallucination, not evidence). `refetch.py` — re-reads the article
+  behind facts stored as feed teasers. `landscape.py` — scraping sources + `/internal/report`
+  (per-pass source health: ok|degraded|dead). `router_scouting.py`, `router_auth_factory.py` (TG login/code),
   `router_factory.py` (clone factory), `router_sandbox.py`, `db_explorer.py`,
   `classifier.py`/`embeddings.py` (LLM classify + embed for knowledge), `genesis_engine.py`.
   **`router_simulation.py` + `models_simulation.py` + `sim_generator.py` + `sim_landscape.py`
@@ -170,7 +174,21 @@ so any frontend change needs `docker compose build daedalus`.
 - `main.py` syncs `scraping_landscape` targets; runs RSS/web scrapers → knowledge.
   **`scrapers/tg_scraper.py` uses an unlogged-in Telethon session and is dead** — TG news is
   handled by MYRMIDON `target_engine` (Pyrogram) instead. `knowledge_ingest.py` POSTs to
-  DAEDALUS `/knowledge/internal/ingest`.
+  DAEDALUS `/knowledge/internal/ingest` (returns False when rejected as boilerplate),
+  mirrors into the News Hub (`capture_event`, display only — never the execution queue) and
+  reports each pass (`report_scrape`).
+- **`article_fetcher.py`** — shared article extraction (trafilatura). Both scrapers open the
+  ARTICLE, not the link: a feed entry is an announcement carrying 4–44× less text than the page
+  (BBC ×23, gazeta.uz ×18, podrobno ×44 — RT ×0.9 is the exception). `better_text` keeps whichever
+  version is richer per item, so RT is not silently downgraded.
+- `scrapers/rss_scraper.py` (was `test_rss.py` at the repo root) — feeds, dedup, article fetch,
+  publication date. `RSS_MAX_ARTICLE_FETCH` is **both** the entry slice and the fetch budget; they
+  must stay equal (when they diverged, entries past the budget were stored as stubs *and* stamped
+  with the 24h dedup key, so they could never be retried).
+- `scrapers/web_scraper.py` — front page → dated article links → body. Requires a date segment in
+  the path: a hyphenated-slug heuristic was measured too weak (CNN names its section hubs the same
+  way). Reports an error when it opens articles but extracts none, so a site like `daryo.uz` —
+  which does not expose article bodies in its HTML at all — shows as `degraded` instead of silent.
 
 ### MUNINN (`muninn/app/main.py`)
 - ChromaDB-backed semantic dialog memory. `POST /api/v1/memory/{search,save}` keyed by
@@ -201,8 +219,11 @@ default `dynamic` = per-post tactic from thread mood vs our side),
 **`mission_targets`** (kind channel|post, status active|suggested|rejected, target health
 `unknown`|`ok`|`blocked`|`degraded`,
 source operator|agent), **`mission_squads`** (roster, caste role).
-Knowledge: **`knowledge_facts`** (pgvector RAG), `scraping_landscape` (sources),
-`captured_raw_events`, `scouted_targets`, `social_post_targets`, `campaigns`.
+Knowledge: **`knowledge_facts`** (pgvector RAG; `geo_tags` = canonical PLACES only, `variants` =
+wordings a merge superseded, `published_at` = the SOURCE's date — freshness must not mean "scraped
+today"), `scraping_landscape` (sources + health: `health`, `health_reason`, `last_item_count`,
+`consecutive_empty`, `last_scraped_at`), `captured_raw_events` (News Hub, display only),
+`scouted_targets`, `social_post_targets`, `campaigns`.
 Activity: **`agent_activity_logs`** (durable: comment|reply|react), **`decision_events`**
 (durable WHY the swarm did/didn't act: kind relevance|skip|comment, detail = recognized text/
 reason, verdict), `account_audit_logs`, `virtual_devices`.
@@ -233,8 +254,11 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
 ## How the swarm actually works (pipelines)
 
 1. **News → knowledge (RAG):** each agent's `role=news` channels → MYRMIDON `target_engine`
-   reads new posts → DAEDALUS `/knowledge/internal/ingest` → LLM classify + `nomic-embed-text`
-   + pgvector dedup → `knowledge_facts`. ORPHEUS grounds comments on these (`rag.fetch_fresh_context`).
+   reads new posts; HUGINN's RSS/web scrapers open the **full article** (`article_fetcher`) →
+   DAEDALUS `/knowledge/internal/ingest` → scrub boilerplate + reject junk → LLM classify
+   (layers/categories/tags/**places**) + `nomic-embed-text` + HNSW dedup (high cosine **and**
+   shared vocabulary; non-destructive) → `knowledge_facts`. ORPHEUS grounds comments on these
+   (`rag.fetch_fresh_context`), filtered by age (`published_at`, 14d) and admitted lexically.
 2. **Mission-driven commenting (primary):** active mission → roster **alpha** scans the
    mission's `active` channel targets (now incl. **media-only posts**; caption-less photo/voice
    posts are "read" first — `media_reader`: VLM+OCR / HEIMDALL STT) → ORPHEUS LLM-relevance vs
@@ -343,7 +367,34 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
   answers"). Similarity now only fetches candidates; admission is **lexical** (shared mission/post
   vocabulary), similarity breaks ties. Empty context is honest — never pad the prompt with noise.
   Also: nomic's `search_query:`/`search_document:` prefixes made separation *worse* here — measured,
-  don't add them.
+  don't add them. The same blindness broke **dedup**: unrelated same-language stories reach 0.849
+  (0.90 on the long texts that actually arrive) while true duplicates sit at 0.917–0.935, so the old
+  0.85 merge floor ate real news — one fact was 16 different posts, 37% of all ingested bodies were
+  discarded. A merge needs cosine **and** shared vocabulary, and keeps the loser in `variants`.
+- **The pgvector index was returning the WRONG neighbour.** `ivfflat(lists=100)` over ~800 rows puts
+  ~8 rows per list and `ivfflat.probes` defaults to 1 — a search examined ~1% of the table. Measured:
+  indexed top-1 matched the true top-1 in **3/14** probes; a 0.968 duplicate came back as a 0.845
+  stranger. Now **HNSW** (recall 30/30). If you ever reintroduce IVFFlat, size `lists` to the row
+  count and raise `probes`.
+- **An RSS entry is an announcement, not the news.** The article page carries 4–44× the feed's
+  `summary` (BBC ×23, gazeta.uz ×18, podrobno ×44). Store the feed text and the swarm "knows" only
+  headlines — which is why Telegram-sourced facts always read better. **RT is the exception** (its
+  pages extract to *less* than its feed), so `better_text` compares per item instead of assuming.
+- **Some sites cannot be scraped at all.** `daryo.uz` never puts article text in its HTML: both
+  trafilatura modes return the comment widget and a subscription ad. Reject rather than store —
+  and report it, or a source that finds links but extracts nothing looks perfectly healthy.
+- **Geo must be canonical AND verified.** Tags arrive in the source's language (`ташкент` matched 0
+  facts, `uzbekistan` 24), so places are canonicalised through `daedalus/app/geo.py`. And qwen2.5:3b
+  *invents* geography — a Zaporizhzhia blackout came back tagged `узбекистан`+`ташкент`, which alone
+  is enough to serve a Ukraine story to a Tashkent channel. `places_in_text` keeps only places the
+  text actually names (stemmed: «россия» must find «России»).
+- **A merge must not freeze the poorest telling.** The same story arrives twice — feed teaser first,
+  full article later. First-seen-wins would keep the stub forever, so a materially richer incoming
+  text replaces the content and re-embeds.
+- **Boilerplate is not cosmetic.** 497/497 RT facts ended in "Читать далее" and 44/90 daryo facts
+  were *nothing but* chrome — all embedded and offered to the bots as world knowledge. Scrub at
+  ingest (one gate in `router_knowledge`, covering every scraper) and truncate on a sentence
+  boundary, or facts end mid-word.
 - **`403 CHAT_GUEST_SEND_FORBIDDEN` is a generic RPCError in Pyrogram**, not `ChatWriteForbidden` —
   so the join-and-retry branch never fired and every mission comment on such a channel died (3/3 on
   `@Match_TV`). Handle it explicitly: join the discussion group, retry once.

@@ -46,8 +46,17 @@ RAG_TOP_K = int(os.getenv("RAG_TOP_K", "4"))
 # beyond the noise band. Precision over recall — an empty context block is honest
 # and harmless, a wrong one actively misleads the model.
 RAG_CANDIDATES = int(os.getenv("RAG_CANDIDATES", "30"))
-# Share of the query's keywords a fact must contain to be admitted (>0 = at least one).
-RAG_MIN_OVERLAP = float(os.getenv("RAG_MIN_OVERLAP", "0.12"))
+# Share of the query's keywords a fact must contain to be admitted.
+#
+# Stage 39 — raised from 0.12 after sweeping real posts against the live corpus. A
+# typical query yields ~5 keywords, so 0.20 is literally "one word in common" — and on
+# «гражданство и мигранты в Узбекистане» that admitted six facts, five of which shared
+# only the word Узбекистан (a cyclist, an ambassador, construction fines, Uzbekneftegaz).
+# On «отключения света» it admitted a Cuban blackout and a football transfer at 0.14.
+# At 0.25 a fact must share more than the country's name: the same sweep then admitted
+# only the genuinely topical hit and returned nothing for the queries the corpus has no
+# answer to. Precision over recall — an empty block is honest, a wrong one misleads.
+RAG_MIN_OVERLAP = float(os.getenv("RAG_MIN_OVERLAP", "0.25"))
 # Similarity so high it stands on its own even without shared words.
 RAG_STRONG_SIMILARITY = float(os.getenv("RAG_STRONG_SIMILARITY", "0.90"))
 

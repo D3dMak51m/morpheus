@@ -54,3 +54,6 @@ backups/
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Editor/IDE artifacts dropped into the repo root
+*.vsix

@@ -28,6 +28,66 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
   (relevance gate, RAG, target health, mission-as-position). Full evidence and before/after
   numbers in **`DIAGNOSIS.md`**.
 
+### Stage 39 — the news pipeline: ingest, dedup, geo, freshness, full article text
+
+Operator report: the knowledge base and News Hub are full of junk — bodies that are a headline
+plus site interface ("Читать далее", "Izohlar", subscription ads), texts cut mid-word, and only
+Telegram-sourced items reading like real news. Everything below was measured on the live stand
+before changing code.
+
+**What was actually wrong (all reproduced):**
+1. **Dedup destroyed news.** `nomic-embed-text` encodes language/register as much as topic:
+   measured, unrelated same-language stories score up to **0.849** while true duplicates sit at
+   **0.917–0.935**. The 0.85 merge floor sat *inside* the noise band, so one stored fact was **16
+   different posts** from `@burchakostida`, and **465 of 1255** ingested bodies (37%) had been
+   discarded — a merge kept only the URL.
+2. **The ANN index returned the wrong neighbour.** `ivfflat(lists=100)` over ~800 rows puts ~8 rows
+   per list and `probes=1` searched one of them. Indexed top-1 matched the true top-1 in **3/14**
+   probes (21% recall); a genuine duplicate at cosine 0.968 came back as a 0.845 stranger. Both
+   consumers were corrupted — dedup never saw its duplicates, RAG ranked facts it never compared.
+3. **Geo lookups matched nothing.** `by-geo` matched raw `tags`, which arrived in the source's
+   language: `ташкент` hit **0** facts while `uzbekistan` had 24. The single fact it ever returned
+   for a Tashkent channel was a Lavrov/Ukraine story that had absorbed the word `узбекистан` via
+   merged tag soup (a 16-source fact carried **51** tags).
+4. **Dead sources were invisible.** `kun.uz/ru/news/rss` answered HTTP 200 with an HTML page → 0
+   entries, no warning, indistinguishable from a quiet feed. The Uzbek half of the corpus stayed
+   empty: **14** local facts against **127** war ones.
+5. **The web scraper never opened an article** — it ingested the *text of a homepage link*, so CNN
+   arrived as photo credits ("Win McNamee/Getty Images") and teasers ("Charli XCX chasing cool").
+6. **RSS carries an announcement, not the news.** Measured per source, the article page holds
+   4–44× the feed's `summary` (BBC ×23, gazeta.uz ×18, podrobno.uz ×44) — RT is the sole exception
+   at ×0.9. This is why only Telegram (full text by nature) ever read well.
+7. **No freshness anywhere.** 93% of the corpus was over a week old and neither retrieval path had
+   an age cutoff; worse, age was measured from *ingest* time, so a 19 May article still linked from
+   a homepage counted as today's news.
+8. The RSS/web feeds were also polled by `social_feed_scraper`, which pushed them to
+   `queue:raw_events`, where ORPHEUS wrote comments addressed to the **feed's own URL**.
+
+**Fixes (each measured):** merge now needs high cosine **and** shared vocabulary and is
+non-destructive (`variants`), validated 8/8 where cosine alone was 7/8; **HNSW** replaces IVFFlat
+(recall 3/14 → **30/30**); canonical place vocabulary (`daedalus/app/geo.py`, ru/en/uz incl. both
+Uzbek scripts) feeding a new `geo_tags` column, with places **verified against the text** because
+qwen2.5:3b invents them (a Zaporizhzhia blackout came back tagged `узбекистан`); per-pass source
+health reporting (`/landscape/internal/report`); a boilerplate scrubber + junk gate at ingest
+covering every scraper; full-article extraction shared by both scrapers
+(`huginn/app/article_fetcher.py`), keeping whichever text is richer per item; `published_at` from
+the feed/metadata driving freshness; sentence-boundary truncation; a backfill endpoint
+(`/knowledge/facts/refetch`, `daedalus/app/refetch.py`) for stubs whose entries have rotated out.
+
+**Measured, before → after:** average fact length **305 → 645** chars, full texts (≥800) **0 →
+266**; boilerplate 585/963 → **0**; corpus junk removed (137 facts); `by-geo` for a Tashkent
+channel 1 wrong fact → **4 genuinely local**, and it now answers identically to `ташкент`,
+`tashkent` and `toshkent`; RAG admission tightened 0.12 → **0.25** after a live sweep showed 0.20
+means "one word in common" (it admitted a Cuban blackout for an Uzbek-energy query). Per source:
+gazeta.uz 354 → **2078**, foxnews 240 → **1439**, CNN 1080 → **1332**, kun.uz 548 → **1225**, BBC
+183 → **1139**. RT stays on its feed text by design; daryo.uz does not expose article bodies in its
+HTML at all and is flagged `degraded`.
+
+Housekeeping in the same batch: the production RSS scraper moved out of `huginn/test_rss.py` into
+`huginn/app/scrapers/rss_scraper.py`; the duplicate feed loop was removed from
+`social_feed_scraper`; the News Hub is fed as pure observability (no queue, no generation);
+channel-profile themes with a zero mention count are dropped as hallucinations.
+
 ### Stage 38 — relevance / RAG / target-health / mission-position (diagnosed + fixed)
 
 Operator report: bots almost never find relevant posts, don't read the discussion, RAG has no
@@ -515,7 +575,16 @@ classes (`.tabs`/`.status-badge`/`.data-grid`, used by ChannelManager) into a sh
 `SoulsContext.css`/`AccountsManager.css`/`LandscapeManager.css` no longer need to be imported in
 `App.tsx`.
 
-**Stage 38 (current batch): the live swarm reliability pass is implemented and verified** — see the
+**Stage 39 (current batch): the news pipeline is rebuilt end-to-end and verified on live data** —
+see the entry above. Ingest now merges only genuine duplicates (and never destructively), searches
+a correct nearest neighbour, canonicalises places, judges freshness by publication date, rejects
+site boilerplate at the door, and — the operator's headline complaint — stores the **full article**
+rather than the feed's announcement. Two follow-ups from the same batch are worth remembering: the
+RSS entry slice and the article-fetch budget must stay the same number (they diverged, silently
+stamping entries 13–15 as permanent stubs), and `daryo.uz` cannot be scraped at all — it is
+`degraded` on purpose, not broken configuration.
+
+**Stage 38: the live swarm reliability pass is implemented and verified** — see the
 entry above and `DIAGNOSIS.md`. The stage changes the full production path: DAEDALUS stores explicit
 mission position and target health; ORPHEUS cleans input, judges joinability on a graded scale and
 retrieves mission-aware lexical RAG; MYRMIDON probes targets, reads threads before judging, chooses
@@ -542,6 +611,17 @@ testing (raw SQL) — harmless, adjust in the editor if desired.
 2. **Knowledge coverage/model.** Add mission-scoped news collection where the current news corpus
    lacks the mission domain (notably sports), then use the Simulation polygon to compare a 7–8B
    Q4 text model if the operator approves the download and VRAM trade-off.
+3. **Channel profiles are stale (operator).** All four missions are `paused`, and profiling only
+   runs for channels of an *active* mission, so the five stored profiles still date from 27 July
+   and `@match_tv` has an empty `geo_label`. The Stage 39 fix (themes with a zero mention count are
+   dropped) applies on the next rebuild. Activating a mission posts to real channels, so this is an
+   operator decision; alternatively an operator-triggered rebuild would need MYRMIDON to supply the
+   posts, since DAEDALUS has no Telegram session of its own.
+4. **Non-geo tag language.** Tags are still whatever language the model chose (`ministru_kultury`,
+   `narcoactivists` on Russian text). Measured: instructing qwen2.5:3b to write tags in Russian
+   makes it *worse* on English sources (`centralbankuzbekistan`, `illicittransferzaklyuchennyye`),
+   so this was deliberately left alone. It costs nothing today — `by-geo` runs on `geo_tags` and
+   RAG on the content's own lexis.
 
 ---
 

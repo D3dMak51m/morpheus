@@ -29,7 +29,7 @@ from app.scrapers.web_scraper import run_web_scraper
 from app.scrapers.social_feed_scraper import run_social_feed_scraper
 from app.scrapers.gamma_noise import run_gamma_noise_scheduler
 from app.scrapers.scouting_engine import run_scouting_engine
-from test_rss import run_rss_scraper
+from app.scrapers.rss_scraper import run_rss_scraper
 
 # ── Logging ───────────────────────────────────────────────────────────────
 

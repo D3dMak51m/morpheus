@@ -16,3 +16,4 @@ redis==5.0.4
 pyyaml==6.0.1
 pyrogram==2.0.106
 tgcrypto==1.2.5
+trafilatura==1.12.2

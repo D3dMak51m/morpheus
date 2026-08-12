@@ -29,8 +29,12 @@ A single operator runs everything from the **DAEDALUS** web console.
   post** (amplify / soft-support / displace / cunning sentiment-shift) from the thread's mood
   versus the stance; its beta/gamma amplify. Missions never "complete" — only **active** or
   **paused**.
-- **Knowledge base** — channels marked *news* are ingested, LLM-classified, embedded and
-  deduplicated into a pgvector RAG store the bots reason from.
+- **Knowledge base** — channels marked *news*, RSS feeds and web sources are ingested,
+  LLM-classified, embedded and deduplicated into a pgvector RAG store the bots reason from. The
+  scrapers open the **full article**, not the feed's announcement (measured: 4–44× more text),
+  scrub site boilerplate, canonicalise place names across ru/en/uz so a channel can be grounded in
+  its own region's news, and judge freshness by the source's publication date. Dead or
+  unscrapeable sources are surfaced as `degraded` instead of failing silently.
 - **Live observability** — a real-time **Live Ops** feed of every action, an interactive
   **swarm dashboard**, and a knowledge explorer.
 - **Safety & realism** — Telegram FloodWait/ban handling, per-account cooldowns,

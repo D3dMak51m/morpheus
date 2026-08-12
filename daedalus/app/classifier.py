@@ -20,6 +20,7 @@ from typing import Any
 
 import httpx
 
+from app import geo
 from app.models import LANDSCAPE_LAYERS
 
 logger = logging.getLogger("daedalus.classifier")
@@ -29,16 +30,18 @@ TEXT_MODEL_NAME = os.getenv("TEXT_MODEL_NAME", "qwen2.5:3b")
 CLASSIFY_TIMEOUT_SEC = float(os.getenv("CLASSIFY_TIMEOUT_SEC", "60"))
 MAX_TAGS = 8
 MAX_CATEGORIES = 5
+MAX_PLACES = 6
 
 # Strict instruction. The model must return ONLY a JSON object with these keys.
 _SYSTEM_PROMPT = f"""You are a meticulous intelligence analyst for a geopolitical \
 monitoring system. Analyse the NEWS TEXT and classify it.
 
-Return ONLY a JSON object with EXACTLY these three keys:
+Return ONLY a JSON object with EXACTLY these four keys:
 {{
   "layers": [array of geographic scope strings],
   "categories": [array of 1-{MAX_CATEGORIES} broad thematic category strings],
-  "tags": [array of 1-{MAX_TAGS} specific lowercase keyword/entity strings]
+  "tags": [array of 1-{MAX_TAGS} specific lowercase keyword/entity strings],
+  "places": [array of 0-{MAX_PLACES} geographic names ONLY — countries, regions, cities]
 }}
 
 RULES for "layers" — choose every scope that applies, from this CLOSED set only:
@@ -53,6 +56,9 @@ A text often spans several layers (e.g. a city event of national importance =>
 "categories": broad themes such as "politics", "economy", "infrastructure",
 "security", "society", "technology", "sports", "culture", "health".
 "tags": concrete entities, places, people, or topics mentioned.
+"places": ONLY geographic names — countries, regions, cities. No people, no
+organisations, no topics. Write them in RUSSIAN (e.g. "узбекистан", "ташкент",
+"россия"). Empty array if the text names no place.
 
 Output strictly valid JSON, no prose, no markdown."""
 
@@ -71,12 +77,40 @@ def _coerce_str_list(value: Any) -> list[str]:
     return out
 
 
-def _sanitise(raw: dict) -> dict:
-    """Validate/normalise the raw LLM JSON into the strict output contract."""
+def _sanitise(raw: dict, text: str = "") -> dict:
+    """
+    Validate/normalise the raw LLM JSON into the strict output contract.
+
+    Stage 39 — tags are normalised (qwen2.5:3b emits `парламентский_запрос` and
+    `ministru_kultury` for the same shape of thing) and any tag naming a known place
+    is rewritten to its canonical Russian name, so the corpus stops splitting one
+    place across `tashkent`/`ташкент`/`toshkent`.
+
+    `geo_tags` is harvested from BOTH the model's `places` key and its `tags` — a 3B
+    model fills a new schema key only some of the time, but it does mention the place
+    among the tags, and a place found either way is still a place.
+    """
     layers = [l for l in _coerce_str_list(raw.get("layers")) if l in LANDSCAPE_LAYERS]
     categories = _coerce_str_list(raw.get("categories"))[:MAX_CATEGORIES]
-    tags = _coerce_str_list(raw.get("tags"))[:MAX_TAGS]
-    return {"layers": layers, "categories": categories, "tags": tags}
+
+    tags: list[str] = []
+    for tag in _coerce_str_list(raw.get("tags")):
+        canon = geo.canonical_place(tag) or geo.normalise_tag(tag)
+        if canon and canon not in tags:
+            tags.append(canon)
+    tags = tags[:MAX_TAGS]
+
+    # Verified against the source text: the model invents places (a Zaporizhzhia
+    # blackout came back tagged узбекистан + ташкент), and one invented place is
+    # enough to serve a Ukraine story to a Tashkent channel as local news.
+    geo_tags = geo.places_in_text(
+        geo.canonical_places(
+            _coerce_str_list(raw.get("places")) + _coerce_str_list(raw.get("tags"))
+        ),
+        text,
+    )[:MAX_PLACES]
+
+    return {"layers": layers, "categories": categories, "tags": tags, "geo_tags": geo_tags}
 
 
 async def auto_classify_text(text: str) -> dict:
@@ -85,7 +119,7 @@ async def auto_classify_text(text: str) -> dict:
 
     Always returns a dict with those three keys (possibly empty on failure).
     """
-    empty = {"layers": [], "categories": [], "tags": []}
+    empty = {"layers": [], "categories": [], "tags": [], "geo_tags": []}
     text = (text or "").strip()
     if not text:
         return empty
@@ -115,9 +149,9 @@ async def auto_classify_text(text: str) -> dict:
         logger.warning("LLM classification returned non-JSON: %r", raw_response[:200])
         return empty
 
-    result = _sanitise(parsed if isinstance(parsed, dict) else {})
+    result = _sanitise(parsed if isinstance(parsed, dict) else {}, text)
     logger.info(
-        "Auto-classified: layers=%s categories=%s tags=%s",
-        result["layers"], result["categories"], result["tags"],
+        "Auto-classified: layers=%s categories=%s tags=%s geo=%s",
+        result["layers"], result["categories"], result["tags"], result["geo_tags"],
     )
     return result

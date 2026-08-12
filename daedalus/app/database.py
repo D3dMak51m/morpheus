@@ -74,18 +74,29 @@ def init_tables() -> None:
     logger.info("Simulation tables ensured (%d isolated sim_* tables).", len(SimBase.metadata.tables))
 
     # Cosine ANN index on KnowledgeFact embeddings (idempotent).
+    # Stage 39 — HNSW replaces IVFFlat, because the IVFFlat index was silently
+    # returning the WRONG nearest neighbour.
+    #
+    # `lists = 100` over a corpus of ~800 rows puts ~8 rows in each list, and with the
+    # default `ivfflat.probes = 1` a search examined a single list — i.e. ~1% of the
+    # table. Measured on live data: the indexed top-1 matched the true top-1 in only
+    # 3 of 14 probes (21% recall), and a genuine duplicate at cosine 0.968 came back as
+    # a 0.845 stranger. That corrupts BOTH consumers — dedup never saw the duplicate it
+    # was meant to merge, and RAG ranked facts it had not actually compared.
+    #
+    # HNSW has no list/row-count coupling and gives high recall at its defaults.
     try:
         with engine.begin() as conn:
+            conn.execute(text("DROP INDEX IF EXISTS idx_knowledge_facts_embedding"))
             conn.execute(
                 text(
-                    "CREATE INDEX IF NOT EXISTS idx_knowledge_facts_embedding "
-                    "ON knowledge_facts USING ivfflat (embedding vector_cosine_ops) "
-                    "WITH (lists = 100)"
+                    "CREATE INDEX IF NOT EXISTS idx_knowledge_facts_embedding_hnsw "
+                    "ON knowledge_facts USING hnsw (embedding vector_cosine_ops)"
                 )
             )
-        logger.info("KnowledgeFact IVFFlat cosine index ensured.")
+        logger.info("KnowledgeFact HNSW cosine index ensured (IVFFlat dropped).")
     except Exception as exc:  # pragma: no cover - index is an optimisation, not a hard dep
-        logger.warning("Could not create IVFFlat index (continuing without it): %s", exc)
+        logger.warning("Could not create HNSW index (continuing without it): %s", exc)
 
     # Stage 23 — lightweight idempotent column migrations. create_all() never
     # ALTERs existing tables, so new columns on already-created tables (e.g. the
@@ -110,6 +121,21 @@ def init_tables() -> None:
         ("missions", "opponent", "TEXT"),
         ("missions", "key_points", "JSONB DEFAULT '[]'::jsonb"),
         ("missions", "red_lines", "JSONB DEFAULT '[]'::jsonb"),
+        # Stage 39 — non-destructive knowledge merging (superseded wordings).
+        ("knowledge_facts", "variants", "JSONB DEFAULT '[]'::jsonb"),
+        # Stage 39 — canonical place tags (geo lookups used to match on `tags`, which
+        # mixed places with people and split one place across languages).
+        ("knowledge_facts", "geo_tags", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        # Stage 39 — source publication date (freshness must not mean "scraped today").
+        ("knowledge_facts", "published_at", "TIMESTAMPTZ"),
+        # Stage 39 — scraping source health. A dead feed (kun.uz returned HTML with
+        # HTTP 200 → 0 entries) was indistinguishable from "no new items"; HUGINN now
+        # reports every pass so the operator can see a source stop producing.
+        ("scraping_landscape", "last_scraped_at", "TIMESTAMPTZ"),
+        ("scraping_landscape", "last_item_count", "INTEGER"),
+        ("scraping_landscape", "consecutive_empty", "INTEGER NOT NULL DEFAULT 0"),
+        ("scraping_landscape", "health", "VARCHAR(20) NOT NULL DEFAULT 'unknown'"),
+        ("scraping_landscape", "health_reason", "TEXT"),
     ]
     try:
         with engine.begin() as conn:
@@ -131,6 +157,13 @@ def init_tables() -> None:
                     "ON knowledge_facts USING gin (landscape_layers)"
                 )
             )
-        logger.info("KnowledgeFact landscape_layers GIN index ensured.")
+            # Stage 39 — by-geo filters on geo_tags with the same `?|` overlap operator.
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_knowledge_facts_geo_tags "
+                    "ON knowledge_facts USING gin (geo_tags)"
+                )
+            )
+        logger.info("KnowledgeFact landscape_layers/geo_tags GIN indexes ensured.")
     except Exception as exc:  # pragma: no cover
         logger.warning("Could not create landscape_layers GIN index: %s", exc)

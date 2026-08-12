@@ -244,6 +244,15 @@ class ScrapingLandscape(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
+    # Stage 39 — source health, reported by HUGINN after every scrape pass.
+    # `health`: unknown | ok | degraded | dead. A feed that answers HTTP 200 with an
+    # HTML page yields 0 entries forever and used to look exactly like a quiet feed.
+    last_scraped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_item_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    consecutive_empty: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    health: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    health_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return f"<ScrapingLandscape(platform='{self.platform}', type='{self.type}', target='{self.target_identifier}', active={self.is_active})>"
 
@@ -565,10 +574,18 @@ class KnowledgeFact(Base):
     semantic memory) extracted by HUGINN from the news landscape.
 
     Each fact carries a native pgvector ``embedding`` (cosine space) so ORPHEUS
-    can retrieve the most relevant facts at prompt-assembly time. HUGINN merges
-    semantically-equivalent stories (cosine similarity > 0.85) into a single
-    fact rather than creating duplicates — ``sources`` accumulates every URL the
-    cluster has been observed at, and ``source_count`` tracks the cluster size.
+    can retrieve the most relevant facts at prompt-assembly time. DAEDALUS merges
+    genuinely-duplicate stories into a single fact rather than creating duplicates —
+    ``sources`` accumulates every URL the cluster has been observed at, and
+    ``source_count`` tracks the cluster size.
+
+    Stage 39 — merging is deliberately conservative. `nomic-embed-text` encodes
+    language/style as much as topic on this corpus: measured, unrelated same-language
+    stories score up to 0.85 cosine while true duplicates sit at 0.92+. The old 0.85
+    threshold therefore merged unrelated news (one stored fact was 16 different posts)
+    and discarded 37% of all ingested bodies. A merge now needs BOTH a high cosine and
+    shared concrete vocabulary, and the superseded wording is preserved in ``variants``
+    instead of being thrown away.
     """
     __tablename__ = "knowledge_facts"
 
@@ -584,12 +601,29 @@ class KnowledgeFact(Base):
     landscape_layers: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["global"])
     categories: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Stage 39 — PLACES only, canonicalised to their Russian name (see app/geo.py).
+    # `tags` mixes places with people/topics and arrived in whatever language the
+    # source used, so geo lookups matched almost nothing; this is the field
+    # /knowledge/internal/by-geo actually queries.
+    geo_tags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     embedding: Mapped[list] = mapped_column(Vector(EMBED_DIM), nullable=False)
 
     # Cluster bookkeeping — every distinct source URL merged into this fact.
     sources: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
     source_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # Stage 39 — the other wordings this cluster absorbed: [{content, source_url, at}].
+    # A merge used to drop the incoming text entirely, so a false merge destroyed a
+    # real news item. Keeping the variant makes merging recoverable and auditable.
+    variants: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+
+    # Stage 39 — when the SOURCE published the story, as opposed to when we happened
+    # to scrape it. Freshness filters used `created_at` and therefore called a May
+    # article "fresh" because a homepage still linked to it today. NULL when the
+    # source gives no date; callers fall back to created_at.
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     timestamp: Mapped[int] = mapped_column(Integer, nullable=False, default=lambda: int(datetime.now(timezone.utc).timestamp()))
     created_at: Mapped[datetime] = mapped_column(
