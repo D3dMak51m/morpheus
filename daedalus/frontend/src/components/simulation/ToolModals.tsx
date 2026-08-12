@@ -334,11 +334,40 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Real-thread import: needs a production agent whose Telegram session can read.
+  const [tgAgents, setTgAgents] = useState<{ agent_id: string; codename: string }[]>([]);
+  const [tg, setTg] = useState({
+    agent_id: '', channel: '', post_limit: 10, comment_limit: 40, target_channel_id: '',
+  });
+
   const load = useCallback(async () => {
     try { setSources((await api.landscape(worldId)).sources); } catch { /* ignore */ }
+    try {
+      const a = (await api.tgImportAgents()).agents;
+      setTgAgents(a);
+      setTg(t => (t.agent_id || a.length === 0 ? t : { ...t, agent_id: a[0].agent_id }));
+    } catch { /* ignore */ }
   }, [api, worldId]);
 
   useEffect(() => { if (opened) { setError(''); setMessage(''); load(); } }, [opened, load]);
+
+  const importTg = async () => {
+    if (!tg.channel.trim()) { setError('Укажите канал, например @tashkent_news333.'); return; }
+    if (!tg.agent_id) { setError('Нет агента с активным Telegram-аккаунтом.'); return; }
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const r = await api.importTelegram({
+        world_id: worldId, agent_id: tg.agent_id, channel: tg.channel.trim(),
+        post_limit: tg.post_limit, comment_limit: tg.comment_limit,
+        target_channel_id: tg.target_channel_id ? Number(tg.target_channel_id) : null,
+      });
+      setMessage(
+        `${r.channel}: постов ${r.posts_imported} из ${r.posts_seen}, ` +
+        `комментариев реальных людей ${r.comments_imported} из ${r.comments_seen}.`,
+      );
+      onChanged(); load();
+    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  };
 
   const scrape = async () => {
     if (!form.url.trim()) { setError('Укажите адрес источника.'); return; }
@@ -369,6 +398,7 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
       <Tabs defaultValue="scrape">
         <Tabs.List mb="sm">
           <Tabs.Tab value="scrape">Скрапинг</Tabs.Tab>
+          <Tabs.Tab value="telegram">Импорт тредов</Tabs.Tab>
           <Tabs.Tab value="sources">Источники ({sources.length})</Tabs.Tab>
         </Tabs.List>
         {error && <Alert color="red" mb="sm">{error}</Alert>}
@@ -406,6 +436,44 @@ export function LandscapeModal({ opened, onClose, api, worldId, channels, onChan
             <Text size="xs" c="dimmed">
               Скрапинг только читает открытые источники (для Telegram — публичное веб-превью t.me/s/…,
               без входа в аккаунт) и складывает материал в изолированный полигон.
+            </Text>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="telegram">
+          <Stack gap="sm">
+            <Select label="Чьей сессией читаем" data={tgAgents.map(a => ({
+              value: a.agent_id, label: `${a.codename} — ${a.agent_id}` }))}
+              value={tg.agent_id || null} searchable
+              onChange={v => setTg({ ...tg, agent_id: v || '' })}
+              description="Аккаунт только читает: ничего не публикует, никуда не вступает" />
+            <TextInput label="Канал" required value={tg.channel} placeholder="@tashkent_news333"
+              onChange={e => setTg({ ...tg, channel: e.currentTarget.value })} />
+            <Group grow>
+              <NumberInput label="Постов" min={1} max={50} value={tg.post_limit}
+                onChange={v => setTg({ ...tg, post_limit: Number(v) || 10 })} />
+              <NumberInput label="Комментариев на пост" min={0} max={200} value={tg.comment_limit}
+                onChange={v => setTg({ ...tg, comment_limit: Number(v) || 40 })} />
+              <Select label="Канал полигона (пусто — создать)" clearable searchable
+                data={channels.map(c => ({ value: String(c.id), label: `${c.username} — ${c.title}` }))}
+                value={tg.target_channel_id || null}
+                onChange={v => setTg({ ...tg, target_channel_id: v || '' })} />
+            </Group>
+            <Button loading={busy} leftSection={<Download size={15} />} onClick={importTg}
+              disabled={tgAgents.length === 0}>
+              Импортировать посты с комментариями
+            </Button>
+            {tgAgents.length === 0 && (
+              <Alert color="yellow">
+                Нет ни одного агента с активным Telegram-аккаунтом — импорт недоступен.
+              </Alert>
+            )}
+            <Text size="xs" c="dimmed">
+              В отличие от скрапинга, здесь подтягиваются и комментарии реальных людей из группы
+              обсуждения: они видны только по MTProto, поэтому чтение идёт через сессию MYRMIDON.
+              Дерево ответов и исходные даты сохраняются, повторный запуск дублей не создаёт,
+              а прошлые реплики самого роя помечаются отдельно. Нужно, чтобы полигон проверял
+              настроение треда, выбор тактики и адресность ответа на настоящей толпе.
             </Text>
           </Stack>
         </Tabs.Panel>

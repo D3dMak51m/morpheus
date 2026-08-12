@@ -77,7 +77,8 @@ so any frontend change needs `docker compose build daedalus`.
   `/simulation/import/telegram` pulls real posts WITH the real comments under them by
   delegating the MTProto read to MYRMIDON (`GET :8003/api/v1/telegram/{agent}/export`,
   read-only) — the public `t.me/s/` preview shows no discussion, and a thread populated
-  only by our own agents cannot exercise the crowd-reading half of the pipeline.
+  only by our own agents cannot exercise the crowd-reading half of the pipeline. In the UI it is
+  the «Импорт тредов» tab of the polygon's Landscape modal (`simulation/ToolModals.tsx`).
   `channel_profiler.py` (LLM strict-JSON per-channel profile + hot themes) +
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
   GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal

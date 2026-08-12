@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app import sim_generator, sim_landscape
 from app.database import get_db
-from app.models import AdminUser
+from app.models import AdminUser, AgentProfile, SoulAccount
 from app.models_simulation import (
     SIM_JOB_MODES,
     SIM_KNOWLEDGE_KINDS,
@@ -1504,6 +1504,27 @@ def run_landscape(source_id: int, db: Session = Depends(get_db),
               actor_kind="operator", actor_label="ландшафт",
               channel_id=report.get("channel_id"), detail=report, commit=True)
     return {**report, "source": landscape_out(row)}
+
+
+@router.get("/import/telegram/agents")
+def telegram_import_agents(db: Session = Depends(get_db),
+                           _u: AdminUser = Depends(view_perm)) -> dict[str, Any]:
+    """
+    Production agents whose Telegram session can read a channel for the import.
+
+    A SELECT over production tables, which the isolation contract allows — the
+    polygon reads the live system, it never writes to it.
+    """
+    rows = (
+        db.query(AgentProfile.agent_id, AgentProfile.codename)
+        .join(SoulAccount, SoulAccount.agent_id == AgentProfile.agent_id)
+        .filter(SoulAccount.platform == "telegram",
+                SoulAccount.status == "active",
+                AgentProfile.status == "active")
+        .distinct()
+        .all()
+    )
+    return {"agents": [{"agent_id": a, "codename": c or a} for a, c in rows]}
 
 
 class TelegramImportIn(BaseModel):

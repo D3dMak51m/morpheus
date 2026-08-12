@@ -158,6 +158,18 @@ export class SimApi {
   deleteLandscape(id: number) { return this.del(`/landscape/${id}`); }
   runLandscape(id: number) { return this.post<any>(`/landscape/${id}/run`); }
   scrape(body: any) { return this.post<any>('/landscape/scrape', body); }
+  // Real Telegram threads (posts + the comments real people left under them).
+  // The MTProto read happens in MYRMIDON; this is read-only.
+  tgImportAgents() {
+    return this.call<{ agents: { agent_id: string; codename: string }[] }>('/import/telegram/agents');
+  }
+  importTelegram(body: any) {
+    return this.post<{
+      status: string; channel: string; channel_id: number;
+      posts_imported: number; posts_seen: number;
+      comments_imported: number; comments_seen: number;
+    }>('/import/telegram', body);
+  }
 
   // ── Generation ──
   generate(body: any) {
