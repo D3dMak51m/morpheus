@@ -7,14 +7,19 @@
 > After reading, **reply to the operator in RUSSIAN** (code, logs, code comments and git commit
 > messages stay in English; the operator console UI is in Russian).
 >
-> **Current phase:** the news pipeline was rebuilt (Stages 39–40) and the **mission model itself
-> was rewritten** (Stage 45) after the operator correctly objected that the earlier work had built
-> instruments *around* a model already diagnosed as wrong. The UI redesign (Mantine 7) remains
-> complete. Read §2 — especially §2.3, the measured dead ends. **Do not repeat them.**
+> **Current phase:** the news pipeline was rebuilt (Stages 39–40), the **mission model itself was
+> rewritten** (Stage 45), the roster became a **team that answers the objection actually raised**
+> (Stage 46), and the swarm gained **tools to go and find out what it does not know** (Stage 47:
+> self-hosted SearXNG + page reading, wired into reconnaissance and the publication path). The UI
+> redesign (Mantine 7) remains complete. Read §2 — especially §2.3, the measured dead ends.
+> **Do not repeat them.**
+>
+> **The model is now the binding constraint**, not the plumbing. It invents names and sometimes
+> emits fluent nonsense that no cheap guard catches (three were measured and rejected — see §2.3).
+> Where the model is the limiter, say so and move on.
 >
 > **Git:** branch `stage-21-22-rag-engine` (a WIP feature branch — never commit to `master`).
-> HEAD at handoff = `9ebfbbe`. Working tree clean. 21 commits in this arc, all verified on live
-> data; `git log 20c47b9..HEAD` lists them.
+> Working tree clean at handoff; every stage verified on live data before it was committed.
 
 ---
 
@@ -43,6 +48,7 @@ drives it from the **DAEDALUS** web console.
 | **myrmidon** | ./myrmidon | (8003 int.) | **Execution swarm**: Pyrogram (TG) + the autonomous engines |
 | **heimdall** | ./heimdall | 8004 | **Speech-to-text** service (faster-whisper, CPU/int8) |
 | **huginn** | ./huginn | — | Legacy RSS/web scrapers (its TG scraper is dead Telethon — unused) |
+| **searxng** | searxng/searxng | (8080 int.) | **Search** — the swarm's way out of a closed corpus (Stage 47) |
 
 **External dependency:** host **Ollama** at `host.docker.internal:11434` — models
 `qwen2.5:3b` (text generation), `nomic-embed-text` (RAG embeddings), `moondream` (VLM / image
@@ -185,6 +191,23 @@ ORPHEUS `mode=mood`, and `myrmidon/app/outcome_engine.py` (read-only second read
   recorded as "no change".
 - Reuse the same prompt for a before/after pair — a delta between differently-worded questions is noise.
 
+### 2.2a What Stages 46–47 changed (read before touching missions or knowledge)
+- **Functional roles reach the live path.** Stage 45 declared them; production never sent them
+  (`VALID_ROLES` accepted only castes, `_enqueue_comment` hardcoded `role="alpha"`, companions were
+  chosen by caste). Now the opener seeds, `support` answers the objection with a *different*
+  technique (full generation), `closer` speaks only into a hostile thread, `scout` stays out of
+  amplification, and legacy rosters keep the old behaviour.
+- **The objection is real and quoted.** ORPHEUS quotes the strongest opposing line, verifies it
+  appears in the thread, files it as `opponent`, and picks one of four techniques against it.
+- **The dossier actually gets written.** `said` had been filed from an always-empty variable, so
+  `mission_dossier` held 0 rows on live data.
+- **Engines read `phase`, not `status`.** #10 had been commenting from `recon` with an empty case
+  file. Pausing returns a mission to `ready` only if it still has facts.
+- **Pacing moved into a ZSET** (`morpheus:exec:scheduled`) — one agent's delay no longer blocks
+  the swarm.
+- **Reconnaissance names the subject with the model** and searches the web when the base is empty;
+  `tools.lookup` files everything it reads, so a lookup improves the corpus permanently.
+
 ### 2.3 What did NOT work — measured dead ends, do not retry
 - **Asking the model "is this consistent?" as JSON.** It answered `false` for every input (3/6 only
   because half the cases were contradictory). Asking for a **direction** — «за»/«против» — scored 5/6.
@@ -200,6 +223,24 @@ ORPHEUS `mode=mood`, and `myrmidon/app/outcome_engine.py` (read-only second read
 - **Trusting Telegram's `is_self` to mean "ours".** It marks only the READING session's messages, so
   a thread exported under the alpha shows beta/gamma as strangers — engagement counted the swarm
   answering itself. Use `outcome_engine.swarm_identities`.
+- **Asking the model to JUDGE whether anyone objects.** «Найди довод против нас, или ответь НЕТ»
+  → «НЕТ» **2/2** on a thread full of opposition. Ask it to **quote** («кто спорит и какими
+  словами?») → the strongest opposing line 2/2, stably. Then verify the quote is really in the
+  thread; whether anyone objects at all is answered by the mood reading, not by this prompt.
+- **IDF/lexical retrieval for a mission's subject.** On 1594 scattered facts ordinary words look
+  rare («людей» 21, «нужен» 5), so a sum of weak matches beats a couple of strong ones. Three
+  admission rules were measured in turn and each ranked junk first (Samarkand's hectares, a
+  newspaper's anniversary, a boat in Zimbabwe, mushrooms by the roadside). The subject must be
+  NAMED by the model, and one subject word is regularly a homonym («трафик» → shop footfall,
+  «развяз» → «развязать войну»).
+- **Reading the crowd's mood over a thread that contains our own comments.** Nine of ours against
+  eight of theirs flipped the verdict to AGREE, and the objection extractor would have quoted a
+  teammate as the opponent.
+- **Any cheap guard against fluent nonsense.** Function words: the gibberish scores 0.121 while 27
+  of 57 genuine comments score 0.000 (they are in English and Uzbek — correct behaviour). Language
+  identification: `lingua` has neither Uzbek nor Kyrgyz among 75 languages, labels the gibberish
+  `slav` at 0.837, and would reject the 9-in-50 real cases of a human answering in Uzbek under a
+  Russian post. Do not build a fourth heuristic — this is the model's ceiling.
 - **Forcing tags into Russian** made qwen worse on English sources (`centralbankuzbekistan`).
 - **Adding general news feeds to cover a narrow mission topic.** anhor/spot/nuz give 1–2 relevant
   items per pass. Narrow missions need topic-specific sources — an operator choice.
@@ -213,25 +254,32 @@ ORPHEUS `mode=mood`, and `myrmidon/app/outcome_engine.py` (read-only second read
   (wording, position, roles, dossier, tone/engagement measurement). The live channel tests
   **delivery** (queue, Pyrogram publication, dialogue watches, outcome re-reads). Today's blocking
   bug was in delivery and the polygon would never have shown it.
-- **Execution pacing is head-of-line blocking**: the delay is slept in the single consumer loop, so
-  one task blocks every agent. Four junk tasks targeting `"Self"` held a real comment behind 36
-  minutes. Fixed by validating the target before sleeping; `gamma_noise` is off
-  (`HUGINN_GAMMA_NOISE=1` restores it). **A fuller fix — per-agent pacing instead of a global
-  serial sleep — is still open.**
+- **Execution pacing was head-of-line blocking**: the delay was slept in the single consumer loop,
+  so one task blocked every agent (four junk `"Self"` tasks held a real comment behind 36 minutes).
+  Fixed in Stage 46 — waiting now happens in the `morpheus:exec:scheduled` ZSET, verified live: a
+  900-second task parked and the queue drained to zero immediately. `gamma_noise` is off
+  (`HUGINN_GAMMA_NOISE=1` restores it).
+- **All four missions are `paused`.** #10 is `ready` with 6 facts (recon + web search); #13/#14/#16
+  are `draft` with empty or contradictory positions. Nothing posts to a real channel until the
+  operator activates something.
 
 ### 2.5 Next steps
-1. **Tactic as a choice of technique against the objection actually raised**, not four directives
-   picked from thread mood. This is the last unbuilt piece of the operator's stated model, and the
-   polygon can now measure it (`sim_mission_outcomes`).
-2. **Assign functional roles in the UI.** The backend accepts scout/opener/support/closer; the
-   roster picker still offers castes.
-3. **Per-agent execution pacing** so one delayed task stops blocking the swarm.
-4. **Guardrails miss foreign-script bleed** — qwen emitted `批评或错误` mid-sentence and it passed.
-5. **Missions #13/#14/#16 are paused** with contradictory or empty positions; #14 is the documented
-   case («За аргентину» whose bot agreed with the defeat). Filling a position is the OPERATOR's
-   message — do not invent it.
-6. **Knowledge coverage** is the binding constraint on recon: run recon, read `missing_terms`, and
-   ask the operator which sources to add.
+1. **A bigger `TEXT_MODEL_NAME`.** This is now the limiter, not the plumbing: the model invents
+   names and sometimes writes fluent nonsense that passes every guard. Three detectors were
+   measured and rejected (§2.3) — do not build a fourth. The polygon is the place to compare a
+   7–8B Q4 model against `qwen2.5:3b` on the same imported thread.
+2. **Missions #13/#14/#16** hold contradictory or empty positions; #14 is the documented case
+   («За аргентину» whose bot agreed with the defeat). Filling a position is the OPERATOR's message
+   — do not invent it.
+3. **The live seed path is still unverified** since the phase gate landed: no mission has been in
+   `phase='active'` under the new code. #10 is ready for it; activating is the operator's call
+   because it posts to a real channel.
+4. **Polygon parity for functional roles**: a mission run there assigns opener→support→closer by
+   turn, but `sim_mission_agents.role` is not editable in the UI, so the operator cannot compose a
+   custom roster in the polygon.
+5. **Search quality is unmeasured over time.** `tools.lookup` files what it reads; nobody yet
+   watches how much of that turns out to be useful (or how often SearXNG returns nothing). A
+   simple count per mission would tell.
 
 ### 2.6 How to run / verify (functional)
 - Deploy: `docker compose build <svc> && docker compose up -d <svc>`. ORPHEUS/MYRMIDON are Redis
@@ -241,7 +289,7 @@ ORPHEUS `mode=mood`, and `myrmidon/app/outcome_engine.py` (read-only second read
   `curl -s -X POST /api/v1/auth/login -d "username=$U&password=$PW"`.
 - Playwright was **not available** this arc; UI changes were verified by type-check plus grepping the
   built bundle in `/app/app/static/assets/*.js`. Say so honestly rather than claiming a visual check.
-- Tests: `docker compose exec <svc> python -m pytest tests -q` → daedalus 45, orpheus 42, myrmidon 17.
+- Tests: `docker compose exec <svc> python -m pytest tests -q` → daedalus 58, orpheus 69, myrmidon 26.
 
 ## 3. Constraints & Rules (HARD — do not violate)
 
@@ -294,16 +342,23 @@ ORPHEUS `mode=mood`, and `myrmidon/app/outcome_engine.py` (read-only second read
 
 ## Appendix — where things live (quick map)
 - ORPHEUS: `orpheus/app/main.py` (`handle_mission_generation`, `handle_relevance`,
-  `_resolve_dynamic_tactic`, `_channel_context`, `generate_text(...,penalties=)`),
-  `persona.py` (`assemble_mission_prompt`, `build_channel_block`, `build_mood_prompt`/
-  `tactic_from_mood`), `guardrails.py` (`is_echo`/`is_repeat`), `rag.py`, `media_enricher.py`.
-- MYRMIDON: `target_engine.py` (the primary engine — profiling, seeding, suggestions, decisions,
-  `_geo_news_digest`), `drivers/tg_client.py` (`read_media_context`, `fetch_new_posts`,
-  `execute_comment`, `_run`), `media_reader.py` (STT+VLM+OCR), `swarm.py`, `dialogue_engine.py`,
-  `schedule.py` (active hours), `account_health.py`.
+  `_resolve_dynamic_tactic`, `_extract_objection`/`_grounded_objection`/`_technique_for`,
+  `_needs_fresh_data`/`_lookup_query`/`_fetch_fresh`, `_crowd_thread`, `_channel_context`,
+  `generate_text(...,penalties=)`), `persona.py` (`assemble_mission_prompt`, `build_channel_block`,
+  `build_mood_prompt`/`tactic_from_mood`, technique directives), `guardrails.py`
+  (`is_echo`/`is_repeat`/`_script_bleed`, `normalize`/`content_words`), `rag.py`,
+  `media_enricher.py`, `simulation.py` (polygon: same objection/technique machinery).
+- MYRMIDON: `target_engine.py` (the primary engine — profiling, `_pick_seeder`, seeding,
+  suggestions, decisions, `_geo_news_digest`), `main.py` (`unpublishable_reason`/`_due_or_defer`/
+  `start_task_scheduler`, `_dossier_file`), `drivers/tg_client.py` (`_read_thread` whole vs crowd,
+  `read_media_context`, `fetch_new_posts`, `execute_comment`, `_run`), `media_reader.py`
+  (STT+VLM+OCR), `swarm.py` (jobs, `thread_is_hostile`), `dialogue_engine.py`, `schedule.py`
+  (active hours), `account_health.py`, `outcome_engine.py` (`swarm_identities`).
 - DAEDALUS: `models.py`, `database.py` (`init_tables`; new tables auto-create, columns migrate in
-  `_STAGE23_COLUMNS`), `mission_control.py`, `router_channels.py`, `router_decisions.py`,
-  `channel_profiler.py`, `db_explorer.py`, `classifier.py`. React (Mantine): `App.tsx` (AppShell +
+  `_STAGE23_COLUMNS`), `tools.py` (search/lookup), `mission_recon.py` (`subject_terms`,
+  `mission_places`), `mission_control.py` (`VALID_ROLES`, `functional_role`), `router_channels.py`,
+  `router_decisions.py`, `channel_profiler.py`, `db_explorer.py`, `classifier.py`
+  (`ask_llm_short`). React (Mantine): `App.tsx` (AppShell +
   `useHashRoute` `#/<view>/<id>`), `src/ui/` primitives (`DataView`/`DetailPage`/`EntityPicker`/
   `StatTile`), one `src/components/*Screen.tsx` per view. No per-component CSS (only `App.css`).
 - Design doc for the profiling subsystem: `CHANNEL_PROFILING.md` (Phase 1 + 2 fully done).

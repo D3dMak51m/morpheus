@@ -37,6 +37,12 @@ TACTIC_LABELS_RU = {
     "soft_support": "мягкая поддержка (нейтрально)",
     "aggressive_displacement": "контратака (ветка против)",
     "sentiment_shift": "тонкий разворот (ветка против)",
+    # Stage 46 — techniques chosen against the objection actually raised, not against
+    # the temperature of the thread.
+    "factual_correction": "поправка фактом",
+    "reframe": "смена рамки спора",
+    "concede_and_redirect": "уступка и разворот",
+    "ask_evidence": "запрос основания",
 }
 
 
@@ -349,6 +355,10 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
                 + (f"Контекст канала: {channel_block[:180]}\n" if channel_block else "")
                 + (f"Позиция, которую отстаиваем: {mission_stance[:200]}\n" if mission_stance else "")
                 + (f"{lite_tactic_hint}\n" if lite_tactic_hint else "")
+                # Even the cheap path is better aimed when it knows what the other
+                # side actually said — it costs nothing, the line is already extracted.
+                + (f"В ветке возражают: «{' '.join(str(req.get('objection')).split())[:150]}»\n"
+                   if req.get("objection") else "")
                 + f"Союзник уже написал: \"{(alpha_context or '')[:200]}\"\n\n"
                 "[Задача] Коротко поддержи и усиль мысль союзника (в духе позиции) — ОДНО "
                 "короткое предложение, своими словами, на языке поста. НЕ повторяй его дословно. "
@@ -400,6 +410,13 @@ Keep it concise, platform-appropriate, and strictly in character. Output ONLY th
             "soft_support": "Be measured, friendly and constructive. Persuade gently; never attack.",
             "aggressive_displacement": "This post / thread argues AGAINST your side. Openly DISAGREE with the author: name the specific claim or framing they got wrong and rebut it with your side's view on THAT point. Be assertive and confident, take a clear stand — do not hedge, do not stay neutral, do not drift to the channel's everyday small-talk. Stay civil — no insults, slurs or threats.",
             "sentiment_shift": "This post / thread argues AGAINST your side, with heat. Do NOT confront head-on — concede a small point, then subtly reframe the emotional angle toward your stance so readers shift without feeling pushed. Still make your disagreement with the author's core claim clear. Cunning, not combative.",
+            # Stage 46 — techniques answering the objection quoted below in
+            # [Возражение…]. Each one names the MOVE, not the mood: a mood produced
+            # four directives that all read as "argue harder / argue softer".
+            "factual_correction": "Their objection asserts something that is not so. Correct exactly that point with a concrete fact from what you know — one fact, stated plainly as something you happen to know, never a lecture and never invented. Do not argue anything else.",
+            "reframe": "Their objection is about which yardstick matters, not about the facts. Accept their point as stated, then move the discussion to the criterion that favours your side — 'sure, but the thing that actually decides it is…'. One move, no lecture.",
+            "concede_and_redirect": "Their objection is partly fair. Say so first, in your own words and without irony — then bring it back to your stronger point. The concession must be real, or it reads as a debate trick.",
+            "ask_evidence": "Their objection is a sweeping claim with nothing under it. Ask, calmly and without sarcasm, what it is actually based on — one specific question a normal person would ask. Do not lecture, do not answer your own question.",
         }
         role_line = role_directives.get(role, role_directives["opener"])
         tactic_line = tactic_directives.get(tactic, tactic_directives["soft_support"])
@@ -481,6 +498,30 @@ Your role: {role_line}
 Tactic: {tactic_line}
 Objective to advance: {narrative_goal or core_mission}
 """
+        # Stage 47 — what the agent just went and read on the internet, because the
+        # answer depended on something that changes. Placed before the objection so the
+        # freshest ground is what the technique is applied to.
+        fresh = [f for f in (req.get("fresh_findings") or []) if f.get("text")][:3]
+        if fresh:
+            prompt += "\n[Свежие данные, которые ты только что посмотрел]\n"
+            for f in fresh:
+                prompt += f"- {str(f.get('title') or '')[:90]}: {' '.join(str(f['text']).split())[:260]}\n"
+            prompt += ("Это самое свежее, что известно по теме. Опирайся на это, если оно "
+                       "к месту, и говори как человек, который просто в курсе — не ссылайся "
+                       "на интернет, поиск или источники.\n")
+
+        # Stage 46 — the argument our side is actually up against in THIS thread,
+        # extracted from the live comments and verified to be present in them. The
+        # tactic above is a technique chosen against this specific line; without it in
+        # the prompt the technique has no subject and the model invents one.
+        objection = " ".join((req.get("objection") or "").split())
+        if objection:
+            prompt += (
+                "\n[Возражение, на которое ты отвечаешь]\n"
+                f"В этой ветке против нашей позиции говорят: «{objection[:300]}»\n"
+                "Отвечай именно на это, а не на тему вообще. Не пересказывай возражение "
+                "своими словами перед ответом — люди так не пишут.\n"
+            )
         # Stage 38 — the mission as an explicit POSITION. Free-text goal+stance made
         # the model guess whose side it was on (and a contradiction between them
         # produced comments arguing against the mission's own goal). Spelling out the

@@ -38,6 +38,13 @@ TACTIC_DIRECTIVES = {
     "aggressive_displacement": "Пост/ветка спорит ПРОТИВ твоей стороны. Открыто НЕ СОГЛАСИСЬ с автором: назови конкретное утверждение, в котором он неправ, и опровергни его. Уверенно и прямо, без виляний. Без оскорблений и угроз.",
     "sentiment_shift": "Пост/ветка против твоей стороны, и там жарко. НЕ иди в лобовую — уступи в мелочи, затем тонко переосмысли эмоциональный угол в сторону своей позиции. Хитро, а не агрессивно.",
     "dynamic": "Прочитай настроение ветки и выбери естественную линию: поддержать своих, мягко переубедить или прямо возразить автору.",
+    # Stage 46 — техники против конкретного возражения. Тот же набор, что в бою
+    # (`persona.tactic_directives`): полигон обязан репетировать ту же механику, иначе
+    # он проверяет не ту систему, которая работает в канале.
+    "factual_correction": "Возражение утверждает неверное. Поправь ровно это место одним конкретным фактом из того, что знаешь, — как человек, который просто в курсе. Ничего не выдумывай и не читай лекцию.",
+    "reframe": "Возражение спорит о том, чем мерить, а не о фактах. Прими сказанное, а затем переведи разговор на критерий, который работает на нашу сторону: «да, но решает-то другое». Один ход, без лекции.",
+    "concede_and_redirect": "Возражение отчасти справедливо. Сначала признай это своими словами и без иронии, потом верни к своему более сильному доводу. Уступка должна быть настоящей, иначе это читается как приём.",
+    "ask_evidence": "Возражение — голословное обобщение. Спокойно, без сарказма, спроси, на чём оно основано: один конкретный вопрос, который задал бы обычный человек. Не отвечай за оппонента сам.",
 }
 
 ROLE_DIRECTIVES = {
@@ -205,7 +212,9 @@ def build_sim_prompt(req: dict) -> str:
         return out
 
     tactic = (mission.get("tactic") or "dynamic").lower()
-    role = (persona.get("caste") or "alpha").lower()
+    # The JOB this turn is doing. A mission run assigns it (opener → support → closer);
+    # a bare persona comment has no team around it, so it falls back to the caste.
+    role = (req.get("role") or persona.get("caste") or "alpha").lower()
 
     parts = [
         "Ты — реальный человек в соцсети. Никогда не выходи из образа, никогда не намекай, "
@@ -276,6 +285,16 @@ def build_sim_prompt(req: dict) -> str:
             f"Твоя роль: {ROLE_DIRECTIVES.get(role, ROLE_DIRECTIVES['alpha'])}\n"
             f"Тактика: {TACTIC_DIRECTIVES.get(tactic, TACTIC_DIRECTIVES['soft_support'])}"
         )
+        # Stage 46 — довод, против которого выбрана техника. Без него техника
+        # беспредметна: модель придумает себе спор и ответит на выдуманное.
+        objection = " ".join(str(req.get("objection") or "").split())
+        if objection:
+            parts.append(
+                "[Возражение, на которое ты отвечаешь]\n"
+                f"В этой ветке против нашей позиции говорят: «{objection[:300]}»\n"
+                "Отвечай именно на это, а не на тему вообще. Не пересказывай возражение "
+                "перед ответом — люди так не пишут."
+            )
         if fields["goal"]:
             parts.append("Цель, которую продвигаешь: " + fields["goal"])
 
@@ -314,6 +333,57 @@ def build_sim_prompt(req: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _resolve_objection(req: dict, generate_text: Callable[..., str]) -> None:
+    """
+    Run the production mechanism in the polygon: find the objection the thread actually
+    raised, and pick the technique that answers it.
+
+    The polygon has to rehearse the same machinery or it predicts nothing — the point
+    of having one is to compare wordings, roles and techniques before any of it reaches
+    a real channel. Only the mission path does this (a bare persona comment has no side
+    to be argued against), and only when the mission left its tactic dynamic.
+    """
+    from app.main import _extract_objection, _technique_for
+    from app.persona import build_mood_prompt
+
+    mission = req.get("mission") or {}
+    if req.get("mode") == "reply" or not mission:
+        return
+    tactic = (mission.get("tactic") or "").strip().lower()
+    if tactic not in ("", "dynamic"):
+        return  # operator pinned a tactic — respect it here exactly as production does
+    thread = req.get("thread") or []
+    if not thread:
+        return
+    # Judge the CROWD, not ourselves: on a post the mission has already worked, our own
+    # comments outnumber theirs and the reading flips to "they agree with us" (measured
+    # here — nine of ours against eight of theirs).
+    crowd = [t for t in thread if t.get("text") and not t.get("ours")]
+    if not crowd:
+        return
+    rendered = "\n".join(f"{t.get('author', 'кто-то')}: {t['text']}" for t in crowd)
+    side = (mission.get("our_side") or mission.get("stance") or "").strip()
+    objection = req.get("objection")
+    if not objection:
+        # Same gate as production: the extraction QUOTES whoever argues with us, so a
+        # crowd already on our side would have a friend quoted as an opponent.
+        post_text = (req.get("post") or {}).get("text") or ""
+        mood = generate_text(build_mood_prompt(side, rendered, post_text),
+                             max_tokens=6, temperature=0.2, penalties=False)
+        if "AGREE" in (mood or "").upper():
+            return
+        objection = _extract_objection({
+            "thread_context": rendered, "position": {"our_side": side},
+        })
+    if not objection:
+        return
+    req["objection"] = objection
+    has_facts = bool((req.get("dossier") or {}).get("fact"))
+    mission["tactic"] = _technique_for(objection, side, has_facts,
+                                       avoid=(req.get("avoid_tactic") or "").strip())
+    logger.info("sim-gen: objection %r → technique %s", objection[:60], mission["tactic"])
+
+
 def handle_simulation_generation(
     req: dict,
     redis_client,
@@ -333,7 +403,36 @@ def handle_simulation_generation(
     persona = req.get("persona") or {}
     result: dict[str, Any] = {"status": "error", "text": "", "prompt": "", "reason": ""}
 
+    # Stage 46 — reading the crowd's stance toward us, the polygon's half of the
+    # outcome measure. Deliberately the SAME prompt production uses for the "before"
+    # and "after" readings: a delta between two differently-worded questions is noise,
+    # and a polygon that asked its own question could not predict production at all.
+    if (req.get("mode") or "") == "mood":
+        try:
+            from app.persona import build_mood_prompt
+            prompt = build_mood_prompt(req.get("our_side") or "",
+                                       req.get("thread_context") or "",
+                                       req.get("post_text") or "")
+            raw = generate_text(prompt, max_tokens=6, temperature=0.2, penalties=False)
+            up = (raw or "").strip().upper()
+            mood = next((m for m in ("AGREE", "OPPOSE", "NEUTRAL") if m in up), None)
+            result = {"status": "ok" if mood else "error", "mood": mood,
+                      "text": "", "prompt": prompt,
+                      "reason": "" if mood else f"unreadable verdict: {raw[:40]!r}"}
+        except Exception as exc:
+            logger.exception("sim-mood %s failed: %s", request_id, exc)
+            result = {"status": "error", "mood": None, "text": "", "prompt": "",
+                      "reason": str(exc)[:200]}
+        if reply_key:
+            try:
+                redis_client.lpush(reply_key, json.dumps(result, ensure_ascii=False))
+                redis_client.expire(reply_key, 300)
+            except Exception as exc:
+                logger.error("sim-mood %s — failed to push reply: %s", request_id, exc)
+        return
+
     try:
+        _resolve_objection(req, generate_text)
         prompt = build_sim_prompt(req)
         result["prompt"] = prompt
         attempts = int(req.get("attempts") or 3)
@@ -374,6 +473,10 @@ def handle_simulation_generation(
                 "guardrail": "passed" if passed else "failed",
                 "reason": "" if passed else f"guardrails: {reason}",
                 "tactic": (req.get("mission") or {}).get("tactic") or "",
+                # Handed back so the next member of the roster answers the SAME
+                # objection with a different technique instead of echoing this one.
+                "objection": req.get("objection") or "",
+                "role": req.get("role") or "",
                 "persona": persona.get("agent_key"),
                 "model": MODEL_NAME,
             })

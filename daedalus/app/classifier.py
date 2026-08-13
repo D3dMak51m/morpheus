@@ -113,6 +113,32 @@ def _sanitise(raw: dict, text: str = "") -> dict:
     return {"layers": layers, "categories": categories, "tags": tags, "geo_tags": geo_tags}
 
 
+def ask_llm_short(prompt: str, max_tokens: int = 60, temperature: float = 0.2) -> str:
+    """
+    One short, synchronous generation — for the small naming/deciding questions
+    DAEDALUS asks (a mission's subject words, "are fresh data needed here").
+
+    Deliberately plain text, never `format=json`: this model answers a list of words
+    far more reliably than a schema, and the callers here parse a comma-separated line.
+    Penalties are left off for the same reason short classification calls in ORPHEUS
+    turn them off — they push the model off clean, short answers.
+    """
+    try:
+        with httpx.Client(timeout=CLASSIFY_TIMEOUT_SEC) as client:
+            resp = client.post(f"{OLLAMA_BASE_URL}/api/generate", json={
+                "model": TEXT_MODEL_NAME,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": 0,
+                "options": {"temperature": temperature, "num_predict": max_tokens},
+            })
+            resp.raise_for_status()
+            return (resp.json().get("response") or "").strip()
+    except Exception as exc:
+        logger.warning("Short LLM call failed: %s", exc)
+        return ""
+
+
 async def auto_classify_text(text: str) -> dict:
     """
     Classify ``text`` via the local Ollama LLM into layers/categories/tags.

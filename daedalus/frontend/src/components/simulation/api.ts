@@ -67,6 +67,11 @@ export interface SimJob {
   post_id: number | null; mission_id: number | null; total: number; done: number;
   failed: number; message: string | null; created_at: string;
 }
+/** One measurement of a mission's effect on a polygon discussion. */
+export interface SimMissionOutcome {
+  id: number; mood_before: string | null; mood_after: string | null;
+  thread_size_before: number; our_comments: number; replies_after: number;
+}
 export interface SimState {
   world: SimWorld; worlds: { id: number; name: string }[]; channels: SimChannel[];
   accounts: SimAccount[]; personas: SimPersona[]; missions: SimMission[];
@@ -147,6 +152,10 @@ export class SimApi {
   updateMission(id: number, body: any) { return this.put<SimMission>(`/missions/${id}`, body); }
   deleteMission(id: number) { return this.del(`/missions/${id}`); }
   runMission(id: number, body: any) { return this.post<SimJob>(`/missions/${id}/run`, body); }
+  /** Tone toward us before → after our entry, plus who spoke after we did. */
+  measureMission(id: number, body: any) {
+    return this.post<SimMissionOutcome>(`/missions/${id}/measure`, body);
+  }
 
   // ── Knowledge & landscape ──
   knowledge(worldId: number, kind?: string) {

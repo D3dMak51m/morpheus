@@ -21,16 +21,27 @@ A single operator runs everything from the **DAEDALUS** web console.
   service (any format, many languages) — so bots react to what they actually see and hear.
 - **Real conversations** — after commenting, a bot watches for human replies and answers
   them, carrying a thread for several turns.
-- **Caste hierarchy** — **alpha** (smartest, full pipeline) seeds; **beta** (cheap, "lite")
-  reinforces; **gamma** (cheapest) just reacts with emoji. No bot acts identically.
+- **A team that answers the objection actually raised** — the opener makes the first argument,
+  then the swarm reads the discussion, **quotes the strongest line arguing against us** (verified
+  to be present in the thread, so nobody answers an invented opponent) and picks a **technique**
+  against that specific objection — correct it with a fact, move the criterion, concede and
+  redirect, or ask what it rests on. The teammate who answers gets the same objection and a
+  *different* technique, so three accounts are a discussion rather than an echo.
+- **It goes and finds out what it doesn't know** — a score, a price, today's news are in neither
+  the model's training data nor the corpus. Before answering, the swarm decides whether fresh data
+  is needed, searches its own **SearXNG**, reads the pages and files them through the ordinary
+  knowledge pipeline — so what one agent looked up, the whole swarm knows afterwards.
+- **Caste hierarchy** — the cost tier, separate from the job: **alpha** (full pipeline),
+  **beta** (cheap, "lite"), **gamma** (emoji reaction only).
 - **Missions are teams with a lifecycle** — a mission moves **draft → recon → ready → active**, and
   it may **not** go active until reconnaissance has built its case file: no facts, no arguing. It
   states ONE claim (*our side*) plus the opponent, the arguments and the red lines, and separately
   what the audience should end up thinking. Its roster has **jobs, not volume levels** — scout
   (establish what is claimed), opener (first substantive argument), support (answer the objection
   actually raised), closer (de-escalate) — and shares **one memory**, so three accounts do not
-  replay each other's argument in one thread. The tactic is still chosen per post from the thread's
-  mood versus our side.
+  replay each other's argument in one thread. Reconnaissance names the mission's **subject** and,
+  when the knowledge base holds nothing about it, searches the web for it instead of reporting a
+  dead end.
 - **Missions are measured** — for each discussion the swarm enters: the crowd's stance toward us
   before and after, whether the thread grew, and how many real people answered *us*. Tone is read
   over the replies **after** our entry, because one comment among twenty cannot move an average.
@@ -65,6 +76,7 @@ Microservices over Docker Compose, glued by Redis (queues/streams) and Postgres+
 | **HEIMDALL** | 8004 | Speech-to-text service — faster-whisper (CPU), any audio format |
 | **HUGINN** | — | Scrapers — RSS/web → knowledge (legacy TG scraper unused) |
 | **MUNINN** | 8002 | Long-term dialog memory — embedded ChromaDB |
+| **SearXNG** | (8080 int.) | The swarm's own search front-end — how it finds what it doesn't know |
 | **postgres** | 5432 | Relational store + **pgvector** (RAG embeddings) |
 | **redis** | 6379 | Queues, telemetry stream, locks, cooldowns |
 
@@ -73,13 +85,16 @@ Microservices over Docker Compose, glued by Redis (queues/streams) and Postgres+
 
 ### Data flow
 ```
-news channels ──> MYRMIDON ──> DAEDALUS /knowledge/ingest ──> classify+embed+dedup ──> knowledge_facts (RAG)
+news channels ──> MYRMIDON ──┐
+web search (SearXNG) ────────┴─> DAEDALUS /knowledge ──> classify+embed+dedup ──> knowledge_facts (RAG)
                                                                                           │
-active Mission ──> recon builds the dossier ──> roster scans targets ──> ORPHEUS relevance ──┘
-                                              (persona + RAG + memory + mood + position + dossier)
+Mission (phase=active) ──> recon builds the dossier (searches the web if the base is empty) ┘
+        └─> opener scans targets ──> ORPHEUS relevance ──> objection quoted ──> technique chosen
+                                     (persona + RAG + memory + crowd mood + position + dossier
+                                      + fresh lookup when the answer depends on something that changes)
                                                           │ posts via MYRMIDON
                                                           ├─> dialogue watch ──> human reply ──> ORPHEUS reply ──> answer (multi-turn)
-                                                          └─> swarm amplify ──> beta (lite comment) + gamma (reaction)
+                                                          └─> the team joins ──> support answers the objection, closer cools a hostile thread
 ```
 
 For the full module/table/Redis map and engineering rules, see **`CLAUDE.md`**.
@@ -206,6 +221,20 @@ persists nothing, landscape scraping (RSS / web / public `t.me/s/` preview) and 
 imports from production, a Telegram-like 3-column workspace, mass generation, and 60 tests.
 See `SIMULATION.md`.
 
+**Stage 46 — the team answers the objection, not the mood — ✅**: the functional roles finally
+reach the live path (they had been prompt text production never sent), the swarm quotes the
+objection actually raised and picks a technique against it, the shared dossier is really written
+(it had silently recorded nothing), the pacing delay no longer blocks the whole queue, and the
+engines read the mission **phase**, so "no case file, no fighting" holds for missions activated
+before the rule existed.
+
+**Stage 47 — the swarm can go and find out — ✅**: `searxng` + `daedalus/app/tools.py` give it
+search and page reading, wired into reconnaissance (which now names the mission's subject with the
+model, because IDF over a scattered corpus cannot) and into the publication path behind a
+freshness gate. Everything read is filed, so a lookup improves the corpus permanently.
+
 Next focus: the **functional / swarm logic** (ORPHEUS cognition, MYRMIDON engines, mission pipeline,
-RAG, channel profiling, conversations). The text model is small (`qwen2.5:3b`); a larger
-`TEXT_MODEL_NAME` would sharpen comments/relevance — the prompts and guards are model-agnostic.
+RAG, channel profiling, conversations). The text model is small (`qwen2.5:3b`) and it is now the
+binding constraint: it invents names, and it occasionally emits fluent nonsense that no cheap
+guard can catch — lexical, statistical and language-identification tests were each measured and
+rejected. A larger `TEXT_MODEL_NAME` is the fix; the prompts and guards are model-agnostic.

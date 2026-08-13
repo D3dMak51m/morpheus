@@ -11,8 +11,13 @@ import {
   Alert, Badge, Button, Code, Divider, Group, Modal, MultiSelect, NumberInput, Paper,
   ScrollArea, Select, SegmentedControl, Slider, Stack, TagsInput, Text, TextInput, Textarea, Tabs,
 } from '@mantine/core';
-import { Play, Save, Trash2, Download, Copy } from 'lucide-react';
-import { SimApi, SimChannel, SimMission, SimPersona, SimPost, TACTICS } from './api';
+import { Play, Save, Trash2, Download, Copy, Gauge } from 'lucide-react';
+import { SimApi, SimChannel, SimMission, SimMissionOutcome, SimPersona, SimPost, TACTICS } from './api';
+
+// The crowd's stance toward OUR side, in the operator's language.
+const MOOD_RU: Record<string, string> = {
+  AGREE: 'за нас', NEUTRAL: 'нейтрально', OPPOSE: 'против нас',
+};
 
 const COLORS = ['violet', 'indigo', 'blue', 'teal', 'green', 'orange', 'red', 'pink', 'grape', 'cyan', 'gray'];
 const CASTES = [
@@ -232,10 +237,13 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
   const [run, setRun] = useState({ post_id: '', per_agent: 1, mode: 'generate_publish', pace_sec: 0 });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const [outcome, setOutcome] = useState<SimMissionOutcome | null>(null);
 
   useEffect(() => {
     if (!opened) return;
     setError('');
+    setOutcome(null);
     setForm(mission ? {
       title: mission.title, goal: mission.goal || '', stance: mission.stance || '',
       worldview: mission.worldview || '',
@@ -288,6 +296,16 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
       onJobStarted(`Миссия «${mission.title}» запущена: ${job.total} реплик в очереди.`);
       onSaved(); onClose();
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+  };
+
+  const measure = async () => {
+    if (!mission) return;
+    setMeasuring(true); setError(''); setOutcome(null);
+    try {
+      setOutcome(await api.measureMission(mission.id, {
+        post_id: run.post_id ? Number(run.post_id) : null,
+      }));
+    } catch (e: any) { setError(e.message); } finally { setMeasuring(false); }
   };
 
   return (
@@ -369,6 +387,22 @@ export function MissionModal({ opened, onClose, api, worldId, mission, personas,
               Запустить миссию ({form.agent_ids.length} агентов × {run.per_agent})
             </Button>
             {form.status !== 'active' && <Text size="xs" c="dimmed">Миссия на паузе — сначала активируйте.</Text>}
+            <Button variant="light" loading={measuring} leftSection={<Gauge size={15} />} onClick={measure}>
+              Измерить результат
+            </Button>
+            <Text size="xs" c="dimmed">
+              Тон считается по репликам ПОСЛЕ нашего захода: одна реплика среди двадцати не
+              двигает среднее по всей ветке, поэтому среднее не показывало ничего ни при какой
+              настройке. Если после нас никто не написал — «нет данных», а не «без изменений».
+            </Text>
+            {outcome && (
+              <Alert color="teal" p="xs">
+                <Text size="xs">
+                  Тон: {MOOD_RU[outcome.mood_before || ''] || '—'} → {MOOD_RU[outcome.mood_after || ''] || 'нет данных'}.
+                  {' '}Наших реплик: {outcome.our_comments}, ответили после нас: {outcome.replies_after}.
+                </Text>
+              </Alert>
+            )}
           </>
         )}
 

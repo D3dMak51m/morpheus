@@ -30,7 +30,7 @@ INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key
 
 router = APIRouter(prefix="/api/v1/missions", tags=["Mission Deck"])
 
-VALID_ROLES = ("alpha", "beta", "gamma")
+VALID_ROLES = mission_control.VALID_ROLES + mission_control.LEGACY_ROLES
 VALID_TACTICS = ("soft_support", "aggressive_displacement", "dynamic")
 VALID_STATUS = ("active", "paused")
 VALID_KIND = ("channel", "post")
@@ -79,7 +79,7 @@ def canonical_identifier(raw: str, kind: str = "channel") -> str:
 
 class SquadMemberRequest(BaseModel):
     agent_id: str
-    assigned_role: str = Field("alpha", description="alpha | beta | gamma")
+    assigned_role: str = Field("opener", description="scout | opener | support | closer")
 
 
 class TargetRequest(BaseModel):
@@ -448,6 +448,53 @@ def mission_outcomes(
     } for o in rows], "total": len(rows)}
 
 
+class OperatorDossierIn(BaseModel):
+    kind: str = Field("fact", description="fact | opponent | counter")
+    content: str = Field(..., min_length=3)
+    source_url: Optional[str] = None
+
+
+@router.post("/{mission_id}/dossier")
+def dossier_add_operator(
+    mission_id: int,
+    body: OperatorDossierIn,
+    db: Session = Depends(get_db),
+    user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """
+    File an entry into the case file by hand.
+
+    Recon can only find what the corpus contains — on mission #10 its own key terms
+    appeared in 0 of 1252 facts. Without this the phase gate ("no established fact, no
+    fighting") becomes a deadlock for any mission whose subject the news pipeline does
+    not cover, and the only ways out would be to weaken the gate or to invent a fact.
+    Neither is acceptable, so the operator states the fact themselves and it is filed
+    under their name.
+    """
+    if body.kind not in ("fact", "opponent", "counter"):
+        raise HTTPException(status_code=400,
+                            detail="Тип записи: fact, opponent или counter. "
+                                   "«said» пишет только движок — это то, что мы уже опубликовали.")
+    mission = db.query(Mission).filter(Mission.id == mission_id).first()
+    if not mission:
+        raise HTTPException(status_code=404, detail="Миссия не найдена.")
+    normalised = " ".join((body.content or "").split())[:2000]
+    existing = (db.query(MissionDossier)
+                .filter(MissionDossier.mission_id == mission_id,
+                        MissionDossier.kind == body.kind,
+                        MissionDossier.content == normalised)
+                .first())
+    if existing is not None:
+        return {"status": "ok", "id": existing.id, "duplicate": True}
+    row = MissionDossier(mission_id=mission_id, kind=body.kind, content=normalised,
+                         source_url=body.source_url,
+                         added_by=f"operator:{user.username}", times_used=1)
+    db.add(row)
+    db.commit()
+    logger.info("Mission %s — operator filed a %s into the dossier.", mission_id, body.kind)
+    return {"status": "ok", "id": row.id, "duplicate": False}
+
+
 @router.get("/{mission_id}/dossier")
 def dossier_operator(
     mission_id: int,
@@ -471,6 +518,14 @@ MISSION_PHASES = ("draft", "recon", "ready", "active", "paused")
 
 class PhaseRequest(BaseModel):
     phase: str = Field(..., description=" | ".join(MISSION_PHASES))
+
+
+def _dossier_facts(db: Session, mission_id: int) -> int:
+    """How many established facts the mission has — what «в бой» is gated on."""
+    return (db.query(MissionDossier)
+            .filter(MissionDossier.mission_id == mission_id,
+                    MissionDossier.kind == "fact")
+            .count())
 
 
 @router.post("/{mission_id}/phase", response_model=MissionResponse)
@@ -498,11 +553,7 @@ def set_phase(
         raise HTTPException(status_code=404, detail="Миссия не найдена.")
 
     if phase == "active":
-        facts = (db.query(MissionDossier)
-                 .filter(MissionDossier.mission_id == mission_id,
-                         MissionDossier.kind == "fact")
-                 .count())
-        if facts == 0:
+        if _dossier_facts(db, mission_id) == 0:
             raise HTTPException(
                 status_code=409,
                 detail="Миссия не может выйти в бой без досье: не установлено ни одного "
@@ -521,7 +572,11 @@ def set_phase(
                        + "; ".join(i["message"][:120] for i in blocking))
 
     mission.phase = phase
-    # `status` stays the switch the engines read, so nothing downstream has to change.
+    # Stage 46 — the engines read `phase` now, so the gate above actually gates them.
+    # `status` is kept in step as the legacy mirror (older screens and the internal
+    # target-suggestion endpoint still read it); the two must never disagree, because
+    # while they could, mission #10 sat in `recon` with an empty case file and went on
+    # commenting in a real channel — precisely what the phase was introduced to stop.
     mission.status = "active" if phase == "active" else "paused"
     db.commit()
     db.refresh(mission)
@@ -703,12 +758,25 @@ def set_status(
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("campaigns:edit")),
 ) -> MissionResponse:
-    """Pause or resume a permanent mission (active ↔ paused)."""
+    """
+    Pause or resume a permanent mission (active ↔ paused).
+
+    Legacy switch: it now goes through the phase, so resuming cannot smuggle a mission
+    past the "no case file, no fighting" gate that `set_phase` enforces.
+    """
     _validate(request.status, VALID_STATUS, "status")
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    mission.status = request.status
+    if request.status == "active":
+        return set_phase(mission_id, PhaseRequest(phase="active"), db, _user)
+    mission.status = "paused"
+    if mission.phase == "active":
+        # A paused mission is "ready" only if it still has a case file to fight from.
+        # Without this a mission that was activated, paused and then had its dossier
+        # emptied sat in `ready` for good — a label promising the operator something
+        # the phase gate would refuse the moment they pressed «В работу».
+        mission.phase = "ready" if _dossier_facts(db, mission_id) else "draft"
     db.commit()
     db.refresh(mission)
     return _serialize(mission, db)
@@ -960,9 +1028,33 @@ class EligibleAgentResponse(BaseModel):
 
 
 class AutoAssignRequest(BaseModel):
-    alpha: int = Field(1, ge=0, le=20)
-    beta: int = Field(0, ge=0, le=20)
-    gamma: int = Field(0, ge=0, le=20)
+    """
+    Desired roster shape, by JOB (Stage 46). The legacy caste fields are still
+    accepted — an older client asking for 1 alpha / 2 beta / 1 gamma wants one bot to
+    open and a couple to back it up, which is exactly opener/support/closer — but they
+    are mapped, not stored, because a caste says what a generation costs and never
+    what the member is there to do.
+    """
+    scout: int = Field(0, ge=0, le=20)
+    opener: int = Field(0, ge=0, le=20)
+    support: int = Field(0, ge=0, le=20)
+    closer: int = Field(0, ge=0, le=20)
+    alpha: Optional[int] = Field(None, ge=0, le=20)
+    beta: Optional[int] = Field(None, ge=0, le=20)
+    gamma: Optional[int] = Field(None, ge=0, le=20)
+
+    def counts(self) -> dict[str, int]:
+        wanted = {"scout": self.scout, "opener": self.opener,
+                  "support": self.support, "closer": self.closer}
+        if self.alpha:
+            wanted["opener"] += self.alpha
+        if self.beta:
+            wanted["support"] += self.beta
+        if self.gamma:
+            wanted["scout"] += self.gamma
+        if not any(wanted.values()):
+            wanted["opener"] = 1
+        return wanted
 
 
 @router.get("/{mission_id}/eligible-agents", response_model=list[EligibleAgentResponse])
@@ -991,8 +1083,7 @@ def auto_assign_squad(
     mission = db.query(Mission).filter(Mission.id == mission_id).first()
     if not mission:
         raise HTTPException(status_code=404, detail="Mission not found")
-    report = mission_control.auto_assign_squad(
-        db, mission, {"alpha": request.alpha, "beta": request.beta, "gamma": request.gamma})
+    report = mission_control.auto_assign_squad(db, mission, request.counts())
     db.refresh(mission)
     logger.info("Mission %s auto-assign: %d added, %d at cap.",
                 mission_id, report["assigned_count"], report["skipped_at_capacity"])

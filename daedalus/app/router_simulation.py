@@ -42,6 +42,7 @@ from app.models_simulation import (
     SimLandscapeSource,
     SimMission,
     SimMissionAgent,
+    SimMissionOutcome,
     SimPersona,
     SimPost,
     SimPostRevision,
@@ -1342,6 +1343,60 @@ def run_mission(mission_id: int, body: MissionRunIn, db: Session = Depends(get_d
               mission_id=mission.id, post_id=post.id, job_id=job.id, commit=True)
     sim_generator.run_job_async(job.id)
     return job_out(job)
+
+
+class MissionMeasureIn(BaseModel):
+    post_id: Optional[int] = None
+    label: Optional[str] = None
+
+
+@router.post("/missions/{mission_id}/measure")
+def measure_mission(mission_id: int, body: MissionMeasureIn, db: Session = Depends(get_db),
+                    _u: AdminUser = Depends(edit_perm)) -> dict[str, Any]:
+    """
+    Measure what the mission achieved in a polygon discussion: the crowd's stance
+    toward us before and after we spoke, and how many people spoke after us.
+
+    In the polygon the "after" reading needs no waiting — the thread is ours — which
+    is what makes this the place to compare wordings, roles and techniques before any
+    of it touches a real channel.
+    """
+    mission = db.get(SimMission, mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="Миссия не найдена.")
+    post_id = body.post_id or (mission.scope or {}).get("post_id")
+    if not post_id:
+        raise HTTPException(status_code=400, detail="Не указан пост для замера.")
+    post = db.get(SimPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Пост не найден.")
+    _require_in_world(mission.world_id, _post_world_id(db, post))
+
+    report = sim_generator.measure_outcome(db, mission, post, body.label)
+    if report.get("status") == "skipped":
+        raise HTTPException(status_code=409, detail=report.get("reason"))
+    log_event(db, mission.world_id, "mission",
+              f"Замер миссии «{mission.title}»: тон {report.get('mood_before') or '—'} → "
+              f"{report.get('mood_after') or 'нет данных'}, ответили после нас: "
+              f"{report.get('replies_after', 0)}.",
+              actor_kind="mission", actor_label=mission.title,
+              mission_id=mission.id, post_id=post.id, commit=True)
+    return report
+
+
+@router.get("/missions/{mission_id}/outcomes")
+def mission_outcomes(mission_id: int, db: Session = Depends(get_db),
+                     _u: AdminUser = Depends(view_perm)) -> dict[str, Any]:
+    """Every measurement taken for this mission, newest first."""
+    rows = (db.query(SimMissionOutcome)
+            .filter(SimMissionOutcome.mission_id == mission_id)
+            .order_by(SimMissionOutcome.id.desc()).limit(50).all())
+    return {"outcomes": [{
+        "id": r.id, "post_id": r.post_id, "label": r.label,
+        "mood_before": r.mood_before, "mood_after": r.mood_after,
+        "thread_size_before": r.thread_size_before, "our_comments": r.our_comments,
+        "created_at": r.created_at,
+    } for r in rows]}
 
 
 # ── Knowledge ──────────────────────────────────────────────────────────────

@@ -156,6 +156,32 @@ services:
       retries: 10
       start_period: 180s
 
+  searxng:
+    # Stage 47 — the swarm's own search front-end. A fixed set of news feeds can never
+    # cover a specific mission's subject (recon on the transport mission found its own
+    # key words in 0 of 1594 facts), and a comment about a score, a price or today's
+    # news cannot be written from a model's training data. This is where the swarm goes
+    # to find out. Self-hosted rather than a public engine: the query pattern here —
+    # every recon, plus the publication path whenever the freshness gate fires — is
+    # exactly what public endpoints throttle first, and a silently failing search puts
+    # the bots back to arguing from nothing.
+    image: searxng/searxng:latest
+    container_name: morpheus-searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-morpheus-searxng-change-me}
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - morpheus_net
+    # No published port: nothing outside the compose network needs to reach it.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   pgdata:
   chromadata:

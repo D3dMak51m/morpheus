@@ -10,6 +10,12 @@ Living handoff so a new chat can continue seamlessly. For architecture/rules rea
 
 ## Current state (TL;DR)
 
+**Latest (Stages 46–47):** a mission's roster now works as a team against the objection actually
+raised in the thread, and the swarm can **go and find out what it does not know** (self-hosted
+SearXNG + page reading, wired into reconnaissance and into the publication path). Mission #10,
+which found 0 facts about its own subject, now holds 6 relevant ones and stands at `ready` —
+activating it is the operator's call, since it posts to a real channel.
+
 Telegram swarm is fully autonomous and operator-controllable end-to-end:
 - Persona bots comment cognitively (now short & human, anti-repeat), **read a post's photos
   & audio** (HEIMDALL STT + VLM + OCR), hold multi-turn conversations with humans, gather
@@ -27,6 +33,65 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
 - **NEW — Stage 38: why the swarm was silent** — diagnosed on live data and fixed
   (relevance gate, RAG, target health, mission-as-position). Full evidence and before/after
   numbers in **`DIAGNOSIS.md`**.
+
+### Stage 47 — the swarm can go and find out what it does not know
+
+Two measured ceilings met at the same place. Reconnaissance on mission #10 found its own key
+words in **0 of 1594** facts — ten general news feeds will never cover one mission's subject.
+And anything that CHANGES (a score, a price, today's news) is absent from both the corpus and
+the model's training data, so a comment about it was invention. Both are the same problem: the
+swarm could only know what happened to arrive.
+
+**Tools.** `searxng` in compose (self-hosted: the query pattern here — every recon, plus the
+publication path whenever the freshness gate fires — is what public endpoints throttle first),
+and `daedalus/app/tools.py`: `search()` and `lookup()` = search → read the pages → file them
+through the ORDINARY knowledge pipeline → return the findings. Filing is the point: a result used
+once and discarded leaves the corpus as poor as before, so what one agent looked up the whole
+swarm knows afterwards. The model is never asked for tool-call JSON — the decision is one word,
+the query is built by code.
+
+**Reconnaissance rewritten.** The old rule required a single article to cover a quarter of the
+mission's vocabulary — but a mission's text is mostly its own ARGUMENT, which no article repeats.
+IDF could not fix it either: on a 1594-fact corpus scattered across topics, ordinary words look
+rare, and three admission rules in a row ranked junk first (Samarkand's hectares, a newspaper's
+anniversary, a boat in Zimbabwe). Now one short generation NAMES the subject («дороги, автобусы,
+метро»), the place comes from the targets' channel profiles, and a fact must be ABOUT the subject
+(≥3 mentions or ≥2 distinct subject words) and about our place. Below three facts it searches the
+web for its own subject and re-reads the base. Measured: #10 went from **0 filed** to 6 relevant
+(4 from the corpus, 6 found online) and reached `ready`; the junk that the looser rules admitted
+is gone.
+
+**On the publication path.** `_needs_fresh_data` (free keyword pre-filter, then one word from the
+model) → query with the channel's place → `lookup` → a `[Свежие данные]` block. Verified end to
+end on «сколько стоит проезд в автобусе в Ташкенте»: gate ДА → 2 findings in 16 s. A failed search
+produces no block at all — the bot answers from what it knows and says nothing about what it does
+not.
+
+### Stage 46 — the team answers the objection actually raised
+
+Stage 45 declared roles a division of labour, but the check afterwards showed the declaration
+never reached production: `VALID_ROLES` still accepted only castes, `_enqueue_comment` hardcoded
+`role="alpha"`, companions were picked by caste, and the scout/opener/support/closer directives in
+`persona.py` were unreachable branches — in the polygon too. Three related defects were found the
+same way and fixed together:
+
+* **The objection.** Nothing ever filed `opponent` or `counter`, so the prompt block for "what the
+  other side argues" was permanently empty. Now the swarm QUOTES the strongest opposing line
+  (asking it to JUDGE whether anyone objects returns «НЕТ» — 2/2 measured), verifies the quote
+  against the thread, and picks a **technique** against it: correct with a fact, move the
+  criterion, concede and redirect, or ask what it rests on. The teammate answering gets the same
+  objection and a different technique.
+* **The shared memory recorded nothing.** `said` was filed from `text_to_publish`, which is empty
+  by design on cognitive tasks — `mission_dossier` had 0 rows on live data.
+* **Judging ourselves.** Mood and objection were read over a thread containing our own comments;
+  in the polygon nine of ours against eight of theirs flipped the verdict to AGREE. Both readings
+  now use the crowd only (`swarm_identities`, because `is_self` sees one session).
+
+Plus reliability: the pacing delay moved out of the consumer loop into a due-time ZSET (one
+agent's 20-minute delay used to stop the whole swarm), the engines now read the mission **phase**
+(#10 had been commenting in a real channel from `recon` with an empty case file), and a guardrail
+for foreign script bleeding mid-sentence. Verified in the polygon on an imported 27-comment
+thread: three near-identical replies became three different arguments against one real objection.
 
 ### Stage 45 — the mission MODEL rewritten (not more scaffolding around it)
 
@@ -761,6 +826,13 @@ testing (raw SQL) — harmless, adjust in the editor if desired.
 
 ## Next steps (planned, agreed)
 
+−1. **The model is now the binding constraint.** It invents names (a player called «Кокцинони»)
+   and occasionally emits fluent nonsense in a mixed Turkic language that every guard passes.
+   Three detectors were measured and rejected — function words (gibberish 0.121 vs 0.000 for 27
+   genuine English/Uzbek comments), and language identification (`lingua` lacks Uzbek and Kyrgyz,
+   calls the gibberish `slav` at 0.837, and would reject the 9-in-50 real cases of a human
+   answering in Uzbek under a Russian post). Do not add a fourth heuristic; a bigger
+   `TEXT_MODEL_NAME` is the fix.
 0. **Throughput decision (operator).** Current limits remain deliberately unchanged: one
    comment/channel/hour, four/agent/hour, a 300-second cycle and new posts only. Stage 38 makes
    this the dominant remaining limiter; increasing it is an operator policy decision.

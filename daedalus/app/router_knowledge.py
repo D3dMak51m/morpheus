@@ -805,6 +805,40 @@ def rag_search(
     return RagSearchResponse(status="success", matches=matches)
 
 
+class LookupRequest(BaseModel):
+    query: str = Field(..., min_length=2)
+    layers: list[str] = Field(default_factory=lambda: ["global"])
+    read_pages: int = Field(3, ge=1, le=6)
+    # Something that changes (a score, a price, today's news) must be searched inside a
+    # recent window; background about a subject must not be.
+    recent: bool = True
+    language: str = "ru"
+
+
+@router.post("/internal/lookup")
+def knowledge_lookup(
+    request: LookupRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Go and find out (Stage 47): search the web, read the top pages, file what was read
+    into the knowledge base, and hand the findings back to the caller.
+
+    This is the swarm's way out of a closed corpus. Recon calls it when the base holds
+    nothing about a mission's subject; the comment path calls it when answering would
+    otherwise mean inventing a fact that changes — a score, a price, today's news.
+    Everything read is filed through the ordinary pipeline, so what one agent looked up
+    the whole swarm knows afterwards.
+    """
+    if x_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid internal token.")
+    from app import tools
+    return tools.lookup(db, request.query, layers=_clean_layers(request.layers) or ["global"],
+                        read_pages=request.read_pages, recent=request.recent,
+                        language=request.language)
+
+
 @router.get("/internal/by-geo")
 def facts_by_geo(
     terms: str = "",

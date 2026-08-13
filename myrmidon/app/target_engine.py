@@ -192,16 +192,20 @@ def _news_channels_by_agent(sf) -> dict[str, list[dict]]:
 
 def _active_missions(sf) -> list[dict]:
     """
-    Active missions with their active CHANNEL targets and roster. Missions are now
-    the primary driver: their assigned agents work the mission's targets using the
-    mission's goal + stance (instead of each agent's personal interests).
+    Missions in phase ``active``, with their active CHANNEL targets and roster.
+
+    Stage 46 — the gate is the PHASE, not the legacy on/off `status`. While the engine
+    read `status`, mission #10 sat in phase `recon` with an empty case file and went on
+    commenting in a real channel: the "a mission may not fight before it knows
+    anything" rule existed only at the moment of the transition, and any mission
+    activated before the rule existed simply never met it.
     """
     session = sf()
     try:
         mrows = session.execute(text(
             "SELECT id, title, narrative_goal, stance, tactic, our_side, opponent, "
             "       key_points, red_lines "
-            "FROM missions WHERE status='active'"
+            "FROM missions WHERE phase='active'"
         )).fetchall()
         if not mrows:
             return []
@@ -341,7 +345,8 @@ def _post_url(username: Optional[str], chat_id: str, post_id: int) -> str:
 def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
                      stance: str, tactic: str, mission_id: int, channel_label: str,
                      media_context: str = "", channel_profile: Optional[dict] = None,
-                     thread_context: str = "", position: Optional[dict] = None) -> None:
+                     thread_context: str = "", position: Optional[dict] = None,
+                     role: str = "opener") -> None:
     task = {
         "task_id": str(uuid.uuid4()),
         "agent_id": agent_id,
@@ -353,7 +358,10 @@ def _enqueue_comment(agent_id: str, url: str, post_text: str, goal: str,
         "narrative_goal": goal or "",
         "stance": stance or "",
         "tactic": tactic or "soft_support",
-        "role": "alpha",
+        # The seeder's actual JOB in the discussion (Stage 46). This used to be the
+        # constant "alpha", so the functional role directives ORPHEUS carries were
+        # unreachable in production no matter what the operator assigned.
+        "role": role or "opener",
         "mission_id": mission_id,
         # The channel's profile — so ORPHEUS grounds the comment in the channel's context.
         "channel_profile": channel_profile,
@@ -388,17 +396,34 @@ def _mission_post_url(identifier: str, post_id: int) -> str:
     return f"https://t.me/{ident}/{post_id}"
 
 
+# A role is the JOB in the discussion; the legacy castes still name one (see
+# `mission_control.functional_role`). Ordered by who should open a discussion.
+SEEDER_PREFERENCE = ("opener", "alpha", "support", "beta", "closer", "scout", "gamma")
+
+
+def _pick_seeder(agents: list[dict]) -> tuple[Optional[str], str]:
+    """The roster member who makes the first argument, and the job it is doing."""
+    for want in SEEDER_PREFERENCE:
+        for a in agents:
+            if (a.get("role") or "").strip().lower() == want:
+                return a["agent_id"], want
+    if agents:
+        return agents[0]["agent_id"], (agents[0].get("role") or "opener")
+    return None, "opener"
+
+
 def _process_mission(mission: dict, sf) -> None:
-    """A mission drives its alpha to seed on each target channel's newest relevant
-    new post; beta/gamma amplify (mission-scoped) after alpha posts."""
+    """A mission drives its opener to seed on each target channel's newest relevant
+    new post; the rest of the roster answers under it (mission-scoped) afterwards."""
     from app.main import get_agent_credentials
     from app.drivers.tg_client import TelegramDriver
     from app import account_health, schedule
 
     mid = mission["id"]
-    # Pick the seeding alpha from the roster (fall back to any roster agent).
-    alphas = [a["agent_id"] for a in mission["agents"] if a["role"] == "alpha"]
-    seeder = (alphas or [a["agent_id"] for a in mission["agents"]])[0] if mission["agents"] else None
+    # Who opens. The first substantive argument is the `opener`'s job; legacy rosters
+    # store that member as an `alpha`, so both resolve, and any roster member is still
+    # better than staying silent.
+    seeder, seeder_role = _pick_seeder(mission["agents"])
     if not seeder or account_health.in_cooldown(seeder):
         return
     if not schedule.in_active_hours(sf, seeder):
@@ -550,7 +575,8 @@ def _process_mission(mission: dict, sf) -> None:
                          position={"our_side": mission.get("our_side", ""),
                                    "opponent": mission.get("opponent", ""),
                                    "key_points": mission.get("key_points") or [],
-                                   "red_lines": mission.get("red_lines") or []})
+                                   "red_lines": mission.get("red_lines") or []},
+                         role=seeder_role)
 
 
 def _process_news_agent(agent_id: str, channels: list[dict], sf) -> None:

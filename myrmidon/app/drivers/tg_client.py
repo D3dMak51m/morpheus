@@ -135,7 +135,7 @@ class TelegramDriver:
         return False
 
     async def _resolve_text(self, fallback: str, text_provider, context_text: str, thread_context: str,
-                            media_context: str, chat) -> str:
+                            media_context: str, chat, crowd_context: str = "") -> str:
         """
         Decide the comment text. If a text_provider is supplied (mission path), it
         is called with the post context, author, the *atmosphere* of the thread
@@ -150,7 +150,8 @@ class TelegramDriver:
         try:
             loop = asyncio.get_event_loop()
             generated = await loop.run_in_executor(
-                None, text_provider, context_text, author, thread_context, media_context)
+                None, text_provider, context_text, author, thread_context, media_context,
+                crowd_context)
         except Exception as e:
             logger.error("TelegramDriver [%s]: text provider failed: %s", self.agent_id, e)
             generated = ""
@@ -259,36 +260,68 @@ class TelegramDriver:
             logger.warning("TelegramDriver [%s]: could not read post %s for context: %s", self.agent_id, post_id, e)
         return ""
 
-    async def _read_thread_context(self, app: Client, chat, post_id: Optional[int], limit: int) -> str:
+    @staticmethod
+    def _swarm_ids() -> set:
+        """Usernames/ids of every account in the swarm (cached a day), or empty."""
+        try:
+            from app.main import connect_postgres
+            from app import outcome_engine
+            return outcome_engine.swarm_identities(connect_postgres())
+        except Exception as e:
+            logger.debug("TelegramDriver: swarm identities unavailable: %s", e)
+            return set()
+
+    async def _read_thread(self, app: Client, chat, post_id: Optional[int],
+                           limit: int) -> tuple:
         """
-        Read the most recent comments under a channel post — the *atmosphere* of the
-        discussion: who is saying what and in what mood. Returned as compact
-        "author: text" lines so ORPHEUS can read the sentiment of the crowd and let
-        the bot react to it like a human would (agree, push back, defuse, pile on).
-        Best-effort: returns "" if the thread can't be read.
+        Read the recent comments under a post, as ``(whole_thread, crowd_only)``.
+
+        Two views because they answer two different questions. The WRITER needs the
+        whole discussion — including our own people, so it does not repeat them. The
+        JUDGE (the crowd's stance toward us, and which objection to answer) needs the
+        crowd *without* us: with our own comments in the input, a thread we have
+        already worked reads as agreeing with us, and the extractor will happily quote
+        a teammate as the opponent. Measured in the polygon: after two runs our nine
+        comments outnumbered the crowd's eight and the mood flipped to AGREE.
+
+        `is_self` is not enough to tell ours apart — it marks only the READING
+        session's messages, so a thread read by the alpha shows the beta as a stranger.
+        Best-effort: returns ("", "") if the thread cannot be read.
         """
         if not post_id:
-            return ""
+            return "", ""
+        ours = self._swarm_ids()
         lines: List[str] = []
+        crowd: List[str] = []
         try:
             async for msg in app.get_discussion_replies(chat.id, post_id):
                 txt = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
                 if not txt:
                     continue
                 u = getattr(msg, "from_user", None)
-                who = "someone"
+                who, is_ours = "someone", False
                 if u is not None:
                     who = u.username or u.first_name or str(u.id)
-                    if getattr(u, "is_self", False):
-                        who = "me(my earlier comment)"
+                    is_ours = (getattr(u, "is_self", False)
+                               or (u.username or "").lower() in ours
+                               or str(u.id) in ours)
+                    if is_ours:
+                        who = "наш(комментарий команды)"
                 lines.append(f"{who}: {txt}")
+                if not is_ours:
+                    crowd.append(f"{who}: {txt}")
                 if len(lines) >= limit:
                     break
         except Exception as e:
             logger.debug("TelegramDriver [%s]: could not read thread for post %s: %s", self.agent_id, post_id, e)
-            return ""
+            return "", ""
         # Keep the most recent ``limit`` exchanges (the iterator yields oldest-first).
-        return "\n".join(lines[-limit:])
+        return "\n".join(lines[-limit:]), "\n".join(crowd[-limit:])
+
+    async def _read_thread_context(self, app: Client, chat, post_id: Optional[int], limit: int) -> str:
+        """The whole discussion as compact "author: text" lines (writer's view)."""
+        whole, _ = await self._read_thread(app, chat, post_id, limit)
+        return whole
 
     # ── Media "reading" (photos + audio) ───────────────────────────────────
 
@@ -500,9 +533,12 @@ class TelegramDriver:
                     emit_event(self.agent_id, "reading_thread",
                                "оценивает настроение обсуждения", status="active",
                                target=target_url)
-                thread_context = await self._read_thread_context(
+                # Two views of the same thread: everything (so the writer does not
+                # repeat our own people) and the crowd alone (so "what do they think of
+                # us" and "which objection do we answer" are not answered by us).
+                thread_context, crowd_context = await self._read_thread(
                     app, chat, post_id, dialogue_store.DIALOGUE_THREAD_CONTEXT_LIMIT
-                ) if is_channel else ""
+                ) if is_channel else ("", "")
                 # "Read" the post's media (photos + audio) so the comment reacts to
                 # what's actually in the post, not just its text/caption. Reuse a
                 # context already read at scan time (caption-less media posts) instead
@@ -514,7 +550,8 @@ class TelegramDriver:
                 else:
                     media_context = ""
                 final_text = await self._resolve_text(
-                    text, text_provider, context_text, thread_context, media_context, chat)
+                    text, text_provider, context_text, thread_context, media_context, chat,
+                    crowd_context)
                 if not final_text or not final_text.strip():
                     logger.error("TelegramDriver [%s]: no text to post.", self.agent_id)
                     return False

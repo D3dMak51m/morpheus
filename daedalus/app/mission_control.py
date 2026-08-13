@@ -57,7 +57,21 @@ MAX_MISSIONS_PER_BOT = int(os.getenv("MAX_MISSIONS_PER_BOT", "5"))
 # 'active' = the new permanent-goal missions (Stage 34+); legacy DAG missions use
 # pending/running/amplifying.
 ACTIVE_MISSION_STATES = ("active", "pending", "running", "amplifying")
-VALID_ROLES = ("alpha", "beta", "gamma")
+# Stage 45/46 — a role is the JOB a member does in the discussion. alpha/beta/gamma
+# described how EXPENSIVE the generation was, so a "team" was one bot speaking and two
+# repeating it more cheaply. Cost stays on `agent_profiles.caste`; these say who does
+# what. Legacy values are still accepted so existing rosters keep working.
+VALID_ROLES = ("scout", "opener", "support", "closer")
+LEGACY_ROLES = ("alpha", "beta", "gamma")
+# Which caste is a natural fit for which job — advisory only (auto-assign ranking).
+# A caste is a budget, so it hints at the job: the full-cognitive alpha can open or
+# answer an objection, the cheap gamma is at home doing reconnaissance.
+ROLE_CASTE_AFFINITY = {
+    "opener": ("alpha",),
+    "support": ("alpha", "beta"),
+    "closer": ("beta",),
+    "scout": ("gamma", "beta"),
+}
 
 # Per-wave execution delay (seconds) — staggers the swarm to look organic.
 ALPHA_DELAY_SEC = int(os.getenv("MISSION_ALPHA_DELAY_SEC", "10"))
@@ -134,9 +148,9 @@ def score_agent_for_mission(profile: AgentProfile, mission: Mission, role: Optio
     score = 0.0
     reasons: list[str] = []
 
-    if role and profile.caste == role:
+    if role and profile.caste in ROLE_CASTE_AFFINITY.get(role, (role,)):
         score += 0.4
-        reasons.append(f"caste '{profile.caste}' matches role '{role}'")
+        reasons.append(f"caste '{profile.caste}' suits the job '{role}'")
     elif role:
         score += 0.1
     else:
@@ -281,30 +295,63 @@ def auto_assign_squad(db: Session, mission: Mission, counts: dict[str, int]) -> 
 # ── Runtime dynamic roster auto-fill (agent_mode='dynamic') ────────────────
 
 def _dynamic_role_counts(n: int) -> dict[str, int]:
-    """Split a mission's ``dynamic_count`` into a per-role target: always ≥1 alpha to
-    seed, the rest split between beta (amplify) and gamma (reactions)."""
+    """
+    Split a mission's ``dynamic_count`` into a per-JOB target.
+
+    Always one opener (someone has to make the first argument), then support before
+    closer — answering the objection actually raised is the work; de-escalating is
+    only needed once a thread turns hostile. A scout is added from four members up,
+    where establishing what is being claimed pays for itself.
+    """
     n = max(1, int(n or 1))
-    alpha = 1
-    rest = n - alpha
-    return {"alpha": alpha, "beta": (rest + 1) // 2, "gamma": rest // 2}
+    counts = {"scout": 0, "opener": 1, "support": 0, "closer": 0}
+    rest = n - 1
+    if rest > 0:
+        counts["support"] = min(rest, (rest + 1) // 2)
+        rest -= counts["support"]
+    if rest > 0:
+        counts["closer"] = 1
+        rest -= 1
+    if rest > 0:
+        counts["scout"] = rest
+    return counts
+
+
+def functional_role(role: str) -> str:
+    """
+    The JOB a roster entry stands for, translating legacy castes.
+
+    Old rosters store alpha/beta/gamma, which described cost. Read as jobs they are
+    what those bots actually did: the alpha spoke first (opener), the beta backed it
+    (support), the gamma only reacted without taking a side (scout). This is roster
+    ACCOUNTING — a gamma's emoji reaction is still driven by its caste in
+    `myrmidon/app/swarm.py`, because that is a cost decision, not a job.
+    """
+    r = (role or "").strip().lower()
+    return {"alpha": "opener", "beta": "support", "gamma": "scout"}.get(r, r)
 
 
 def reconcile_dynamic_rosters(db: Session) -> None:
     """
-    For each ACTIVE mission with ``agent_mode='dynamic'`` whose roster is below its
-    ``dynamic_count`` target, auto-fill the deficit with the best-matching available
-    bots (caste↔role + topic overlap). Additive only — never removes agents. Safe to
-    call every reconciler tick (a no-op once filled or when no eligible bot remains).
+    For each mission in phase ``active`` with ``agent_mode='dynamic'`` whose roster is
+    below its ``dynamic_count`` target, auto-fill the deficit with the best-matching
+    available bots (caste↔job fit + topic overlap). Additive only — never removes
+    agents. Safe to call every reconciler tick (a no-op once filled or when no
+    eligible bot remains).
     """
     missions = (
         db.query(Mission)
-        .filter(Mission.status == "active", Mission.agent_mode == "dynamic")
+        .filter(Mission.phase == "active", Mission.agent_mode == "dynamic")
         .all()
     )
     for m in missions:
         try:
             target = _dynamic_role_counts(m.dynamic_count)
-            have = {r: sum(1 for s in m.squad if s.assigned_role == r) for r in VALID_ROLES}
+            have = {r: 0 for r in VALID_ROLES}
+            for s in m.squad:
+                job = functional_role(s.assigned_role)
+                if job in have:
+                    have[job] += 1
             if all(have[r] >= target[r] for r in VALID_ROLES):
                 continue
             report = auto_assign_squad(db, m, target)

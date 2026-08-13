@@ -33,6 +33,7 @@ container names). Do not rabbit-hole on it unless explicitly asked.
 | **huginn** | ./huginn | — | Legacy scrapers (RSS/web feed knowledge; **TG scraper is dead Telethon**) |
 | **myrmidon** | ./myrmidon | (8003 internal) | **Execution swarm**: Pyrogram (TG) + Appium (mobile, broken) |
 | **heimdall** | ./heimdall | 8004 | **Speech-to-text** service (faster-whisper, CPU/int8, any format) |
+| **searxng** | searxng/searxng | (8080 internal) | **Search** — how the swarm finds what it does not know (Stage 47) |
 
 **External dependency:** host **Ollama** at `host.docker.internal:11434` — models
 `qwen2.5:3b` (text generation), `nomic-embed-text` (RAG embeddings), and `moondream`
@@ -80,6 +81,13 @@ so any frontend change needs `docker compose build daedalus`.
   only by our own agents cannot exercise the crowd-reading half of the pipeline. In the UI it is
   the **«Импорт поста из Telegram»** button in the polygon's right column
   (`simulation/RightPanel.tsx` → opens `ToolModals.tsx` on its import tab).
+  **`tools.py` — how the swarm finds out what it does not know (Stage 47)**: `search()` over the
+  compose-local **SearXNG**, and `lookup()` = search → read the pages behind the top results
+  (reusing `refetch.fetch_article_text`) → file them through the ORDINARY knowledge pipeline →
+  return the findings. Exposed as `POST /knowledge/internal/lookup`. Everything read is filed on
+  purpose: a search result used once and discarded leaves the corpus as poor as before. The model
+  is never asked to emit tool-call JSON (it cannot) — the DECISION to search is a one-word
+  classification, the query is built from extracted terms, the tool itself is code.
   `channel_profiler.py` (LLM strict-JSON per-channel profile + hot themes) +
   `router_channels.py` (internal `/channels/internal/{profile,themes}` build + `…/profile`
   GET; operator `GET /channels/profiles` for the UI). `router_decisions.py` (internal
@@ -124,6 +132,18 @@ so any frontend change needs `docker compose build daedalus`.
   `guardrails.is_repeat`), `handle_relevance` (mode=relevance, mission- or profile-aware
   YES/NO; `_channel_context` weaves the **channel profile** — geo/topics/hot-themes — so a
   post is judged IN context, not in a vacuum).
+  **Stage 46 — the objection, and a technique against it**: `_extract_objection` QUOTES whoever
+  argues with us (asking the model to JUDGE whether anyone objects gets «НЕТ» — measured 2/2 on a
+  thread full of opposition), `_grounded_objection` throws the quote away unless the thread really
+  contains it, and `_technique_for` picks one word out of `factual_correction` / `reframe` /
+  `concede_and_redirect` / `ask_evidence` — with `avoid` so the teammate answering the same
+  objection cannot repeat the opener's move. Asked only when the mood reading is not AGREE.
+  **Stage 47 — going and finding out**: `_needs_fresh_data` (a free keyword pre-filter, then one
+  word from the model) → `_lookup_query` (entities + the channel's place) → `_fetch_fresh` (calls
+  DAEDALUS `lookup`, cached per query in Redis) → a `[Свежие данные]` prompt block. A failed
+  search yields no block at all: the bot answers from what it knows and says nothing about what it
+  does not. `_crowd_thread` — mood and objection are read over the CROWD's messages, never over a
+  thread that already contains our own.
   **`generate_text(prompt, max_tokens, temperature, penalties)`** — set
   `penalties=False` for short CLASSIFICATION calls (relevance, tactic): the anti-parroting
   repeat/frequency penalties otherwise push the model OFF the clean `да`/`нет` tokens (gave
@@ -138,16 +158,29 @@ so any frontend change needs `docker compose build daedalus`.
   heat heuristic), `fetch_memory`/`save_memory` (MUNINN).
 - `rag.py` — `fetch_fresh_context` (pgvector knowledge retrieval). `guardrails.py` —
   output validation + **`is_echo`** (anti-parroting the input) + **`is_repeat`** (anti-rehashing
-  the agent's OWN recent comments). `coordination.py` — legacy DAG beta amplification (the live
+  the agent's OWN recent comments) + **`_script_bleed`** (a run of CJK/kana/hangul/Arabic/Hebrew/
+  Devanagari/Thai INSIDE a Cyrillic or Latin comment — the model leaking training data
+  mid-sentence, which every other check passed; a comment written wholly in such a script is fine). `coordination.py` — legacy DAG beta amplification (the live
   swarm amplification is now in MYRMIDON `swarm.py`). `media_enricher.py` — VLM (Ollama) + STT
   **delegated to HEIMDALL** (no local Whisper). `telemetry.py` — `emit()` → `stream:agent_events`.
 
 ### MYRMIDON (`myrmidon/app/`) — execution swarm (Pyrogram)
 - `main.py` — consumes `queue:execution_tasks`; `_execute_telegram` (comment via
   `text_provider`→ORPHEUS, or `action_type=react`); starts `dialogue_engine`,
-  `target_engine`; respects account cooldown.
-- `drivers/tg_client.py` — `TelegramDriver` (all TG ops): `execute_comment` (channel
-  comment in the linked discussion group; reads post text + thread mood + **media context**),
+  `target_engine`; respects account cooldown. **Stage 46 — waiting is a property of the TASK**:
+  `unpublishable_reason` drops what can never publish, `_due_or_defer` parks a not-yet-due task in
+  the `morpheus:exec:scheduled` ZSET and `start_task_scheduler` hands it back when it comes due, so
+  one agent's pacing delay no longer stops every other agent. `_dossier_file` writes the mission's
+  case file (`opponent` on extraction, `counter` after the answer, `said` after publication — the
+  last one used to be filed from `text_to_publish`, which is empty by design on cognitive tasks, so
+  the "one memory for the roster" recorded nothing at all).
+- `drivers/tg_client.py` — `TelegramDriver` (all TG ops): `_read_thread` returns the discussion
+  TWICE — the whole thread for the writer (so it does not repeat our own people) and the crowd
+  alone for the judge (mood, and which objection to answer), because a thread the mission has
+  already worked reads as agreeing with us. `is_self` is not enough to tell ours apart — it marks
+  only the reading session's messages — so it uses `outcome_engine.swarm_identities`.
+  `execute_comment` (channel comment in the linked discussion group; reads post text + thread
+  mood + **media context**),
   `execute_reaction` (gamma), `fetch_new_posts` (now keeps **media-only posts** via
   `has_media`), `_download_media`/`_read_media_context`/`read_media_context` (album-aware
   photo+audio download → enrich), `list_channels`, `run_dialogue_cycle`, `_flood_retry`.
@@ -168,8 +201,12 @@ so any frontend change needs `docker compose build daedalus`.
   ingest** (role=news → DAEDALUS knowledge).
 - `dialogue_engine.py` + `dialogue_store.py` — poll watched comments for human replies →
   ORPHEUS reply → post → register follow-up watch (multi-turn). Logs `action_type=reply`.
-- `swarm.py` — caste amplification: after an **alpha** seed posts, **beta** = cheap "lite"
-  comment, **gamma** = emoji reaction; companions scoped to the mission roster.
+- `swarm.py` — the rest of the roster joins the discussion the **opener** entered:
+  `support` answers the objection with a DIFFERENT technique (full generation — "answer the
+  specific objection, but cheaply" just reproduces the ally), `closer` speaks only into a thread
+  that turned hostile (`thread_is_hostile`: OPPOSE + real insults, never mere emphasis), `scout`
+  does not amplify, and a `gamma` caste still drops an emoji reaction. A roster still carrying the
+  legacy castes keeps the old behaviour exactly.
 - `account_health.py` — FloodWait/ban classification, `mark_account` (ban→suspend profile),
   cooldowns. `schedule.py` — **active-hours gate** (`in_active_hours`: persona window in the
   swarm tz, `ACTIVE_HOURS_UTC_OFFSET` default +5; gates seeding/amplify/replies, fail-open).
@@ -286,6 +323,10 @@ Anti-repeat: `morpheus:recent_outputs:<agent>` (capped list of the agent's last 
 Profiling: `morpheus:profile:heavy:<platform>:<ref>` (24h gate), `…:themes:…` (4h gate).
 Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_cooldown:<agent>`,
 `morpheus:amplified:<url>` (once-per-post amplification). Metrics: `metrics:*`.
+Pacing: **`morpheus:exec:scheduled`** (ZSET of tasks waiting out their delay, scored by the unix
+time they come due — the delay is no longer slept in the consumer). Search:
+`morpheus:lookup:<hash>` (a lookup's findings, 30 min, so a roster answering one post does not
+pay for the same search three times).
 
 ---
 
@@ -302,11 +343,16 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
    posts are "read" first — `media_reader`: VLM+OCR / HEIMDALL STT) → ORPHEUS LLM-relevance vs
    the mission's goal+stance (penalties OFF for the YES/NO call) → seeds an execution task
    (goal+stance+tactic+mission_id+media_context) → MYRMIDON: ORPHEUS picks a **dynamic per-post
-   tactic** (post+thread mood vs stance → `amplify`|`soft_support`|`aggressive_displacement`|
-   `sentiment_shift`), then writes the comment (persona + RAG + memory + thread mood + **media
-   context** + explicit mission position, anti-echo, anti-repeat, regen) → posts it → registers a dialogue watch →
-   **swarm amplification**: mission-roster **beta** drops a cheap lite comment (inheriting the
-   alpha's tactic), **gamma** an emoji reaction.
+   tactic**. Stage 46: when the crowd is not already with us, ORPHEUS first QUOTES the strongest
+   line arguing against our side (verified present in the thread) and picks a **technique against
+   that objection** — `factual_correction` (only when the dossier holds facts) | `reframe` |
+   `concede_and_redirect` | `ask_evidence`; with no objection it falls back to the mood-derived
+   `amplify`|`soft_support`|`aggressive_displacement`|`sentiment_shift`. Stage 47: if answering
+   depends on something that CHANGES (score, price, today's news) it searches the web first and
+   weaves in what it read. Then it writes the comment (persona + RAG + memory + crowd mood +
+   **media context** + explicit mission position + the objection, anti-echo, anti-repeat, regen) →
+   posts it → registers a dialogue watch → **the team joins**: `support` answers the same objection
+   with a different technique, `closer` cools a hostile thread, a `gamma` caste reacts.
    *Also:* roster bots propose new mission targets from their own channels
    (`_suggest_targets_for_mission` → `/missions/internal/suggest-target`).
 3. **Conversations:** a watch on the bot's comment is polled; a real human reply → ORPHEUS
@@ -321,7 +367,20 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
    roles so old rosters keep working.
 5a. **Mission phases.** draft → recon → ready → active. `POST /missions/{id}/phase` REFUSES `active`
    while the dossier holds no fact: recon on mission #10 found its own key terms in 0 of 1252 facts,
-   i.e. the swarm was about to argue about transport with no fact about transport.
+   i.e. the swarm was about to argue about transport with no fact about transport. **The engines
+   read `phase`** (Stage 46) — while they read the legacy `status`, mission #10 sat in `recon` with
+   an empty case file and went on commenting in a real channel, because the gate only existed at
+   the moment of the transition. `status` is kept in step as the legacy mirror, and pausing returns
+   a mission to `ready` only if it still has facts (otherwise `draft`, or the label promises
+   something the gate will refuse).
+5aa. **Reconnaissance matches the SUBJECT, and searches when the base is empty** (Stage 47). A
+   mission's text is mostly its own argument, which no article repeats, so matching on all of it
+   asked the corpus for an article that argues our case. One short generation names the subject
+   («дороги, автобусы, метро»), the mission's place comes from its targets' channel profiles, and a
+   fact is admitted only if the subject is what it is ABOUT (named ≥3 times, or ≥2 distinct subject
+   words) AND it is about our place. Filing less than three facts triggers a web search for the
+   subject, after which the base is re-read. Measured end to end: mission #10 went from 0 facts to
+   6 relevant ones (4 from the corpus, 6 found online, junk rejected).
 5b. **The dossier is one memory for the roster.** Anti-repeat lived in
    `morpheus:recent_outputs:<agent>` — per AGENT — so alpha, beta and gamma could each play the same
    card in one thread. `mission_dossier` (fact | opponent | counter | said, `said` scoped to the post)
@@ -493,6 +552,32 @@ Reliability/locks: `morpheus:tg_lock:<agent>` (session lock), `morpheus:tg_coold
   guesses whose side it is on — and a contradiction between them (goal «Аргентина должна была
   выиграть» vs stance «Аргентина проиграла из-за тренера») yields comments arguing against the
   mission's own goal. Fill `our_side` / `opponent` / `key_points` / `red_lines`.
+- **Ask the model to QUOTE, not to judge.** «Найди главный довод против нас, или ответь НЕТ, если
+  никто не возражает» returned «НЕТ» **2/2** on a thread that plainly opposed us — the same refusal
+  reflex that made the old relevance gate say «нет» 50/50. «Кто здесь спорит с нашей позицией и
+  какими словами? Процитируй» returned the strongest opposing line 2/2, stably. Copying is far
+  easier for a 3B model than deciding, so "is there an objection at all" is answered by the mood
+  classification instead, and the quote is then verified against the thread (an argument nobody
+  made is a hallucination — the same rule as `places_in_text`).
+- **IDF cannot tell a topic from an ordinary word on a small scattered corpus.** Over 1594 facts
+  «развит» appears in 72, «трансп» in 54, «людей» in 21 — so a sum of weak matches always beats a
+  couple of strong ones. Three admission rules were measured in turn (share of the mission's
+  weight; normalisation by the top-3; two rare terms) and each ranked junk first: Samarkand's
+  hectares, a newspaper's anniversary, a boat sinking in Zimbabwe, mushrooms by the roadside.
+  What works is naming the subject with the model and requiring the article to be ABOUT it.
+- **A single subject word is regularly a homonym.** «трафик» admitted footfall in electronics
+  shops, «развяз» admitted «развязать войну». Hence ≥2 distinct subject words or ≥3 mentions.
+- **Judge the crowd, not yourself.** Mood and objection must be read over the thread WITHOUT our
+  own comments: measured in the polygon, after two runs nine of ours against eight of theirs
+  flipped the verdict to AGREE, and the extractor would have quoted a teammate as the opponent.
+- **Nothing cheap catches fluent nonsense.** The model sometimes emits fluent gibberish in a mixed
+  Turkic language under a Russian post, and it passes every guard. Measured and rejected: a
+  "Russian function words" rule (the gibberish scores 0.121 while 27 of 57 real comments score
+  0.000 — they are legitimately in English and Uzbek), and language identification
+  (`lingua` has neither Uzbek nor Kyrgyz among its 75 languages, calls the gibberish `slav` with
+  0.837 confidence, and would reject the 9-in-50 real cases where a human answers in Uzbek under a
+  Russian post — normal in Tashkent channels). This is the model's ceiling; a bigger
+  `TEXT_MODEL_NAME` is the fix, not another heuristic.
 - `app/main.py` registers signal handlers at import — guarded to main-thread only (daemon
   threads re-import it).
 - Mission DAG reconciler is legacy; it only touches `running`/`amplifying` so new

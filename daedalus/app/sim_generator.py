@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.models_simulation import (
     SimAccount,
     SimMissionDossier,
+    SimMissionOutcome,
     SimChannel,
     SimComment,
     SimEvent,
@@ -187,6 +188,69 @@ def record_said(db: Session, mission_id: Optional[int], post_id: Optional[int],
                              added_by=added_by or "system", post_id=post_id, times_used=1))
 
 
+# ── Outcome measurement (did the tone move, did anyone engage) ────────────
+
+def _mood_of(thread: list[SimComment], db: Session, our_side: str, post_text: str) -> Optional[str]:
+    """Ask ORPHEUS the crowd's stance toward our side over these comments."""
+    if not thread:
+        return None
+    rendered = "\n".join(
+        f"{comment_author_label(db, c)}: {(c.text or '')[:300]}" for c in thread[-14:])
+    res = request_generation({"mode": "mood", "our_side": our_side,
+                              "post_text": post_text[:400], "thread_context": rendered},
+                             timeout=90)
+    return res.get("mood") if res.get("status") == "ok" else None
+
+
+def measure_outcome(db: Session, mission: SimMission, post: SimPost,
+                    label: Optional[str] = None) -> dict[str, Any]:
+    """
+    Read the discussion the way the operator judges success: did the tone toward us
+    move, and did real people answer us.
+
+    The "after" reading is taken over the replies that came AFTER our first comment,
+    never over the whole thread. Measured on this very polygon: on a real 21-comment
+    thread one comment — and then a coordinated three — left the whole-thread verdict
+    at OPPOSE every time, because three replies among twenty-four cannot move an
+    average. A whole-thread reading would report "no effect" for any implementation
+    ever built, including a perfect one.
+
+    Nobody spoke after us → `mood_after` stays NULL. "We don't know" is honest;
+    "unchanged" would be invented.
+    """
+    rows = (db.query(SimComment)
+            .filter(SimComment.post_id == post.id, SimComment.status == "published")
+            .order_by(SimComment.id.asc()).all())
+    ours_at = next((i for i, c in enumerate(rows) if c.mission_id == mission.id), None)
+    if ours_at is None:
+        return {"status": "skipped", "reason": "Миссия ещё не выступала под этим постом."}
+
+    before = [c for c in rows[:ours_at] if c.mission_id != mission.id]
+    after = [c for c in rows[ours_at + 1:] if c.mission_id != mission.id]
+    ours = [c for c in rows if c.mission_id == mission.id]
+    our_side = (mission.our_side or mission.stance or mission.goal or "").strip()
+    post_text = (post.text or "").strip()
+
+    row = SimMissionOutcome(
+        mission_id=mission.id, post_id=post.id, label=label,
+        mood_before=_mood_of(before, db, our_side, post_text),
+        mood_after=_mood_of(after, db, our_side, post_text),
+        thread_size_before=len(before),
+        our_comments=len(ours),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "status": "ok", "id": row.id,
+        "mood_before": row.mood_before, "mood_after": row.mood_after,
+        "thread_size_before": row.thread_size_before,
+        "our_comments": row.our_comments,
+        # People who spoke after we did — the engagement half of the measure.
+        "replies_after": len(after),
+    }
+
+
 def system_rules(db: Session, world_id: int) -> list[str]:
     """Operator-authored system rules/prompts injected into every generation."""
     rows = (
@@ -307,8 +371,15 @@ def post_payload(post: SimPost) -> dict[str, Any]:
 
 
 def thread_payload(db: Session, post_id: int, limit: int = 12,
-                   branch_of: Optional[int] = None) -> list[dict[str, str]]:
-    """Existing published comments as conversation context (oldest → newest)."""
+                   branch_of: Optional[int] = None,
+                   mission_id: Optional[int] = None) -> list[dict]:
+    """
+    Existing published comments as conversation context (oldest → newest).
+
+    Each line is flagged ``ours`` when this mission wrote it: the writer must see the
+    whole discussion (so it does not repeat its own people), while the judge — the
+    crowd's stance, and which objection to answer — must not count us as the crowd.
+    """
     q = (
         db.query(SimComment)
         .filter(SimComment.post_id == post_id, SimComment.status == "published")
@@ -326,7 +397,8 @@ def thread_payload(db: Session, post_id: int, limit: int = 12,
         rows = list(reversed(chain)) or rows
     out = []
     for c in rows[-limit:]:
-        out.append({"author": comment_author_label(db, c), "text": (c.text or "")[:400]})
+        out.append({"author": comment_author_label(db, c), "text": (c.text or "")[:400],
+                    "ours": bool(mission_id and c.mission_id == mission_id)})
     return out
 
 
@@ -359,6 +431,9 @@ def build_request(
     temperature: Optional[float] = None,
     avoid: Optional[list[str]] = None,
     rag_limit: int = 4,
+    role: Optional[str] = None,
+    objection: str = "",
+    avoid_tactic: str = "",
 ) -> tuple[dict[str, Any], list[SimKnowledge]]:
     """Assemble one ORPHEUS request + return the RAG rows used (for the trace)."""
     channel = post.channel
@@ -382,7 +457,8 @@ def build_request(
         "mission": mission_payload(mission),
         "channel": channel_payload(channel),
         "post": post_payload(post),
-        "thread": thread_payload(db, post.id, branch_of=parent.id if parent else None),
+        "thread": thread_payload(db, post.id, branch_of=parent.id if parent else None,
+                                 mission_id=mission.id if mission else None),
         # Same shape production sends: what the team established, what the other side
         # argues, and what our people already said in THIS thread.
         "dossier": dossier,
@@ -393,6 +469,12 @@ def build_request(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "prompt_override": prompt_override or "",
+        # Stage 46 — the JOB this turn does, the objection the team is answering, and
+        # the technique already spent on it. Same three the live path carries between
+        # the opener and whoever answers after it.
+        "role": role or "",
+        "objection": objection or "",
+        "avoid_tactic": avoid_tactic or "",
     }
     if parent is not None:
         payload["incoming"] = {
@@ -444,6 +526,11 @@ def run_job_async(job_id: int) -> None:
     """Start a batch run in a daemon thread with its own DB session."""
     t = threading.Thread(target=_run_job, args=(job_id,), daemon=True, name=f"sim-job-{job_id}")
     t.start()
+
+
+# The order a team enters a discussion: open, then answer what was raised against it,
+# then take the heat out. After that it keeps answering — nobody needs two closers.
+_ROLE_BY_TURN = ("opener", "support", "closer", "support")
 
 
 def _pick_author(personas: list[SimPersona], accounts: list[SimAccount], idx: int,
@@ -517,6 +604,9 @@ def _run_job(job_id: int) -> None:
                          "draft": "draft"}.get(mode, "generated")
 
         produced: list[str] = []
+        # What the team established as it went: the objection it is answering and the
+        # technique last spent on it (so the next member does not repeat it).
+        objection, last_tactic = "", ""
         for i in range(count):
             if _is_cancelled(job_id):
                 job.status = "cancelled"
@@ -538,16 +628,25 @@ def _run_job(job_id: int) -> None:
                 )
 
             if persona is not None:
+                # Stage 46 — a mission run is a TEAM taking turns: someone opens, the
+                # next answers the objection that was actually raised (with a different
+                # technique), the third cools the thread down. Without this the polygon
+                # rehearsed one bot speaking three times.
+                role = _ROLE_BY_TURN[i % len(_ROLE_BY_TURN)] if mission else None
                 payload, facts = build_request(
                     db, world_id, persona, post,
                     mode="reply" if parent is not None else "comment",
                     mission=mission, parent=parent, prompt_override=prompt_override,
                     tone=tone, max_tokens=max_tokens, temperature=temperature,
                     avoid=produced[-5:],
+                    role=role, objection=objection, avoid_tactic=last_tactic,
                 )
                 result = request_generation(payload)
                 text = (result.get("text") or "").strip()
                 ok = result.get("status") == "ok" and bool(text)
+                # Carry what this turn established to the next one.
+                objection = objection or (result.get("objection") or "")
+                last_tactic = result.get("tactic") or last_tactic
                 comment = SimComment(
                     post_id=post.id, parent_id=parent.id if parent else None,
                     author_kind="persona", persona_id=persona.id,
@@ -558,6 +657,8 @@ def _run_job(job_id: int) -> None:
                         "prompt": result.get("prompt", ""),
                         "reason": result.get("reason", ""),
                         "tactic": result.get("tactic") or (mission.tactic if mission else ""),
+                        "role": result.get("role", ""),
+                        "objection": result.get("objection", ""),
                         "model": result.get("model", ""),
                         "rag": [{"id": f.id, "title": f.title, "content": f.content[:200]} for f in facts],
                         "job_id": job_id,
@@ -565,6 +666,12 @@ def _run_job(job_id: int) -> None:
                     published_at=_now() if (ok and target_status == "published") else None,
                 )
                 db.add(comment)
+                # File the argument into the mission's shared memory BEFORE the next
+                # member speaks. Without this a mission run — the one place the roster
+                # actually takes turns — had no common memory at all, and members two
+                # and three replayed the opener's line almost word for word.
+                if ok and mission is not None:
+                    record_said(db, mission.id, post.id, text, persona.codename)
                 db.commit()
                 if ok:
                     produced.append(text)

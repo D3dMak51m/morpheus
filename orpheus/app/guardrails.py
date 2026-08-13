@@ -13,7 +13,7 @@ from typing import Tuple, List
 logger = logging.getLogger("orpheus.guardrails")
 
 
-def _normalize(s: str) -> str:
+def normalize(s: str) -> str:
     """Lowercase, drop punctuation, collapse whitespace — for echo comparison."""
     return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (s or "").lower())).strip()
 
@@ -29,7 +29,7 @@ _STOPWORDS = {
 }
 
 
-def _content_words(norm: str) -> set:
+def content_words(norm: str) -> set:
     """Content tokens (length>2, not a stopword, not pure digits) for overlap."""
     return {w for w in norm.split() if len(w) > 2 and w not in _STOPWORDS and not w.isdigit()}
 
@@ -62,6 +62,45 @@ SPAM_MARKERS = [
     r"subscribe to",
     r"подписывайтесь на канал"
 ]
+
+# Scripts this swarm never legitimately mixes INTO a comment. Latin is deliberately
+# absent: brand names, handles and the odd "ok" inside Russian text are normal human
+# writing. A comment written wholly in one of these is fine too (the persona answers a
+# post in the post's own language) — what is not fine is a stray run of one inside a
+# comment written in another, which is the model leaking its training data mid-sentence
+# (`批评или ошибка`) and passing every check we had.
+_ALIEN_SCRIPTS = {
+    "CJK": (0x4E00, 0x9FFF),
+    "kana": (0x3040, 0x30FF),
+    "hangul": (0xAC00, 0xD7AF),
+    "arabic": (0x0600, 0x06FF),
+    "hebrew": (0x0590, 0x05FF),
+    "devanagari": (0x0900, 0x097F),
+    "thai": (0x0E00, 0x0E7F),
+}
+
+
+def _script_bleed(text: str) -> str:
+    """The name of a foreign script bleeding into a comment written in another, or ""."""
+    counts = {name: 0 for name in _ALIEN_SCRIPTS}
+    familiar = 0
+    for ch in text or "":
+        code = ord(ch)
+        if ("а" <= ch.lower() <= "я") or ch.lower() == "ё" or ("a" <= ch.lower() <= "z"):
+            familiar += 1
+            continue
+        for name, (lo, hi) in _ALIEN_SCRIPTS.items():
+            if lo <= code <= hi:
+                counts[name] += 1
+                break
+    alien = sum(counts.values())
+    if not alien:
+        return ""
+    # Written in that script → legitimate. Sprinkled into Cyrillic/Latin → bleed.
+    if alien > familiar:
+        return ""
+    return max(counts, key=counts.get)
+
 
 class OutputGuardrails:
     def __init__(self):
@@ -118,6 +157,14 @@ class OutputGuardrails:
             if marker in text_lower:
                 return False, f"Character slip detected: {marker}"
 
+        # 7. Foreign script bleeding into the comment (Stage 46). qwen2.5:3b drops runs
+        # of its training data mid-sentence — a published comment carried «批评или
+        # ошибка» and passed every check above, because nothing here had ever looked at
+        # the alphabet the words were written in.
+        bleed = _script_bleed(text)
+        if bleed:
+            return False, f"Foreign script ({bleed}) bleeding into the comment."
+
         return True, "Valid"
 
     def clean_output(self, text: str) -> str:
@@ -148,11 +195,11 @@ class OutputGuardrails:
         if ``text`` is a near-duplicate of, starts by copying, or fully contains any
         reference (the human's message / the post).
         """
-        t = _normalize(text)
+        t = normalize(text)
         if not t:
             return False
         for ref in references or []:
-            r = _normalize(ref)
+            r = normalize(ref)
             if len(r) < 8:
                 continue
             # Whole-message near-duplicate.
@@ -167,9 +214,9 @@ class OutputGuardrails:
                 return True
             # High content-word overlap (robust to inflection / word order): the
             # reply reuses most of the reference's meaningful words → it's parroting.
-            ref_cw = _content_words(r)
+            ref_cw = content_words(r)
             if len(ref_cw) >= 4:
-                shared = ref_cw & _content_words(t)
+                shared = ref_cw & content_words(t)
                 if len(shared) / len(ref_cw) >= 0.6:
                     return True
         return False
@@ -182,12 +229,12 @@ class OutputGuardrails:
         own recent outputs: a high whole-text similarity OR a high two-way overlap of
         meaningful words (same talking points, even if reworded) counts as a repeat.
         """
-        t = _normalize(text)
+        t = normalize(text)
         if not t:
             return False
-        t_cw = _content_words(t)
+        t_cw = content_words(t)
         for prev in history or []:
-            p = _normalize(prev)
+            p = normalize(prev)
             if len(p) < 12:
                 continue
             if SequenceMatcher(None, t, p).ratio() > 0.6:
@@ -196,7 +243,7 @@ class OutputGuardrails:
             # tell ("Как часто я тоскую…", "А если бы были…"). Force a new lead-in.
             if len(t) >= 18 and t[:18] == p[:18]:
                 return True
-            p_cw = _content_words(p)
+            p_cw = content_words(p)
             if len(t_cw) >= 4 and len(p_cw) >= 4:
                 shared = t_cw & p_cw
                 # min() so reusing most of either comment's key words trips it —

@@ -75,7 +75,24 @@ const TACTICS = [
   { value: 'soft_support', label: 'Мягкая поддержка' },
   { value: 'aggressive_displacement', label: 'Жёсткое вытеснение' },
 ];
-const ROLE_COLOR: Record<string, string> = { alpha: 'red', beta: 'blue', gamma: 'green' };
+// A role is the JOB a member does in the discussion (Stage 45/46). The old
+// alpha/beta/gamma said how expensive its generation was, so a "team" was one bot
+// speaking and two repeating it more cheaply. Legacy values still appear in existing
+// rosters, so they keep their colours and labels here.
+const ROLES = [
+  { value: 'opener', label: 'Открывающий', hint: 'первый содержательный довод под постом' },
+  { value: 'support', label: 'Ответчик', hint: 'отвечает на реально прозвучавшее возражение' },
+  { value: 'closer', label: 'Закрывающий', hint: 'снижает градус, когда ветка враждебна' },
+  { value: 'scout', label: 'Разведчик', hint: 'выясняет, что именно утверждают; сторон не занимает' },
+];
+const ROLE_LABEL: Record<string, string> = {
+  ...Object.fromEntries(ROLES.map(r => [r.value, r.label])),
+  alpha: 'alpha (устар.)', beta: 'beta (устар.)', gamma: 'gamma (устар.)',
+};
+const ROLE_COLOR: Record<string, string> = {
+  opener: 'teal', support: 'violet', closer: 'orange', scout: 'blue',
+  alpha: 'red', beta: 'blue', gamma: 'green',
+};
 const inferKind = (id: string) => (/\/\d+\/?$/.test(id) ? 'post' : 'channel');
 
 export default function MissionsScreen({ token, selectedId, onOpen, onBack, prefill, onPrefillConsumed, goTo }: Props) {
@@ -224,6 +241,11 @@ function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
   const [newTarget, setNewTarget] = useState('');
   const [eligible, setEligible] = useState<EligibleAgent[]>([]);
   const [pickAgent, setPickAgent] = useState(false);
+  // The job the picked agent will do. Chosen before opening the picker, so the list
+  // can be ranked by fit for THAT job.
+  const [pickRole, setPickRole] = useState('opener');
+  const [newFact, setNewFact] = useState('');
+  const [factError, setFactError] = useState('');
   const [saving, setSaving] = useState(false);
   // Sanity checks. A mission that argues with itself is not a typo — mission #14
   // («За аргентину», stance «проиграл из-за тренера») published a comment agreeing
@@ -317,8 +339,16 @@ function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
     if (r.ok) { apply(await r.json()); fetchEligible(); }
   };
   const autoAssign = async () => {
-    const r = await fetch(`/api/v1/missions/${m.id}/auto-assign`, { method: 'POST', headers, body: JSON.stringify({ alpha: 1, beta: 2, gamma: 1 }) });
+    // One who opens, one who answers the objection, one who cools a hostile thread.
+    const r = await fetch(`/api/v1/missions/${m.id}/auto-assign`, { method: 'POST', headers, body: JSON.stringify({ opener: 1, support: 1, closer: 1 }) });
     if (r.ok) apply(await r.json());
+  };
+  const addFact = async () => {
+    const content = newFact.trim(); if (!content) return;
+    setFactError('');
+    const r = await fetch(`/api/v1/missions/${m.id}/dossier`, { method: 'POST', headers, body: JSON.stringify({ kind: 'fact', content }) });
+    if (r.ok) { setNewFact(''); loadDossier(); }
+    else setFactError((await r.json()).detail || 'Не удалось добавить факт');
   };
   const remove = async () => {
     if (!confirm(`Удалить миссию «${m.title}»?`)) return;
@@ -434,9 +464,20 @@ function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
             </Text>
             {dossier.length === 0 && (
               <Alert color="yellow">
-                Досье пустое — миссия не выйдет в работу. Запустите разведку на вкладке «Обзор».
+                Досье пустое — миссия не выйдет в работу. Запустите разведку на вкладке «Обзор»,
+                а если корпус новостей эту тему не покрывает — впишите факт сами: разведка
+                находит только то, что в корпусе есть, и выдумывать за вас факт система не будет.
               </Alert>
             )}
+            <Group gap="xs" align="flex-start">
+              <TextInput style={{ flex: 1 }} placeholder="Установленный факт своими словами — попадёт в досье от вашего имени"
+                value={newFact} onChange={e => setNewFact(e.currentTarget.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addFact(); }} />
+              <Button variant="light" leftSection={<Plus size={15} />} onClick={addFact} disabled={!newFact.trim()}>
+                Добавить факт
+              </Button>
+            </Group>
+            {factError && <Alert color="red">{factError}</Alert>}
             {['fact', 'opponent', 'counter', 'said'].map(kind => {
               const rows = dossier.filter(d => d.kind === kind);
               if (!rows.length) return null;
@@ -538,15 +579,25 @@ function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
             <Group justify="space-between">
               <Text fw={600}>Ростер миссии</Text>
               <Group gap="xs">
+                <Select size="xs" w={190} data={ROLES.map(r => ({ value: r.value, label: r.label }))}
+                  value={pickRole} onChange={v => setPickRole(v || 'opener')} allowDeselect={false} />
                 <Button size="xs" variant="light" leftSection={<UserPlus size={14} />} onClick={() => setPickAgent(true)} disabled={freeEligible.length === 0}>Добавить агента</Button>
-                <Button size="xs" variant="default" leftSection={<Sparkles size={14} />} onClick={autoAssign}>Авто-набор (1α/2β/1γ)</Button>
+                <Button size="xs" variant="default" leftSection={<Sparkles size={14} />} onClick={autoAssign}>Авто-набор (роли)</Button>
               </Group>
             </Group>
+            <Text size="xs" c="dimmed">
+              Роль — это РАБОТА в обсуждении, а не объём генерации:{' '}
+              {ROLES.map(r => `${r.label.toLowerCase()} — ${r.hint}`).join('; ')}. Каста
+              (alpha/beta/gamma) осталась ценовым уровнем и живёт в карточке агента.
+            </Text>
             {m.squad.length === 0 ? <Text c="dimmed" size="sm">Агенты не назначены.</Text> : (
               <Stack gap="xs">{m.squad.map(s => (
                 <Paper key={s.id} withBorder p="sm" radius="md">
                   <Group justify="space-between">
-                    <Group gap="sm"><Badge color={ROLE_COLOR[s.assigned_role] || 'gray'} variant="light">{s.assigned_role}</Badge><Text ff="monospace" size="sm">{s.codename || s.agent_id}</Text></Group>
+                    <Group gap="sm">
+                      <Badge color={ROLE_COLOR[s.assigned_role] || 'gray'} variant="light">{ROLE_LABEL[s.assigned_role] || s.assigned_role}</Badge>
+                      <Text ff="monospace" size="sm">{s.codename || s.agent_id}</Text>
+                    </Group>
                     <Group gap="xs">
                       {goTo && <Button size="xs" variant="subtle" onClick={() => goTo('souls', s.agent_id)}>душа →</Button>}
                       <ActionIcon variant="subtle" color="red" onClick={() => removeAgent(s.id)}><X size={15} /></ActionIcon>
@@ -554,19 +605,27 @@ function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
                   </Group>
                 </Paper>))}</Stack>
             )}
-            <SimpleGrid cols={3} mt="xs">
-              {(['alpha', 'beta', 'gamma'] as const).map(c => (
-                <Paper key={c} withBorder p="xs" radius="md" ta="center">
-                  <Text size="xs" c="dimmed" tt="uppercase">{c}</Text>
-                  <Text fw={700} c={ROLE_COLOR[c]}>{m.squad.filter(s => s.assigned_role === c).length}</Text>
+            <SimpleGrid cols={4} mt="xs">
+              {ROLES.map(r => (
+                <Paper key={r.value} withBorder p="xs" radius="md" ta="center">
+                  <Text size="xs" c="dimmed">{r.label}</Text>
+                  <Text fw={700} c={ROLE_COLOR[r.value]}>{m.squad.filter(s => s.assigned_role === r.value).length}</Text>
                 </Paper>))}
             </SimpleGrid>
+            {m.squad.some(s => ['alpha', 'beta', 'gamma'].includes(s.assigned_role)) && (
+              <Text size="xs" c="dimmed">
+                В ростере остались старые касты — они продолжают работать (alpha открывает,
+                beta поддерживает дёшево, gamma ставит реакцию), но работу в обсуждении не
+                описывают. Переназначьте их, чтобы команда делила труд.
+              </Text>
+            )}
           </Stack>
         </Tabs.Panel>
       </Tabs>
 
       <EntityPicker
-        opened={pickAgent} onClose={() => setPickAgent(false)} title="Добавить агента в миссию"
+        opened={pickAgent} onClose={() => setPickAgent(false)}
+        title={`Кто будет делать работу «${ROLES.find(r => r.value === pickRole)?.label || pickRole}»`}
         rows={freeEligible} rowKey={e => e.agent_id}
         searchText={e => `${e.codename || ''} ${e.agent_id} ${e.caste}`}
         emptyText="Нет доступных агентов."
@@ -576,7 +635,7 @@ function MissionDetail({ token, mission, onBack, onChanged, onDeleted, goTo }: {
           { key: 'match', header: 'Совпадение', minWidth: 120, align: 'right', sortValue: e => e.match_score, render: e => `${Math.round(e.match_score * 100)}%` },
           { key: 'load', header: 'Загрузка', minWidth: 90, align: 'right', sortValue: e => e.active_mission_load, render: e => e.active_mission_load },
         ]}
-        onPick={e => enlist(e.agent_id, e.caste)}
+        onPick={e => enlist(e.agent_id, pickRole)}
       />
     </DetailPage>
   );

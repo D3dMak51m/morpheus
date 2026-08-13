@@ -32,7 +32,7 @@ from app.persona import (
     TACTIC_LABELS_RU,
     DYNAMIC_TACTIC,
 )
-from app.guardrails import OutputGuardrails
+from app.guardrails import OutputGuardrails, content_words, normalize
 from app.coordination import generate_beta_subtasks
 from app.simulation import handle_simulation_generation
 from app import textutil
@@ -428,6 +428,248 @@ def handle_relevance(req: dict, redis_client, persona_engine) -> None:
     _reply(redis_client, reply_key, result, ttl=120)
 
 
+# ── The objection actually raised ─────────────────────────────────────────
+#
+# Stage 46. Until now the per-post tactic came from one 3-way mood reading: the crowd
+# agrees / is neutral / opposes. That answers "what is the temperature here", never
+# "what are they actually arguing", so the roster answered a mood instead of a person.
+# A technique can only be chosen against a concrete objection, so the objection has to
+# be extracted first — and, like geography in the knowledge pipeline, VERIFIED against
+# the source text, because a 3B model will happily invent a plausible counter-argument
+# nobody in the thread made.
+
+# One word each, from a short closed list — the measured way to ask this model a
+# classification question (asking for JSON made it answer `false` for everything).
+OBJECTION_TECHNIQUES = ("факт", "рамка", "уступка", "основание")
+TECHNIQUE_BY_WORD = {
+    "факт": "factual_correction",
+    "рамка": "reframe",
+    "уступка": "concede_and_redirect",
+    "основание": "ask_evidence",
+}
+# Minimum share of the objection's content words that must appear in the thread for us
+# to believe the model read it there rather than composed it.
+OBJECTION_GROUNDING = float(os.getenv("OBJECTION_GROUNDING", "0.5"))
+
+
+def _build_objection_prompt(side: str, thread: str) -> str:
+    """
+    Ask the model to QUOTE the person arguing against us, not to judge whether anyone is.
+
+    Measured on a real imported thread (polygon post #21, 27 comments): the judging
+    form — "find the strongest argument against our position, or answer НЕТ if nobody
+    objects" — answered «НЕТ» 2/2, the same refusal reflex that made the old relevance
+    gate say «нет» in 50 of 50 calls. Asking for a QUOTE ("who is arguing with us and
+    in what words?") returned the strongest opposing line 2/2, stably. Copying is a
+    much easier task for a 3B model than deciding.
+
+    "Nobody objects" is therefore NOT this prompt's job: the caller only asks after the
+    mood reading says the crowd is not already on our side.
+    """
+    return (
+        f"Наша позиция: {(side or '(поддержка темы обсуждения)')[:300]}\n\n"
+        f"Комментарии:\n{thread[:900]}\n\n"
+        "Кто здесь спорит с нашей позицией и какими словами? Процитируй его реплику "
+        "дословно, одной строкой. Только цитата, ничего больше."
+    )
+
+
+# The model quotes the line with its author still attached («KXX_007: Все смотрят…»).
+_AUTHOR_PREFIX_RE = re.compile(r"^[^:\n]{1,40}:\s+")
+
+
+def _grounded_objection(candidate: str, thread: str) -> str:
+    """
+    Keep the extracted objection only if the thread actually contains it.
+
+    The check is the same shape as `places_in_text` in the knowledge pipeline: an
+    argument the source never made is a hallucination, not evidence — and answering
+    an invented objection is worse than answering none, because it puts words in the
+    opponent's mouth in public.
+    """
+    text = " ".join((candidate or "").split()).strip(" \"'«»")
+    text = _AUTHOR_PREFIX_RE.sub("", text).strip(" \"'«»")
+    if not text or len(text) < 12:
+        return ""
+    low = text.lower()
+    if low.startswith("нет") or low in ("no", "none", "-"):
+        return ""
+    # The tokeniser is guardrails' own: two definitions of "content word" would drift
+    # apart, and this check has to agree with the anti-echo one to mean anything.
+    words = content_words(normalize(text))
+    if not words:
+        return ""
+    in_thread = content_words(normalize(thread))
+    shared = words & in_thread
+    if len(shared) / len(words) < OBJECTION_GROUNDING:
+        logger.info("Objection discarded as ungrounded (%d/%d words in thread): %r",
+                    len(shared), len(words), text[:80])
+        return ""
+    return text[:300]
+
+
+def _crowd_thread(req: dict) -> str:
+    """
+    The discussion as the CROWD wrote it — our own comments removed when the reader
+    could tell them apart. Judging "what do they think of us" over a thread containing
+    our own replies reads as agreement with ourselves.
+    """
+    return ((req.get("crowd_context") or "").strip()
+            or (req.get("thread_context") or "").strip())
+
+
+def _extract_objection(req: dict) -> str:
+    """The strongest argument against our side that was actually made in this thread."""
+    thread = _crowd_thread(req)
+    if not thread:
+        return ""
+    position = req.get("position") or {}
+    side = (position.get("our_side") or "").strip() or (req.get("stance") or "").strip()
+    raw = generate_text(_build_objection_prompt(side, thread),
+                        max_tokens=80, temperature=0.2, penalties=False)
+    return _grounded_objection(raw, thread)
+
+
+def _technique_for(objection: str, side: str, has_facts: bool, avoid: str = "") -> str:
+    """
+    Pick the persuasion technique that answers THIS objection.
+
+    Deliberately one short word out of four, and `factual_correction` is offered only
+    when the dossier actually holds facts — telling a weak model to "correct with a
+    fact" it does not have is how you get an invented one. ``avoid`` drops the
+    technique a teammate already used on this objection: two people answering the same
+    objection the same way is the echo the roles exist to end.
+    """
+    options = [w for w in OBJECTION_TECHNIQUES
+               if (w != "факт" or has_facts) and TECHNIQUE_BY_WORD[w] != avoid]
+    if not options:
+        options = [w for w in OBJECTION_TECHNIQUES if w != "факт" or has_facts]
+    explain = {
+        "факт": "факт — возражение утверждает неверное, это опровергается фактами;",
+        "рамка": "рамка — спор о ценностях или критерии оценки, надо сменить угол;",
+        "уступка": "уступка — возражение частично справедливо, надо признать и перевести к своему;",
+        "основание": "основание — это голословное обобщение, надо спросить, на чём оно основано.",
+    }
+    prompt = (
+        "Наш человек отвечает на возражение в обсуждении. Выбери, КАК отвечать.\n\n"
+        f"Наша позиция: {(side or '(поддержка темы)')[:250]}\n"
+        f"Возражение: {objection[:250]}\n\n"
+        "Ответь ОДНИМ словом:\n"
+        + "\n".join(explain[w] for w in options)
+    )
+    raw = generate_text(prompt, max_tokens=6, temperature=0.2, penalties=False)
+    tokens = re.sub(r"[^а-яёa-z]", " ", (raw or "").lower()).split()
+    for tok in tokens[:3]:
+        for word in options:
+            if tok.startswith(word[:5]):
+                return TECHNIQUE_BY_WORD[word]
+    # Unreadable answer — or the one technique a teammate already spent. Fall back to
+    # the safest move STILL AVAILABLE: conceding-and-redirecting neither invents a fact
+    # nor escalates, but if that is the one being avoided, repeating it would rebuild
+    # the echo the roles exist to end.
+    for word in ("уступка", "рамка", "основание"):
+        if word in options:
+            return TECHNIQUE_BY_WORD[word]
+    return TECHNIQUE_BY_WORD[options[0]]
+
+
+# ── Going and finding out (Stage 47) ──────────────────────────────────────
+#
+# A model cannot know a score, a price or today's news: those are absent from its
+# training data by definition, and from the swarm's corpus until some feed happens to
+# mention them. Answering anyway is invention — the exact failure the operator named.
+# So before writing, the agent may go and look, through DAEDALUS (which files whatever
+# it reads, so the whole swarm learns it, not just this one comment).
+
+DAEDALUS_URL = os.getenv("DAEDALUS_URL", "http://daedalus:8000")
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
+LOOKUP_URL = f"{DAEDALUS_URL}/api/v1/knowledge/internal/lookup"
+LOOKUP_TIMEOUT = float(os.getenv("LOOKUP_TIMEOUT_SEC", "90"))
+LOOKUP_CACHE_TTL = int(os.getenv("LOOKUP_CACHE_TTL_SEC", "1800"))
+# Words that mark a question about something that CHANGES. A cheap pre-filter: no
+# point spending an LLM call, a search and two page reads on a post that carries no
+# such question at all.
+_VOLATILE_MARKERS = (
+    "счёт", "счет", "сколько", "цена", "цены", "стоит", "курс", "когда", "сегодня",
+    "вчера", "результат", "выиграл", "проиграл", "победил", "who won", "score",
+    "price", "статистика", "данные", "правда что", "уже", "последн",
+)
+
+
+def _needs_fresh_data(req: dict) -> bool:
+    """
+    Would answering here require something that changes — and that we may not know?
+
+    Two gates on purpose. A keyword pre-filter costs nothing and rejects the ordinary
+    post; only then is the model asked, one word, penalties off (the measured way to
+    ask this model anything short).
+    """
+    if req.get("lite"):
+        return False
+    subject = " ".join([(req.get("incoming_text") or ""), (req.get("post_text") or "")]).lower()
+    if not subject.strip():
+        return False
+    if not any(m in subject for m in _VOLATILE_MARKERS):
+        return False
+    answer = generate_text(
+        "Вот сообщение, на которое наш человек собирается ответить.\n\n"
+        f"«{subject[:400]}»\n\n"
+        "Чтобы ответить по существу, нужны ли СВЕЖИЕ данные из интернета — то, что "
+        "меняется со временем: счёт матча, цена, курс, результат, свежая новость?\n"
+        "Ответь одним словом: ДА или НЕТ.",
+        max_tokens=4, temperature=0.1, penalties=False,
+    )
+    verdict = _parse_verdict(answer) == "yes"
+    logger.info("Fresh-data gate → %s (llm=%r)", verdict, (answer or "").strip()[:16])
+    return verdict
+
+
+def _lookup_query(req: dict) -> str:
+    """What to search for: the concrete thing being discussed, in its own place."""
+    text = " ".join([(req.get("incoming_text") or ""), (req.get("post_text") or "")])
+    terms = textutil.keywords(text, limit=6, min_len=4)
+    profile = req.get("channel_profile") or {}
+    place = (profile.get("geo_label") or "").split(",")[0].strip()
+    return " ".join(x for x in ([place] + terms) if x)[:120]
+
+
+def _fetch_fresh(req: dict, redis_client) -> list:
+    """
+    Search the web for what this discussion is about; return compact findings.
+
+    Cached per query for half an hour: a roster answering the same post must not pay
+    for the same search three times, and the second agent asking the same question a
+    minute later would get the same answer anyway.
+    """
+    query = _lookup_query(req)
+    if len(query) < 6:
+        return []
+    cache_key = "morpheus:lookup:" + str(abs(hash(query)))
+    try:
+        cached = redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
+    try:
+        with httpx.Client(timeout=LOOKUP_TIMEOUT) as client:
+            r = client.post(LOOKUP_URL, json={"query": query, "read_pages": 2, "recent": True},
+                            headers={"X-Internal-Token": INTERNAL_API_TOKEN})
+            r.raise_for_status()
+            findings = (r.json() or {}).get("findings") or []
+    except Exception as exc:
+        # No search is not a reason to stall — it is a reason to answer from what we
+        # already know, and to say nothing about what we do not.
+        logger.warning("Lookup failed for %r: %s", query[:60], exc)
+        return []
+    try:
+        redis_client.setex(cache_key, LOOKUP_CACHE_TTL, json.dumps(findings, ensure_ascii=False))
+    except Exception:
+        pass
+    logger.info("Lookup %r → %d finding(s)", query[:60], len(findings))
+    return findings
+
+
 def _reply(redis_client, reply_key: Optional[str], payload: dict, ttl: int = 300) -> None:
     """Push a request/reply answer back to the caller (best-effort)."""
     if not reply_key:
@@ -441,11 +683,15 @@ def _reply(redis_client, reply_key: Optional[str], payload: dict, ttl: int = 300
 
 def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
     """
-    When a mission leaves its tactic as 'dynamic', pick a per-post tactic from the
-    mood of the post + existing thread comments judged against the mission's stance.
-    Cognitive (alpha) seed path only — a beta runs the cheap 'lite' branch and
-    inherits the alpha's tactic via the seed task, and replies keep their default.
-    Returns the chosen tactic, or None when no selection was made (keep as-is).
+    When a mission leaves its tactic as 'dynamic', pick what this comment should DO.
+
+    Stage 46 — the choice is made against the objection actually raised in the thread,
+    and only falls back to the mood-derived tactic when nobody argued against us. The
+    mood reading itself stays: it is the "before" half of the outcome measure and must
+    keep using the same prompt as the later re-reading.
+
+    Cognitive path only — a `lite` beta inherits the seed's choice, replies keep their
+    default. Returns the chosen tactic, or None when no selection was made.
     """
     tactic = (req.get("tactic") or "").strip().lower()
     if tactic not in ("", DYNAMIC_TACTIC):
@@ -460,8 +706,11 @@ def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
     # a free-text stance is often a tag salad the model cannot read as a position.
     position = req.get("position") or {}
     side = (position.get("our_side") or "").strip() or (req.get("stance") or "").strip()
+    # The crowd's stance is read over the CROWD: on a thread the mission has already
+    # worked, our own comments would otherwise vote for us (measured in the polygon —
+    # nine of ours against eight of theirs flipped the verdict to AGREE).
     raw = generate_text(
-        build_mood_prompt(side, thread, post_text),
+        build_mood_prompt(side, _crowd_thread(req), post_text),
         max_tokens=6, temperature=0.2, penalties=False,
     )
     # Stage 42 — keep the verdict itself, not just the tactic derived from it. The
@@ -474,6 +723,24 @@ def _resolve_dynamic_tactic(req: dict) -> Optional[str]:
             verdict = m
             break
     req["_mood"] = verdict
+
+    # A teammate may already have established what the other side argues here (the
+    # opener's extraction travels to the support member with the seed), in which case
+    # we answer the same objection — with a different technique.
+    #
+    # The mood verdict is the gate for asking at all: the extraction prompt QUOTES the
+    # person arguing with us rather than judging whether anyone is (a weak model
+    # refuses that judgement — measured 2/2 «НЕТ» on a thread that plainly contained
+    # opposition), so on a crowd already agreeing with us it would dutifully quote a
+    # friend and invent a fight.
+    objection = " ".join((req.get("objection") or "").split())
+    if not objection and verdict != "AGREE":
+        objection = _extract_objection(req)
+        req["objection"] = objection
+    if objection:
+        has_facts = bool((req.get("dossier") or {}).get("fact"))
+        return _technique_for(objection, side, has_facts,
+                              avoid=(req.get("avoid_tactic") or "").strip())
     return tactic_from_mood(raw, post_text, thread)
 
 
@@ -519,10 +786,32 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
         chosen_tactic = _resolve_dynamic_tactic(req)
         if chosen_tactic:
             req["tactic"] = chosen_tactic
-            logger.info("Mission-gen %s — dynamic tactic → %s.", request_id, chosen_tactic)
+            logger.info("Mission-gen %s — dynamic tactic → %s (objection=%r).",
+                        request_id, chosen_tactic, (req.get("objection") or "")[:60])
+            objection = (req.get("objection") or "").strip()
             emit_event(agent_id, "tactic",
-                       "тактика по настроению ветки: " + TACTIC_LABELS_RU.get(chosen_tactic, chosen_tactic),
+                       (f"возражение «{objection[:50]}» → " if objection
+                        else "тактика по настроению ветки: ")
+                       + TACTIC_LABELS_RU.get(chosen_tactic, chosen_tactic),
                        status="info", target=req.get("target_url") or req.get("author") or "")
+
+        # Stage 47 — if answering here means knowing something that changes (a score, a
+        # price, today's news), go and find it out rather than invent it. Everything
+        # read is filed, so the swarm knows it next time without searching again.
+        if _needs_fresh_data(req):
+            emit_event(agent_id, "lookup", "ищет свежие данные в интернете",
+                       status="active", target=req.get("target_url") or "")
+            findings = _fetch_fresh(req, redis_client)
+            req["fresh_findings"] = findings
+            if findings:
+                emit_event(agent_id, "lookup",
+                           f"нашёл {len(findings)}: " + (findings[0].get("title") or "")[:50],
+                           status="ok", target=(findings[0].get("url") or "")[:200])
+            else:
+                # Saying nothing is the correct outcome of a failed search. The prompt
+                # gets no block, so the model has nothing to "remember" incorrectly.
+                emit_event(agent_id, "lookup", "свежих данных не нашлось — отвечает по памяти",
+                           status="warn", target=req.get("target_url") or "")
 
         # Anti-repeat: load the agent's own recent comments, feed them into the
         # prompt, and (alpha path) reject drafts that just rehash them.
@@ -568,6 +857,10 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
                 # mission's beta/gamma amplification (squad coherence).
                 result = {"status": "ok", "text": final_text, "reason": "",
                           "tactic": req.get("tactic"),
+                          # What the other side is actually arguing here — filed into
+                          # the mission's dossier and handed to the teammate who
+                          # answers it, so the roster argues with people, not moods.
+                          "objection": req.get("objection") or "",
                           # The crowd's stance toward us at the moment we entered.
                           "mood": req.get("_mood"),
                           "thread_size": req.get("thread_size") or 0}

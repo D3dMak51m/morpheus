@@ -53,6 +53,13 @@ DAEDALUS_URL = "http://daedalus:8000"
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 
 EXECUTION_TASKS_QUEUE = "queue:execution_tasks"
+# Stage 46 — tasks waiting out their human-pacing delay, scored by the unix time they
+# become due. The delay used to be slept inside the single consumer loop, so ONE task
+# held every agent and every channel for its full delay: four unpublishable tasks
+# (targeting "Self") once kept a real mission comment waiting 36 minutes. Waiting is
+# now a property of the task, not of the worker.
+SCHEDULED_TASKS_KEY = "morpheus:exec:scheduled"
+SCHEDULER_TICK_SEC = float(os.getenv("EXEC_SCHEDULER_TICK_SEC", "2"))
 # Stage 25 — ask ORPHEUS to write a real, context-aware mission comment.
 MISSION_GEN_QUEUE = "queue:mission_gen"
 ORPHEUS_GEN_TIMEOUT = int(os.getenv("ORPHEUS_GEN_TIMEOUT_SEC", "150"))
@@ -268,6 +275,98 @@ def _log_activity_to_daedalus(task: dict, status: str) -> None:
         logger.error("Failed to log activity to Daedalus: %s", exc)
 
 
+# ── Execution pacing (the queue must not wait with the task) ──────────────
+
+def unpublishable_reason(task: dict) -> Optional[str]:
+    """
+    Why this task can never publish — checked before it is allowed to occupy time.
+
+    Observed live: four tasks targeting "Self" (a leftover of the dead mobile "post to
+    your own feed" path) sat in front of a real mission comment carrying 725 + 5 +
+    1314 + 120 seconds of pacing delay between them. A comment needs a POST to hang
+    off, and `parse_target("Self")` returns a truthy ref with no post id — so the pair
+    must be checked, not just the ref.
+    """
+    if task.get("target_platform") != "telegram" or task.get("action_type") != "comment":
+        return None
+    from app.drivers.tg_client import parse_target
+    raw_target = task.get("target_url", "")
+    chat_ref, post_id = parse_target(raw_target)
+    if not chat_ref or not post_id:
+        return f"{raw_target!r} is not a commentable post"
+    return None
+
+
+def _due_or_defer(redis_client, task: dict) -> bool:
+    """
+    True when the task may run now; False when it was parked until it is due.
+
+    The human-pacing delay is a property of the TASK, so it is waited out in a sorted
+    set rather than by the single consumer thread — one agent's 20-minute delay used to
+    stop every other agent and every other channel for those 20 minutes.
+    """
+    now = time.time()
+    not_before = task.get("_not_before")
+    if not_before is None:
+        delay = float(task.get("execution_delay_sec") or 0)
+        if delay <= 0:
+            return True
+        not_before = now + delay
+        task["_not_before"] = not_before
+    if float(not_before) <= now:
+        return True
+    try:
+        redis_client.zadd(SCHEDULED_TASKS_KEY,
+                          {json.dumps(task, ensure_ascii=False): float(not_before)})
+        logger.info("Task %s — due in %ds; parked (queue stays free).",
+                    task.get("task_id"), int(float(not_before) - now))
+    except Exception as exc:
+        # Rather than lose the task, run it now: publishing a little early is a much
+        # smaller fault than dropping a comment the mission already paid to generate.
+        logger.error("Task %s — could not park (%s); running immediately.", task.get("task_id"), exc)
+        return True
+    return False
+
+
+def _release_due_tasks(redis_client) -> int:
+    """Move every task whose time has come back onto the execution queue."""
+    released = 0
+    try:
+        due = redis_client.zrangebyscore(SCHEDULED_TASKS_KEY, 0, time.time(), start=0, num=32)
+    except Exception as exc:
+        logger.debug("scheduler: cannot read %s: %s", SCHEDULED_TASKS_KEY, exc)
+        return 0
+    for member in due or []:
+        try:
+            # ZREM first: whoever removes it owns it, so a restart mid-tick cannot
+            # queue the same comment twice.
+            if redis_client.zrem(SCHEDULED_TASKS_KEY, member):
+                redis_client.lpush(EXECUTION_TASKS_QUEUE, member)
+                released += 1
+        except Exception as exc:
+            logger.warning("scheduler: failed to release a due task: %s", exc)
+    return released
+
+
+def _scheduler_loop(redis_client) -> None:
+    while not _shutdown_requested:
+        try:
+            n = _release_due_tasks(redis_client)
+            if n:
+                logger.info("scheduler: released %d due task(s).", n)
+        except Exception:
+            logger.exception("scheduler: unexpected error")
+        time.sleep(SCHEDULER_TICK_SEC)
+
+
+def start_task_scheduler(redis_client) -> None:
+    """Background thread that hands tasks back to the queue when they come due."""
+    t = _threading.Thread(target=_scheduler_loop, args=(redis_client,),
+                          daemon=True, name="exec-scheduler")
+    t.start()
+    logger.info("Execution scheduler started (tick=%.1fs).", SCHEDULER_TICK_SEC)
+
+
 def _dossier_fetch(mission_id, post_url: str) -> dict:
     """The mission's case file for this discussion (facts, opponent lines, what we said)."""
     if not mission_id:
@@ -284,6 +383,27 @@ def _dossier_fetch(mission_id, post_url: str) -> dict:
         return {}
 
 
+def _dossier_file(mission_id, kind: str, content: str, added_by: str,
+                  post_url: str = "", related_id=None) -> Optional[int]:
+    """One entry into the mission's shared case file. Returns its id, or None."""
+    if not mission_id or not (content or "").strip():
+        return None
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(f"{DAEDALUS_URL}/api/v1/missions/internal/dossier",
+                            json={"mission_id": mission_id, "kind": kind,
+                                  "content": content.strip()[:600],
+                                  "added_by": added_by or "system",
+                                  "post_url": post_url or "",
+                                  "related_id": related_id},
+                            headers={"X-Internal-Token": INTERNAL_API_TOKEN})
+            r.raise_for_status()
+            return r.json().get("id")
+    except Exception as exc:
+        logger.debug("dossier %s-record failed: %s", kind, exc)
+        return None
+
+
 def _dossier_record_said(task: dict, text: str) -> None:
     """
     Log the argument we just deployed into the mission's shared memory.
@@ -292,18 +412,15 @@ def _dossier_record_said(task: dict, text: str) -> None:
     roster's alpha, beta and gamma could each play the same card in the same thread
     without knowing. One file per mission is what makes them a team.
     """
-    if not task.get("mission_id") or not (text or "").strip():
-        return
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            client.post(f"{DAEDALUS_URL}/api/v1/missions/internal/dossier",
-                        json={"mission_id": task.get("mission_id"), "kind": "said",
-                              "content": text.strip()[:600],
-                              "added_by": task.get("agent_id") or "system",
-                              "post_url": task.get("target_url") or ""},
-                        headers={"X-Internal-Token": INTERNAL_API_TOKEN})
-    except Exception as exc:
-        logger.debug("dossier said-record failed: %s", exc)
+    _dossier_file(task.get("mission_id"), "said", text,
+                  task.get("agent_id") or "system", task.get("target_url") or "")
+    # An argument that answers a specific objection is also our COUNTER to it — kept
+    # linked to the objection so the case file reads as a debate, not a pile of lines.
+    objection_id = task.get("objection_id")
+    if objection_id and task.get("role") in ("support", "closer"):
+        _dossier_file(task.get("mission_id"), "counter", text,
+                      task.get("agent_id") or "system", task.get("target_url") or "",
+                      related_id=objection_id)
 
 
 def _record_outcome_entry(task: dict, mood: str, thread_size: int) -> None:
@@ -345,7 +462,7 @@ def _get_gen_redis() -> redis.Redis:
 
 
 def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread_context: str = "",
-                                 media_context: str = "") -> str:
+                                 media_context: str = "", crowd_context: str = "") -> str:
     """
     Ask ORPHEUS to write a real comment from the post context, the *mood of the
     discussion thread*, the *media context* (what the post's photos show / audio
@@ -367,6 +484,10 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         # Prefer the thread the driver just read; fall back to the one captured when
         # the engine picked this post (so the tactic is never decided on emptiness).
         "thread_context": thread_context or task.get("thread_context") or "",
+        # The same thread WITHOUT our own people. Judging the crowd's stance — and
+        # which objection to answer — over a thread we have already worked reads our
+        # own comments as agreement and can quote a teammate as the opponent.
+        "crowd_context": crowd_context or task.get("crowd_context") or "",
         "media_context": media_context or "",
         "channel_profile": task.get("channel_profile"),  # ground the comment in the channel
         "narrative_goal": task.get("narrative_goal") or "",
@@ -381,6 +502,11 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
         "role": task.get("role") or "alpha",
         "forced_context": task.get("forced_context"),
         "alpha_context": task.get("alpha_context"),
+        # Stage 46 — what the other side argues here. The opener extracts it; the
+        # teammate answering it receives it (and the technique already spent on it, so
+        # it picks a different one) instead of paying for the extraction again.
+        "objection": task.get("objection") or "",
+        "avoid_tactic": task.get("avoid_tactic") or "",
         "lite": task.get("lite", False),
     }
     try:
@@ -399,11 +525,24 @@ def generate_comment_via_orpheus(task: dict, post_text: str, author: str, thread
             resolved_tactic = data.get("tactic")
             if resolved_tactic and resolved_tactic != "dynamic":
                 task["tactic"] = resolved_tactic
+            # Stage 46 — the objection ORPHEUS read out of the live thread (and
+            # verified against it). File it once, then carry it — with its dossier id —
+            # so the teammate who answers it can be linked to what it answers.
+            objection = (data.get("objection") or "").strip()
+            if objection and not task.get("objection"):
+                task["objection"] = objection
+                task["objection_id"] = _dossier_file(
+                    task.get("mission_id"), "opponent", objection,
+                    task.get("agent_id") or "system", task.get("target_url") or "")
             # Stage 42 — the crowd's stance toward us at the moment we entered. This is
             # the "before" half of the operator's success measure (did the tone move?),
             # recorded once per discussion when the mission first speaks there.
-            if data.get("mood") and task.get("mission_id"):
-                _record_outcome_entry(task, data.get("mood"), data.get("thread_size") or 0)
+            if data.get("mood"):
+                # Kept on the task as well: the roster's closer only speaks into a
+                # thread that turned hostile, and that is what "hostile" means here.
+                task["mood"] = data.get("mood")
+                if task.get("mission_id"):
+                    _record_outcome_entry(task, data.get("mood"), data.get("thread_size") or 0)
             logger.info("Task %s — ORPHEUS comment ready (%d chars).", task.get("task_id"), len(data["text"]))
             return data["text"]
         logger.warning("Task %s — ORPHEUS returned no text (%s); using fallback.", task.get("task_id"), data.get("reason"))
@@ -428,7 +567,6 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
     platform = task.get("target_platform", "unknown")
     action_type = task.get("action_type", "comment")
     text_to_publish = task.get("text_to_publish", "")
-    execution_delay = task.get("execution_delay_sec", 45)
 
     logger.info(
         "Executing task %s: agent=%s, platform=%s, action=%s",
@@ -461,30 +599,9 @@ def execute_task(task: dict, db_session_factory: sessionmaker) -> None:
 
         configure_proxy(proxy)
 
-    # Step 2a: Reject an unusable target BEFORE sleeping on it.
-    #
-    # The delay is slept in the single consumer loop, so a task that can never succeed
-    # still holds the whole swarm hostage for its full pacing delay. Observed live: four
-    # tasks with target "Self" (a leftover from the mobile "post to your own feed" path)
-    # sat in front of a real mission comment with 725 + 5 + 1314 + 120 seconds of delay
-    # between them — 36 minutes of queue blocked to publish nothing at all.
-    if platform == "telegram" and action_type == "comment":
-        from app.drivers.tg_client import parse_target
-        raw_target = task.get("target_url", "")
-        chat_ref, post_id = parse_target(raw_target)
-        # A comment needs a POST to hang off. `parse_target("Self")` yields a truthy
-        # ref with no post id, so checking the ref alone would let it through — which
-        # is exactly how four unpublishable tasks got to sleep 36 minutes between them.
-        if not chat_ref or not post_id:
-            logger.error("Task %s FAILED — %r is not a commentable post; dropping "
-                         "instead of waiting %ds on it.", task_id, raw_target, execution_delay)
-            _log_activity_to_daedalus(task, "FAILED")
-            return
-
-    # Step 2: Apply execution delay (mimics human reading + thinking)
-    if execution_delay > 0:
-        logger.info("Task %s — waiting %ds before execution...", task_id, execution_delay)
-        time.sleep(execution_delay)
+    # The human-pacing delay was already waited out by the scheduler (see
+    # `_due_or_defer`), and the target was checked before that — neither happens on
+    # this thread any more, because both used to block every other agent.
 
     # Step 3: Route to platform-specific driver
     if platform == "telegram":
@@ -537,8 +654,10 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
         gen_holder = {"text": ""}
         text_provider = None
         if task.get("generate"):
-            def text_provider(post_text, author, thread_context="", media_context=""):
-                t = generate_comment_via_orpheus(task, post_text, author, thread_context, media_context)
+            def text_provider(post_text, author, thread_context="", media_context="",
+                              crowd_context=""):
+                t = generate_comment_via_orpheus(task, post_text, author, thread_context,
+                                                 media_context, crowd_context)
                 gen_holder["text"] = t or ""
                 return t
 
@@ -570,7 +689,11 @@ def _execute_telegram(task: dict, credentials: dict) -> None:
                     target_health.report_success(ref, task.get("mission_id"))
                     # The argument is now part of the mission's shared memory, so the
                     # rest of the roster does not replay it in this same thread.
-                    _dossier_record_said(task, text_to_publish)
+                    # NB: mission tasks carry no canned text (`text_to_publish` is ""
+                    # by design — cognitive only), so filing that variable recorded
+                    # nothing at all: `mission_dossier` stayed empty on live data and
+                    # the "one memory for the roster" was a memory of silence.
+                    _dossier_record_said(task, gen_holder["text"] or text_to_publish)
                 else:
                     raw = driver.last_failure or "публикация не удалась"
                     verdict, reason, scope = target_health.report_failure(
@@ -704,6 +827,10 @@ def main() -> None:
 
     redis_client = connect_redis()
 
+    # Hands paced tasks back to the queue when they come due, so waiting never blocks
+    # the swarm (a separate client: the loop's own is busy in BRPOP).
+    start_task_scheduler(connect_redis())
+
     # Start the Device API HTTP server in a background thread
     try:
         from app.device_api import start_device_api_server
@@ -776,6 +903,16 @@ def main() -> None:
                 task_data = json.loads(task_json)
             except json.JSONDecodeError as exc:
                 logger.error("Malformed task JSON: %s", exc)
+                continue
+
+            # Drop what can never publish before it costs anyone anything, then let a
+            # task that is not due yet wait in the scheduler instead of on this thread.
+            reason = unpublishable_reason(task_data)
+            if reason:
+                logger.error("Task %s FAILED — %s; dropping.", task_data.get("task_id"), reason)
+                _log_activity_to_daedalus(task_data, "FAILED")
+                continue
+            if not _due_or_defer(redis_client, task_data):
                 continue
 
             execute_task(task_data, db_session_factory)

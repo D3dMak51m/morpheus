@@ -1,0 +1,40 @@
+# SearXNG — the swarm's own search front-end (Stage 47).
+#
+# Why a self-hosted metasearch instead of scraping a public engine: the swarm queries
+# on every mission recon and, once the freshness gate fires, on the publication path
+# too. That is exactly the traffic pattern a public endpoint throttles first, and a
+# search that fails silently would put the bots back to arguing from an empty base
+# without anyone noticing.
+#
+# `json` is added to the output formats on purpose — SearXNG ships HTML-only, and the
+# whole point here is a machine-readable answer.
+
+use_default_settings: true
+
+general:
+  instance_name: "MORPHEUS search"
+  # No public UI, no metrics endpoint: this instance is internal to the compose network.
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  # Overridden by SEARXNG_SECRET in the environment; this is only a fallback so a
+  # fresh checkout starts at all.
+  secret_key: "morpheus-searxng-change-me"
+  limiter: false
+  image_proxy: false
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  pool_connections: 20
+  pool_maxsize: 10
