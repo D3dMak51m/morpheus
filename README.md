@@ -233,8 +233,16 @@ search and page reading, wired into reconnaissance (which now names the mission'
 model, because IDF over a scattered corpus cannot) and into the publication path behind a
 freshness gate. Everything read is filed, so a lookup improves the corpus permanently.
 
-Next focus: the **functional / swarm logic** (ORPHEUS cognition, MYRMIDON engines, mission pipeline,
-RAG, channel profiling, conversations). The text model is small (`qwen2.5:3b`) and it is now the
-binding constraint: it invents names, and it occasionally emits fluent nonsense that no cheap
-guard can catch — lexical, statistical and language-identification tests were each measured and
-rejected. A larger `TEXT_MODEL_NAME` is the fix; the prompts and guards are model-agnostic.
+**Stage 48 — the whole system tested, audited and planned — ✅**: a full end-to-end pass (every
+subsystem, a live publication to a real channel, the polygon, all 20 console screens) found and
+fixed four defects in flight, including one deadlock that stopped the execution loop. Three audits
+followed — `SYSTEM_STATE.md` (what works and what it costs), `FUNCTIONAL_GAPS.md` (what the swarm
+cannot do, compared against Generative Agents / AgentSociety / OASIS / CrewAI) and `CODE_AUDIT.md`
+(code quality, with `pyproject.toml` + `tools/check_architecture.py` added to enforce the rules).
+
+**Current plan of record: `ROADMAP.md`** — foundation → personas → autonomy → technical debt.
+Model replacement and hardware upgrades are postponed by the operator; UX/UI comes afterwards.
+The text model (`qwen2.5:3b`) remains the ceiling on text quality: it invents facts and sometimes
+emits fluent nonsense that no cheap guard can catch — lexical, statistical and language-identification
+detectors were each measured and rejected. The prompts and guards are model-agnostic, so a larger
+`TEXT_MODEL_NAME` is a drop-in improvement whenever the operator chooses.

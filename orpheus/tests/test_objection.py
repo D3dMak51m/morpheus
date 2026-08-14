@@ -181,3 +181,12 @@ def test_the_objection_reaches_the_prompt():
         assert "Возражение" in prompt
     finally:
         PROFILES_CACHE.pop("agent-x", None)
+
+
+def test_the_allys_line_counts_as_an_echo():
+    """Найдено в бою: «ответчик» опубликовал реплику открывающего слово в слово.
+    Текст союзника приходит в `alpha_context`, и сравнивать надо с ним тоже."""
+    from app.guardrails import OutputGuardrails
+    g = OutputGuardrails()
+    ally = "一秒的拥堵，却要忍受四十分钟。地铁解决不了所有问题啊！"
+    assert g.is_echo(ally, ["", "Мэрия обсуждает расширение проспекта", ally])

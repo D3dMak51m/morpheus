@@ -80,6 +80,48 @@ _ALIEN_SCRIPTS = {
 }
 
 
+def _dominant_alien(text: str) -> str:
+    """The alien script this text is WRITTEN IN, or "" if it is not."""
+    counts = {name: 0 for name in _ALIEN_SCRIPTS}
+    familiar = 0
+    for ch in text or "":
+        code = ord(ch)
+        if ("а" <= ch.lower() <= "я") or ch.lower() == "ё" or ("a" <= ch.lower() <= "z"):
+            familiar += 1
+            continue
+        for name, (lo, hi) in _ALIEN_SCRIPTS.items():
+            if lo <= code <= hi:
+                counts[name] += 1
+                break
+    alien = sum(counts.values())
+    if alien >= 4 and alien > familiar:
+        return max(counts, key=counts.get)
+    return ""
+
+
+def script_mismatch(text: str, reference: str) -> str:
+    """
+    The comment is written in an alien script while the post it answers is not.
+
+    Measured live: the swarm published a comment entirely in Chinese under a Russian
+    post about Tashkent's city hall — and `_script_bleed` passed it, because that check
+    only catches an alien run INSIDE familiar text; a comment written wholly in one is
+    legitimate (a persona answers an English post in English).
+
+    Deliberately restricted to the scripts that never legitimately appear here. Latin
+    versus Cyrillic is NOT a mismatch: Uzbek is written in both, and answering a Russian
+    post in Latin-script Uzbek is normal in Tashkent channels (measured: 9 of 50 real
+    pairs). That is also why this is a SCRIPT test and not language identification,
+    which was measured and rejected for exactly those cases.
+    """
+    alien = _dominant_alien(text)
+    if not alien:
+        return ""
+    if _dominant_alien(reference or "") == alien:
+        return ""      # the post itself is in that script — answering in it is right
+    return alien
+
+
 def _script_bleed(text: str) -> str:
     """The name of a foreign script bleeding into a comment written in another, or ""."""
     counts = {name: 0 for name in _ALIEN_SCRIPTS}

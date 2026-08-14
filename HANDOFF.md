@@ -263,7 +263,18 @@ ORPHEUS `mode=mood`, and `myrmidon/app/outcome_engine.py` (read-only second read
   are `draft` with empty or contradictory positions. Nothing posts to a real channel until the
   operator activates something.
 
-### 2.5 Next steps
+### 2.5 Next steps — **superseded by `ROADMAP.md`**
+
+Read **`ROADMAP.md`** first: it is the operator-approved plan of record, drawn from three audits on
+14 Aug (`SYSTEM_STATE.md`, `FUNCTIONAL_GAPS.md`, `CODE_AUDIT.md`). Order: quick wins → code
+foundation (break `myrmidon/app/main.py` apart — it causes 10 import cycles and caused a live
+deadlock) → personas (only 6 of 20 profile fields reach the model; the language rule ignores what
+the persona can speak) → autonomy (`mission_outcomes` is written and read by nobody) → technical
+debt. **Model replacement and hardware upgrades are postponed by the operator. UX/UI comes after
+the roadmap.** Before asking for review, run `python3 tools/check_architecture.py` and
+`ruff check` — both are configured and both fail on new debt.
+
+The list below is the older, pre-audit view, kept for context:
 1. **A bigger `TEXT_MODEL_NAME`.** This is now the limiter, not the plumbing: the model invents
    names and sometimes writes fluent nonsense that passes every guard. Three detectors were
    measured and rejected (§2.3) — do not build a fourth. The polygon is the place to compare a

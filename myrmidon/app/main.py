@@ -831,6 +831,7 @@ def main() -> None:
     # the swarm (a separate client: the loop's own is busy in BRPOP).
     start_task_scheduler(connect_redis())
 
+
     # Start the Device API HTTP server in a background thread
     try:
         from app.device_api import start_device_api_server
@@ -846,6 +847,21 @@ def main() -> None:
         logger.warning("AVD self-healing monitor failed to start: %s (non-fatal)", e)
 
     db_session_factory = connect_postgres()
+
+    # Warm the swarm-identity cache in the background, where no session lock is held.
+    # Reading a thread needs to know which messages are ours, but resolving that opens a
+    # session per account — doing it lazily inside a comment task deadlocks against that
+    # task's own session lock and stalls the single consumer loop (measured live: the
+    # task stopped at «session busy» and nothing else executed afterwards).
+    def _warm_identities() -> None:
+        try:
+            from app import outcome_engine
+            logger.info("Swarm identities warmed: %d.",
+                        len(outcome_engine.swarm_identities(db_session_factory)))
+        except Exception as exc:
+            logger.warning("Could not warm swarm identities: %s", exc)
+
+    _threading.Thread(target=_warm_identities, daemon=True, name="warm-identities").start()
 
     # Start the autonomous dialogue engine: polls for human replies to the bot's
     # comments and answers them with memory + thread-mood context (human-like).

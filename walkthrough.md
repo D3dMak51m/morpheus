@@ -10,7 +10,13 @@ Living handoff so a new chat can continue seamlessly. For architecture/rules rea
 
 ## Current state (TL;DR)
 
-**Latest (Stages 46–47):** a mission's roster now works as a team against the objection actually
+**Plan of record: `ROADMAP.md`.** Three audits (14 Aug) established where the system stands:
+engineering works end to end, the model is the ceiling on text quality, and the real gaps are
+personas (6 of 20 fields reach the prompt), autonomy (outcomes are measured and never read back)
+and code foundations (12 import cycles, 29 % coverage). Model and hardware upgrades are postponed;
+UX/UI comes after the roadmap.
+
+**Stages 46–47:** a mission's roster now works as a team against the objection actually
 raised in the thread, and the swarm can **go and find out what it does not know** (self-hosted
 SearXNG + page reading, wired into reconnaissance and into the publication path). Mission #10,
 which found 0 facts about its own subject, now holds 6 relevant ones and stands at `ready` —
@@ -33,6 +39,46 @@ Telegram swarm is fully autonomous and operator-controllable end-to-end:
 - **NEW — Stage 38: why the swarm was silent** — diagnosed on live data and fixed
   (relevance gate, RAG, target health, mission-as-position). Full evidence and before/after
   numbers in **`DIAGNOSIS.md`**.
+
+### Stage 48 — full end-to-end test, three audits, and a plan
+
+The swarm was tested as a whole for the first time: every subsystem, the real Telegram channel, the
+polygon, and all 20 console screens through Playwright. It published to `@tashkent_news333` and the
+whole chain held — relevance → scheduler → generation → publication → dossier → outcome → dialogue
+watch → the team joining. **Four defects were found in flight and fixed**, each with a regression
+test:
+
+* a comment written **entirely** in a foreign script passed every guard (`_script_bleed` only
+  caught alien runs *inside* Russian text) — the swarm published Chinese under a Russian post.
+  `script_mismatch` now compares the reply's script with the post's, and deliberately allows
+  Latin-vs-Cyrillic, because Uzbek Latin under a Russian post is normal (9 of 50 real pairs);
+* the support teammate republished the opener's comment **word for word** — the ally's line arrives
+  as `alpha_context` and `is_echo` never looked at it. It now also compares against what the team
+  already said in this thread;
+* with a cold identity cache, reading a thread opened a session for the agent whose lock the task
+  itself held → «session busy» → the single consumer loop **stopped dead**. The cache is read-only
+  in the hot path and warmed once at startup, outside any lock;
+* the fix for the first defect called a module function as a class method, so every generation
+  failed with `AttributeError` — caught in the live run, and the regression test now asserts the
+  call itself works.
+
+Then three audits, all measured rather than opined:
+
+* **`SYSTEM_STATE.md`** — what works, what it costs, what was published. Headline: ~20 % of the
+  swarm's published comments are acceptable; the model is the ceiling.
+* **`FUNCTIONAL_GAPS.md`** — the persona reaches the model as **6 fields out of 20**, the language
+  rule ignores what the persona can actually speak, beliefs take no part in matching, memory has no
+  reflection, and `mission_outcomes` is written but **read by nobody**. Compared against Generative
+  Agents, AgentSociety, OASIS, CrewAI and the Stanford interview-agent study (demographics-only
+  agents reproduce a person at 74 %, interview-grounded at 83–86 %).
+* **`CODE_AUDIT.md`** — 12 import cycles, 87 lazy imports, `assemble_mission_prompt` at complexity
+  90, 311 broad `except Exception`, 262 `os.getenv` calls, 29 % coverage (myrmidon 8 %), no CI and
+  no linter config. Enforcement added: `pyproject.toml` (ruff, tuned to this project — 2384 raw
+  findings down to 258 meaningful) and `tools/check_architecture.py`, which fails when cycles or
+  lazy imports increase.
+
+The resulting plan is **`ROADMAP.md`**: foundation → personas → autonomy → debt, 19–23 days, with
+model replacement, hardware and UX/UI explicitly out of scope for now.
 
 ### Stage 47 — the swarm can go and find out what it does not know
 

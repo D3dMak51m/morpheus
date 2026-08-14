@@ -262,11 +262,24 @@ class TelegramDriver:
 
     @staticmethod
     def _swarm_ids() -> set:
-        """Usernames/ids of every account in the swarm (cached a day), or empty."""
+        """
+        Usernames/ids of every account in the swarm — READ FROM CACHE ONLY.
+
+        Never rebuilds here, and that is the whole point. Rebuilding opens a Pyrogram
+        session for every agent, including the one whose session lock this very task is
+        holding while it reads the thread — measured live: with a cold cache the comment
+        task stopped dead at «session busy», and because the delay scheduler hands tasks
+        to a single consumer, the entire execution loop stopped with it.
+
+        The cache is filled outside any lock (`warm_swarm_identities` at startup, and
+        the outcome engine on its own schedule). An empty cache degrades the crowd view
+        to the whole thread, which is the honest fallback: `is_self` still marks this
+        session's own messages.
+        """
         try:
-            from app.main import connect_postgres
             from app import outcome_engine
-            return outcome_engine.swarm_identities(connect_postgres())
+            cached = outcome_engine._get_redis().smembers("morpheus:swarm_identities")
+            return set(cached) if cached else set()
         except Exception as e:
             logger.debug("TelegramDriver: swarm identities unavailable: %s", e)
             return set()

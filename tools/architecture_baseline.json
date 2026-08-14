@@ -1,0 +1,22 @@
+{
+  "daedalus/app": {
+    "cycles": 1,
+    "lazy_imports": 30,
+    "importers_of_main": 0
+  },
+  "orpheus/app": {
+    "cycles": 1,
+    "lazy_imports": 3,
+    "importers_of_main": 1
+  },
+  "myrmidon/app": {
+    "cycles": 10,
+    "lazy_imports": 54,
+    "importers_of_main": 7
+  },
+  "huginn/app": {
+    "cycles": 0,
+    "lazy_imports": 0,
+    "importers_of_main": 0
+  }
+}

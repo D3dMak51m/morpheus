@@ -4,6 +4,11 @@ This file orients a fresh session. Read it fully before working. Companion docs:
 **`README.md`** (what the system is, how to run it) and **`walkthrough.md`** (work
 log, current state, next steps). Keep all three current — see "Working rules".
 
+**Current plan of record: `ROADMAP.md`** — the prioritised fix plan drawn from three audits
+(`SYSTEM_STATE.md` — end-to-end testing, `FUNCTIONAL_GAPS.md` — what the swarm cannot do,
+`CODE_AUDIT.md` — code quality with measurements). Model replacement and hardware upgrades are
+**postponed by the operator**; UX/UI work comes only after the roadmap is done.
+
 ---
 
 ## What MORPHEUS is
@@ -407,6 +412,44 @@ pay for the same search three times).
    profiling run 24/7. So the swarm has a human daily rhythm, not 24/7 chatter.
 
 ---
+
+## Code rules (audited 14 Aug 2026 — see `CODE_AUDIT.md` for the measurements)
+
+Two commands enforce these; run both before asking for review:
+
+```bash
+python3 tools/check_architecture.py                     # cycles, lazy imports, main-as-library
+ruff check daedalus/app orpheus/app myrmidon/app huginn/app   # configured in pyproject.toml
+```
+
+`tools/check_architecture.py` keeps a baseline and **fails when things get worse**. Paying off
+inherited debt is gradual; adding new debt is not allowed.
+
+1. **The entrypoint exports nothing.** `app/main.py` assembles and runs. Infrastructure
+   (connections, credentials, clients) lives in its own modules. No module imports `app.main` —
+   that pattern gave MYRMIDON 10 import cycles, 54 lazy imports and one live deadlock that stopped
+   the whole execution loop.
+2. **Imports at the top of the file.** Exceptions (heavy model load, temporary cycle break) carry
+   a `# lazy: reason` marker; the checker counts those separately.
+3. **One database, one access style.** DAEDALUS owns the schema. Other services read through
+   internal HTTP endpoints, not SQL against tables they do not own (MYRMIDON currently has 20 raw
+   `text()` calls and zero model imports — a rename breaks it silently).
+4. **Routers stay thin** — parse, call a service function, format the reply. No DB or Redis in a
+   handler body. Practical limit ~300 lines per router file; the rest goes to `app/services/`.
+5. **A function fits in your head** — complexity ≤ 15, ≤ 8 arguments, ≤ 60 statements (ruff
+   enforces). `assemble_mission_prompt` at 90 is the standing counter-example.
+6. **Handle the error or let it out.** `except Exception: pass` is banned; catch a concrete class,
+   log it, continue meaningfully, and re-raise with `raise ... from exc`. The deadlock left no log
+   line precisely because of a silent catch.
+7. **Config in one place** — `app/config.py` per service. No `os.getenv` elsewhere (there are 262
+   calls across 150 variables today).
+8. **No `global`.** State is created at startup and passed explicitly; daemon threads make hidden
+   module state a race you cannot reproduce.
+9. **Every live defect gets a test at its own level** — logic → unit, service interaction →
+   integration. MYRMIDON is at 8 % coverage and publishes to real channels; that is the gap to close.
+10. **Schema changes are migrations** (alembic), never a hand-written `ALTER TABLE` at startup.
+11. **Comments explain WHY**, with the measurement that motivated the decision. This is already the
+    project's strongest habit — keep it.
 
 ## Working rules (follow these)
 

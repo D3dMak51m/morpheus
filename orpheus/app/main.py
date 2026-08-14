@@ -32,7 +32,7 @@ from app.persona import (
     TACTIC_LABELS_RU,
     DYNAMIC_TACTIC,
 )
-from app.guardrails import OutputGuardrails, content_words, normalize
+from app.guardrails import OutputGuardrails, content_words, normalize, script_mismatch
 from app.coordination import generate_beta_subtasks
 from app.simulation import handle_simulation_generation
 from app import textutil
@@ -823,8 +823,16 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
         if not prompt:
             result["reason"] = "profile_not_found"
         else:
-            # Echo references: reject replies that just parrot the human/post back.
-            echo_refs = [req.get("incoming_text") or "", req.get("post_text") or ""]
+            # Echo references: reject replies that just parrot the human/post back —
+            # and, since Stage 46, the ALLY too. Measured live: the support teammate
+            # published the opener's comment word for word, because the ally's line
+            # arrives as `alpha_context` and nothing compared the draft against it. The
+            # dossier's «наши уже сказали» block is a prompt instruction, and a 3B model
+            # ignores instructions it finds inconvenient; this is the structural guard.
+            dossier_said = [str(x.get("content", "")) for x in
+                            ((req.get("dossier") or {}).get("said") or [])]
+            echo_refs = [req.get("incoming_text") or "", req.get("post_text") or "",
+                         req.get("alpha_context") or "", *dossier_said]
             # Beta 'lite' = cheaper: shorter output, fewer retries.
             attempts_cap = 2 if lite else MISSION_REGEN_ATTEMPTS
             gen_max_tokens = 90 if lite else None
@@ -832,8 +840,14 @@ def handle_mission_generation(req: dict, redis_client, persona_engine, guardrail
             for attempt in range(1, attempts_cap + 1):
                 generated = generate_text(prompt, max_tokens=gen_max_tokens)
                 ok, reason = guardrails.validate_output(generated)
+                if ok:
+                    # Answering a Cyrillic post in Chinese is not a style problem.
+                    alien = script_mismatch(
+                        generated, (req.get("incoming_text") or "") + " " + (req.get("post_text") or ""))
+                    if alien:
+                        ok, reason = False, f"written in {alien} while the post is not"
                 if ok and guardrails.is_echo(generated, echo_refs):
-                    ok, reason = False, "reply echoes/repeats the incoming message"
+                    ok, reason = False, "reply echoes the post, the ally or what we already said"
                 if ok and recent_self and guardrails.is_repeat(generated, recent_self):
                     ok, reason = False, "repeats the agent's own recent comments"
                 if ok:
