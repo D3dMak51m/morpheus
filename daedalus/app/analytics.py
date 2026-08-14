@@ -23,6 +23,9 @@ from app.models import (
     AdminUser,
     SoulAccount,
     AgentActivityLog,
+    AgentProfile,
+    AgentChannelPref,
+    KnowledgeFact,
     Mission,
     ScoutedTarget,
     CapturedEvent,
@@ -321,14 +324,17 @@ def memory_audit(
 def activity_stream(
     agent_id: Optional[str] = None,
     platform: Optional[str] = None,
+    action_type: Optional[str] = None,
+    since_hours: Optional[int] = None,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
     _user: AdminUser = Depends(require_permission("agents:view")),
 ) -> Dict[str, Any]:
     """
-    Paginated query of the agent_activity_logs table.
-    Returns the most recent activity first.
+    Paginated query of the agent_activity_logs table (most recent first). Supports
+    drill-down filters used by the swarm dashboard: agent_id, action_type, and a
+    rolling ``since_hours`` window.
     """
     query = db.query(AgentActivityLog)
 
@@ -336,6 +342,11 @@ def activity_stream(
         query = query.filter(AgentActivityLog.agent_id == agent_id)
     if platform:
         query = query.filter(AgentActivityLog.platform == platform)
+    if action_type:
+        query = query.filter(AgentActivityLog.action_type == action_type)
+    if since_hours:
+        query = query.filter(
+            AgentActivityLog.created_at >= datetime.now(timezone.utc) - timedelta(hours=since_hours))
 
     total = query.count()
     logs = query.order_by(desc(AgentActivityLog.created_at)).offset(offset).limit(limit).all()
@@ -358,6 +369,194 @@ def activity_stream(
         "limit": limit,
         "offset": offset,
     }
+
+
+AGENT_EVENTS_STREAM = "stream:agent_events"
+
+
+@router.get("/live")
+def live_activity(
+    after: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    limit: int = 200,
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> Dict[str, Any]:
+    """
+    Live Ops feed. Tails the ``stream:agent_events`` Redis stream that MYRMIDON and
+    ORPHEUS emit fine-grained activity into (polling, reading a post, sensing mood,
+    thinking, updating memory, posting, conversing).
+
+    Cursor protocol: the client passes ``after=<last_id>`` to get only events newer
+    than what it already has (near-real-time when polled ~1s). With no cursor it
+    returns the most recent ~150 events as chronological backlog. ``agents`` always
+    carries each agent's latest event so the rail can show "what it's doing now".
+    """
+    r = get_redis()
+    limit = max(1, min(limit, 500))
+
+    try:
+        if after:
+            raw = r.xrange(AGENT_EVENTS_STREAM, min=f"({after}", max="+", count=limit)
+        else:
+            rev = r.xrevrange(AGENT_EVENTS_STREAM, max="+", min="-", count=150)
+            raw = list(reversed(rev))
+    except Exception as e:
+        return {"events": [], "last_id": after or "0", "agents": [], "error": str(e)}
+
+    events = []
+    last_id = after or "0"
+    for entry_id, fields in raw:
+        last_id = entry_id
+        if agent_id and fields.get("agent_id") != agent_id:
+            continue
+        events.append({"id": entry_id, **fields})
+
+    # Latest event per agent (across a recent window) → drives the agent rail.
+    agents: Dict[str, Any] = {}
+    try:
+        for entry_id, f in r.xrevrange(AGENT_EVENTS_STREAM, max="+", min="-", count=400):
+            a = f.get("agent_id", "unknown")
+            if a not in agents:
+                agents[a] = {
+                    "agent_id": a,
+                    "event": f.get("event"),
+                    "detail": f.get("detail"),
+                    "status": f.get("status"),
+                    "target": f.get("target"),
+                    "service": f.get("service"),
+                    "ts": f.get("ts"),
+                    "id": entry_id,
+                }
+    except Exception:
+        pass
+
+    return {"events": events, "last_id": last_id, "agents": list(agents.values())}
+
+
+SWARM_ACTIONS = ("comment", "reply", "react")
+
+
+@router.get("/swarm")
+def swarm_dashboard(
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("monitoring:view")),
+) -> Dict[str, Any]:
+    """
+    Swarm output overview: comments / replies / reactions the swarm produced (today
+    + all-time), broken down by caste and agent, plus knowledge gathered and live
+    conversation/target counts. Reads the durable agent_activity_logs.
+    """
+    now = datetime.now(timezone.utc)
+    day_ago = now - timedelta(hours=24)
+    AAL = AgentActivityLog
+
+    def _by_action(rows) -> Dict[str, int]:
+        out = {a: 0 for a in SWARM_ACTIONS}
+        for action, cnt in rows:
+            if action in out:
+                out[action] = cnt
+        return out
+
+    totals_all = _by_action(db.query(AAL.action_type, func.count(AAL.id)).group_by(AAL.action_type).all())
+    totals_24 = _by_action(db.query(AAL.action_type, func.count(AAL.id))
+                           .filter(AAL.created_at >= day_ago).group_by(AAL.action_type).all())
+
+    ok_24 = db.query(func.count(AAL.id)).filter(AAL.created_at >= day_ago, AAL.status == "SUCCESS").scalar() or 0
+    fail_24 = db.query(func.count(AAL.id)).filter(AAL.created_at >= day_ago, AAL.status == "FAILED").scalar() or 0
+
+    # Per-agent breakdown (last 24h) + caste/status from profiles.
+    profiles = {p.agent_id: (p.caste, p.status) for p in db.query(AgentProfile).all()}
+    agent_rows = (
+        db.query(AAL.agent_id, AAL.action_type, func.count(AAL.id), func.max(AAL.created_at))
+        .filter(AAL.created_at >= day_ago)
+        .group_by(AAL.agent_id, AAL.action_type)
+        .all()
+    )
+    by_agent: Dict[str, Any] = {}
+    for agent_id, action, cnt, last in agent_rows:
+        caste, status = profiles.get(agent_id, ("?", "?"))
+        d = by_agent.setdefault(agent_id, {
+            "agent_id": agent_id, "caste": caste, "status": status,
+            "comment": 0, "reply": 0, "react": 0, "last_active": None,
+        })
+        if action in SWARM_ACTIONS:
+            d[action] = cnt
+        if last and (d["last_active"] is None or last.isoformat() > d["last_active"]):
+            d["last_active"] = last.isoformat()
+
+    by_caste = {c: {"comment": 0, "reply": 0, "react": 0} for c in ("alpha", "beta", "gamma")}
+    for d in by_agent.values():
+        c = d["caste"]
+        if c in by_caste:
+            for a in SWARM_ACTIONS:
+                by_caste[c][a] += d[a]
+
+    status_rows = db.query(AgentProfile.status, func.count(AgentProfile.id)).group_by(AgentProfile.status).all()
+    agents_by_status = {s: c for s, c in status_rows}
+
+    kf_total = db.query(func.count(KnowledgeFact.id)).scalar() or 0
+    kf_24 = db.query(func.count(KnowledgeFact.id)).filter(KnowledgeFact.created_at >= day_ago).scalar() or 0
+
+    try:
+        active_dialogues = get_redis().hlen("morpheus:dialogue:watches")
+    except Exception:
+        active_dialogues = 0
+    target_channels = db.query(func.count(AgentChannelPref.id)).filter(
+        AgentChannelPref.role == "target", AgentChannelPref.watching == True).scalar() or 0  # noqa: E712
+    news_channels = db.query(func.count(AgentChannelPref.id)).filter(
+        AgentChannelPref.role == "news", AgentChannelPref.watching == True).scalar() or 0  # noqa: E712
+
+    return {
+        "today": totals_24,
+        "all_time": totals_all,
+        "success_24h": ok_24,
+        "failed_24h": fail_24,
+        "by_caste": by_caste,
+        "by_agent": sorted(by_agent.values(), key=lambda d: (d["caste"], d["agent_id"])),
+        "agents_by_status": agents_by_status,
+        "knowledge": {"total": kf_total, "today": kf_24},
+        "live": {
+            "active_dialogues": active_dialogues,
+            "target_channels": target_channels,
+            "news_channels": news_channels,
+        },
+    }
+
+
+@router.get("/dialogues")
+def list_dialogues(
+    _user: AdminUser = Depends(require_permission("monitoring:view")),
+) -> Dict[str, Any]:
+    """Active autonomous conversations the swarm is watching (dialogue watches)."""
+    import json as _json
+    out = []
+    try:
+        raw = get_redis().hgetall("morpheus:dialogue:watches")
+        for _wid, blob in raw.items():
+            try:
+                w = _json.loads(blob)
+            except Exception:
+                continue
+            ch = w.get("channel_ref")
+            pid = w.get("post_id")
+            url = ""
+            if ch and pid:
+                ref = str(ch).lstrip("@")
+                url = f"https://t.me/{ref}/{pid}" if not str(ch).lstrip("-").isdigit() else ""
+            out.append({
+                "agent_id": w.get("agent_id"),
+                "channel": w.get("channel_ref"),
+                "post_id": pid,
+                "url": url,
+                "opponent_id": w.get("opponent_id"),
+                "depth": w.get("depth", 0),
+                "narrative_goal": w.get("narrative_goal", ""),
+                "updated_at": w.get("updated_at"),
+            })
+    except Exception as e:
+        return {"dialogues": [], "total": 0, "error": str(e)}
+    out.sort(key=lambda d: d.get("updated_at") or 0, reverse=True)
+    return {"dialogues": out, "total": len(out)}
 
 
 # ── Device Proxy (forwards to MYRMIDON Device API) ───────────────────
@@ -595,6 +794,7 @@ class ActivityLogRequest(BaseModel):
     target_url: str
     text_content: Optional[str] = None
     status: str
+    mission_id: Optional[int] = None
 
 @router.post("/internal/activity", status_code=201)
 def internal_log_activity(
@@ -615,6 +815,7 @@ def internal_log_activity(
         target_url=request.target_url,
         text_content=request.text_content,
         status=request.status,
+        mission_id=request.mission_id,
     )
     db.add(log_entry)
     db.commit()

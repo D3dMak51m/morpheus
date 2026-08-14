@@ -49,6 +49,10 @@ ATOM_PERMISSIONS = [
     "roles:manage",
     "roles:view",
     "system:settings",
+    # SIMULATION — the isolated test polygon. Separate atoms so an operator can be
+    # given the sandbox without any production authority (and vice versa).
+    "simulation:view",
+    "simulation:manage",
 ]
 
 

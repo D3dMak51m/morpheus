@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/v1/scouting", tags=["Scouting Radar"])
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
 
 # Platforms whose authenticated sessions HUGINN may use for scouting.
-SCOUTING_PLATFORMS = ("instagram", "twitter", "x", "threads")
+SCOUTING_PLATFORMS = ("instagram", "twitter", "x", "threads", "telegram")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────

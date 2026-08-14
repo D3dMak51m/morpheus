@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    # Stage 21: pgvector-enabled Postgres for native cosine-similarity RAG search.
+    image: pgvector/pgvector:pg16
     container_name: morpheus-postgres
     environment:
       POSTGRES_USER: ${DB_USER:-morpheus_admin}
@@ -51,6 +52,9 @@ services:
     container_name: morpheus-daedalus
     ports:
       - "8000:8000"
+    # Stage 21: reach host-side Ollama to embed manually-injected KnowledgeFacts.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./global_config:/app/global_config
     networks:
@@ -64,8 +68,12 @@ services:
   huginn:
     build: ./huginn
     container_name: morpheus-huginn
+    # Stage 21: reach host-side Ollama to embed scraped news (nomic-embed-text).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data_lake:/app/data_lake
+      - ./global_config:/app/global_config
     networks:
       - morpheus_net
     env_file:
@@ -100,6 +108,8 @@ services:
         condition: service_healthy
       muninn:
         condition: service_started
+      heimdall:
+        condition: service_started
 
   myrmidon:
     build: ./myrmidon
@@ -120,10 +130,62 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      heimdall:
+        condition: service_started
+
+  heimdall:
+    # Dedicated speech-to-text service (faster-whisper). CPU-only by design so it
+    # never competes with Ollama for the single GPU. Model size via STT_MODEL
+    # (default 'medium' for dev; set 'large-v3' in prod). Models cached in a volume.
+    build: ./heimdall
+    container_name: morpheus-heimdall
+    ports:
+      - "8004:8004"
+    environment:
+      - STT_MODEL=${STT_MODEL:-medium}
+      - STT_DEVICE=${STT_DEVICE:-cpu}
+      - STT_COMPUTE_TYPE=${STT_COMPUTE_TYPE:-int8}
+    volumes:
+      - heimdall_models:/models
+    networks:
+      - morpheus_net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8004/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
+
+  searxng:
+    # Stage 47 — the swarm's own search front-end. A fixed set of news feeds can never
+    # cover a specific mission's subject (recon on the transport mission found its own
+    # key words in 0 of 1594 facts), and a comment about a score, a price or today's
+    # news cannot be written from a model's training data. This is where the swarm goes
+    # to find out. Self-hosted rather than a public engine: the query pattern here —
+    # every recon, plus the publication path whenever the freshness gate fires — is
+    # exactly what public endpoints throttle first, and a silently failing search puts
+    # the bots back to arguing from nothing.
+    image: searxng/searxng:latest
+    container_name: morpheus-searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-morpheus-searxng-change-me}
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    networks:
+      - morpheus_net
+    # No published port: nothing outside the compose network needs to reach it.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   pgdata:
   chromadata:
+  heimdall_models:
 
 networks:
   morpheus_net:

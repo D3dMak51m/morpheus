@@ -257,6 +257,33 @@ class ADBSupervisor:
 
         raise ValueError(f"Device '{device_id}' not found among connected devices")
 
+    # ── Autonomous Session Extraction (Stage 23) ──────────────────────────
+
+    def dump_shared_prefs(self, device_id: str, package: str) -> Dict[str, str]:
+        """
+        Dump every ``shared_prefs/*.xml`` file for ``package`` over a rooted ADB
+        shell. Returns {filename: xml_content}. Used by the autonomous session
+        extractor to capture native-app credentials without manual entry.
+        """
+        device = self._get_device(device_id)
+        prefs: Dict[str, str] = {}
+        prefs_dir = f"/data/data/{package}/shared_prefs"
+        try:
+            listing = device.shell(f"su 0 ls {prefs_dir} 2>/dev/null").strip()
+        except Exception as exc:
+            logger.warning("dump_shared_prefs: cannot list %s: %s", prefs_dir, exc)
+            return prefs
+
+        for name in [n.strip() for n in listing.splitlines() if n.strip().endswith(".xml")]:
+            try:
+                content = device.shell(f"su 0 cat {prefs_dir}/{name} 2>/dev/null")
+                if content:
+                    prefs[name] = content.strip()
+            except Exception as exc:
+                logger.warning("dump_shared_prefs: failed to read %s: %s", name, exc)
+        logger.info("dump_shared_prefs: captured %d pref file(s) for %s on %s.", len(prefs), package, device_id)
+        return prefs
+
     # ── Automated Recovery Machine ────────────────────────────────────────
 
     def spoof_device_hardware(self, device_id: str, serial: str) -> bool:

@@ -8,17 +8,24 @@ ORPHEUS fetches profiles from /api/v1/internal/profiles instead of YAML.
 import os
 from typing import Any, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory
+from datetime import datetime, timezone
+
+from app.models import (
+    AdminUser, AgentProfile, SoulAccount, VirtualDevice, AccountAuditLog, ProfileHistory,
+    AgentChannelPref, ScrapingLandscape, LANDSCAPE_LAYERS, bind_account_to_soul, unbind_account,
+)
 from app.rbac import require_permission
 
 router = APIRouter(prefix="/api/v1/souls", tags=["Agent Souls"])
 
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "morpheus-internal-sync-key")
+MYRMIDON_DEVICE_URL = os.getenv("MYRMIDON_DEVICE_URL", "http://myrmidon:8003")
 
 
 # ── Strict Persona Sub-Schemas (Visual Persona Builder, Stage 16) ─────────
@@ -74,10 +81,23 @@ class ProfileCreateRequest(BaseModel):
     behavioral_rules: BehavioralRules = Field(default_factory=BehavioralRules)
     platforms: Optional[list[str]] = []
     layers_affinity: Optional[dict] = {}
+    # Stage 21 — RAG layer subscriptions (defaults to global-only).
+    context_subscriptions: Optional[list[str]] = Field(default_factory=lambda: ["global"])
     active_hours_start: int = 8
     active_hours_end: int = 22
     core_mission: Optional[str] = None
     current_stance_modifiers: Optional[dict] = {}
+
+    @field_validator("context_subscriptions")
+    @classmethod
+    def _valid_subscriptions(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        cleaned = [s.strip().lower() for s in v if s]
+        invalid = set(cleaned) - set(LANDSCAPE_LAYERS)
+        if invalid:
+            raise ValueError(f"Invalid context_subscriptions {sorted(invalid)}. Allowed: {list(LANDSCAPE_LAYERS)}")
+        return cleaned
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -96,10 +116,22 @@ class ProfileUpdateRequest(BaseModel):
     behavioral_rules: Optional[BehavioralRules] = None
     platforms: Optional[list[str]] = None
     layers_affinity: Optional[dict] = None
+    context_subscriptions: Optional[list[str]] = None
     active_hours_start: Optional[int] = None
     active_hours_end: Optional[int] = None
     core_mission: Optional[str] = None
     current_stance_modifiers: Optional[dict] = None
+
+    @field_validator("context_subscriptions")
+    @classmethod
+    def _valid_subscriptions(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        cleaned = [s.strip().lower() for s in v if s]
+        invalid = set(cleaned) - set(LANDSCAPE_LAYERS)
+        if invalid:
+            raise ValueError(f"Invalid context_subscriptions {sorted(invalid)}. Allowed: {list(LANDSCAPE_LAYERS)}")
+        return cleaned
 
 
 class ProfileResponse(BaseModel):
@@ -107,6 +139,7 @@ class ProfileResponse(BaseModel):
     agent_id: str
     codename: str
     caste: str
+    status: str
     full_name: str
     birth_date: Optional[str]
     residence_city: Optional[str]
@@ -120,6 +153,7 @@ class ProfileResponse(BaseModel):
     behavioral_rules: Optional[dict]
     platforms: Optional[list]
     layers_affinity: Optional[dict]
+    context_subscriptions: Optional[list]
     active_hours_start: int
     active_hours_end: int
     core_mission: Optional[str]
@@ -203,6 +237,230 @@ def update_profile(
     db.commit()
     db.refresh(profile)
     return ProfileResponse.model_validate(profile)
+
+class ProfileStatusRequest(BaseModel):
+    status: str  # "active" | "suspended"
+
+
+@router.post("/profiles/{agent_id}/status", response_model=ProfileResponse)
+def set_profile_status(
+    agent_id: str,
+    request: ProfileStatusRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> ProfileResponse:
+    """
+    Pause or resume an agent. ``suspended`` halts all autonomous behaviour
+    (dialogue polling, news fan-out, mission generation); ``active`` resumes it.
+    Lightweight on purpose — does not snapshot profile history like a full edit.
+    """
+    valid = {"active", "suspended"}
+    if request.status not in valid:
+        raise HTTPException(status_code=400, detail=f"status must be one of {sorted(valid)}")
+    profile = db.query(AgentProfile).filter(AgentProfile.agent_id == agent_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile for agent '{agent_id}' not found.")
+    profile.status = request.status
+    db.commit()
+    db.refresh(profile)
+    return ProfileResponse.model_validate(profile)
+
+
+VALID_CHANNEL_ROLES = {"target", "news", "ignored"}
+
+
+class ChannelPrefRequest(BaseModel):
+    role: Optional[str] = None
+    watching: Optional[bool] = None
+
+
+class BulkChannelRequest(BaseModel):
+    chat_ids: list[str]
+    role: Optional[str] = None
+    watching: Optional[bool] = None
+
+
+def _serialize_pref(p: AgentChannelPref) -> dict:
+    return {
+        "chat_id": p.chat_id, "title": p.title, "username": p.username,
+        "type": p.chat_type or "channel", "members": p.members,
+        "role": p.role, "watching": p.watching,
+        "synced_at": p.synced_at.isoformat() if p.synced_at else None,
+    }
+
+
+def _channels_from_db(db: Session, agent_id: str) -> dict[str, Any]:
+    rows = db.query(AgentChannelPref).filter(AgentChannelPref.agent_id == agent_id).all()
+    channels = [_serialize_pref(p) for p in rows]
+    counts = {r: sum(1 for c in channels if c["role"] == r) for r in VALID_CHANNEL_ROLES}
+    synced = max((p.synced_at for p in rows if p.synced_at), default=None)
+    return {
+        "agent_id": agent_id, "channels": channels, "total": len(channels),
+        "counts": counts, "synced_at": synced.isoformat() if synced else None,
+    }
+
+
+def _live_sync_channels(db: Session, agent_id: str) -> None:
+    """
+    Re-enumerate the account's Telegram subscriptions (slow live session call) and
+    upsert them into agent_channel_prefs — this is the cache. Operator choices
+    (role/watching) on existing rows are preserved; new channels default target/watch.
+    """
+    with httpx.Client(timeout=90.0) as client:
+        resp = client.get(
+            f"{MYRMIDON_DEVICE_URL}/api/v1/telegram/{agent_id}/channels",
+            headers={"X-Internal-Token": INTERNAL_API_TOKEN},
+        )
+        resp.raise_for_status()
+        live = resp.json().get("channels", [])
+
+    prefs = {p.chat_id: p for p in db.query(AgentChannelPref).filter(
+        AgentChannelPref.agent_id == agent_id).all()}
+    now = datetime.now(timezone.utc)
+    for ch in live:
+        cid = str(ch.get("chat_id"))
+        p = prefs.get(cid)
+        if p is None:
+            p = AgentChannelPref(agent_id=agent_id, chat_id=cid, role="target", watching=True)
+            db.add(p)
+        p.title = ch.get("title")
+        p.username = ch.get("username")
+        p.chat_type = ch.get("type")
+        p.members = ch.get("members")
+        p.synced_at = now
+    db.commit()
+
+
+def _tg_identifier(username: Optional[str], chat_id: str) -> str:
+    return f"@{username}" if username else str(chat_id)
+
+
+def _sync_news_landscape(db: Session, agent_id: str, pref: AgentChannelPref) -> None:
+    """
+    Mirror a channel marked 'news' into the scraping landscape (the общий котёл) so
+    HUGINN tracks it — auto-filling platform/type/layers. When a channel stops being
+    'news', its auto-entry is deactivated (kept, reversible). Layers default to the
+    agent's context subscriptions.
+    """
+    ident = _tg_identifier(pref.username, pref.chat_id)
+    existing = db.query(ScrapingLandscape).filter(
+        ScrapingLandscape.target_identifier == ident).first()
+    if pref.role == "news":
+        profile = db.query(AgentProfile).filter(AgentProfile.agent_id == agent_id).first()
+        layers = (profile.context_subscriptions if profile and profile.context_subscriptions else ["global"])
+        tags = [pref.title] if pref.title else []
+        if existing is None:
+            db.add(ScrapingLandscape(
+                platform="telegram", type="channel", target_identifier=ident,
+                is_active=True, default_layers=layers, associated_tags=tags[:3],
+            ))
+        else:
+            existing.is_active = True
+            existing.platform = "telegram"
+            existing.type = "channel"
+            if not existing.default_layers:
+                existing.default_layers = layers
+    elif existing is not None and existing.platform == "telegram":
+        existing.is_active = False
+
+
+@router.get("/agents/{agent_id}/channels")
+def list_agent_channels(
+    agent_id: str,
+    refresh: bool = False,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:view")),
+) -> dict[str, Any]:
+    """
+    The agent's Telegram channel universe, served from the cached table for instant
+    open. On first ever open (empty cache) or ``?refresh=true`` it re-queries the
+    live session; otherwise it's a fast DB read.
+    """
+    have = db.query(AgentChannelPref).filter(AgentChannelPref.agent_id == agent_id).count()
+    if refresh or have == 0:
+        try:
+            _live_sync_channels(db, agent_id)
+        except Exception as e:
+            out = _channels_from_db(db, agent_id)
+            out["error"] = str(e)
+            return out
+    return _channels_from_db(db, agent_id)
+
+
+@router.post("/agents/{agent_id}/channels/sync")
+def sync_agent_channels(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """Force a live re-enumeration of the account's subscriptions into the cache."""
+    try:
+        _live_sync_channels(db, agent_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Не удалось опросить TG-сессию: {e}")
+    return _channels_from_db(db, agent_id)
+
+
+@router.post("/agents/{agent_id}/channels/bulk")
+def bulk_set_channels(
+    agent_id: str,
+    request: BulkChannelRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """Apply a role and/or watching change to many channels at once."""
+    if request.role is not None and request.role not in VALID_CHANNEL_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of {sorted(VALID_CHANNEL_ROLES)}")
+    prefs = {p.chat_id: p for p in db.query(AgentChannelPref).filter(
+        AgentChannelPref.agent_id == agent_id,
+        AgentChannelPref.chat_id.in_(request.chat_ids)).all()}
+    for cid in request.chat_ids:
+        p = prefs.get(cid)
+        if p is None:
+            p = AgentChannelPref(agent_id=agent_id, chat_id=cid)
+            db.add(p)
+            prefs[cid] = p
+        if request.role is not None:
+            p.role = request.role
+        if request.watching is not None:
+            p.watching = request.watching
+    db.flush()
+    if request.role is not None:
+        for cid in request.chat_ids:
+            _sync_news_landscape(db, agent_id, prefs[cid])
+    db.commit()
+    return _channels_from_db(db, agent_id)
+
+
+@router.post("/agents/{agent_id}/channels/{chat_id}")
+def set_agent_channel(
+    agent_id: str,
+    chat_id: str,
+    request: ChannelPrefRequest,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> dict[str, Any]:
+    """Upsert one channel's classification (role / watching) + sync news→landscape."""
+    if request.role is not None and request.role not in VALID_CHANNEL_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of {sorted(VALID_CHANNEL_ROLES)}")
+
+    pref = db.query(AgentChannelPref).filter(
+        AgentChannelPref.agent_id == agent_id, AgentChannelPref.chat_id == chat_id,
+    ).first()
+    if pref is None:
+        pref = AgentChannelPref(agent_id=agent_id, chat_id=chat_id)
+        db.add(pref)
+    if request.role is not None:
+        pref.role = request.role
+    if request.watching is not None:
+        pref.watching = request.watching
+    db.flush()
+    if request.role is not None:
+        _sync_news_landscape(db, agent_id, pref)
+    db.commit()
+    db.refresh(pref)
+    return {"agent_id": agent_id, "chat_id": chat_id, "role": pref.role, "watching": pref.watching}
+
 
 @router.post("/profiles/{agent_id}/rollback/{history_id}")
 def rollback_profile(
@@ -291,6 +549,7 @@ def internal_list_profiles(
             "agent_id": p.agent_id,
             "codename": p.codename,
             "caste": p.caste,
+            "status": p.status,
             "name": p.full_name,
             "identity": {
                 "full_name": p.full_name,
@@ -307,6 +566,7 @@ def internal_list_profiles(
             "behavioral_rules": p.behavioral_rules or {},
             "platforms": p.platforms or [],
             "layers_affinity": p.layers_affinity or {},
+            "context_subscriptions": p.context_subscriptions or ["global"],
             "active_hours_start": p.active_hours_start,
             "active_hours_end": p.active_hours_end,
             "core_mission": p.core_mission,
@@ -365,6 +625,41 @@ class AccountResponse(BaseModel):
 def get_accounts(db: Session = Depends(get_db)):
     accounts = db.query(SoulAccount).all()
     return accounts
+
+
+# ── Stage 23 — Decoupled Bind / Unbind ─────────────────────────────────────
+
+@router.put("/accounts/{account_id}/bind", response_model=AccountResponse)
+def bind_account(
+    account_id: int,
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> AccountResponse:
+    """
+    Bind a floating SoulAccount to an AgentProfile (soul). Both must already
+    exist independently — this is the explicit linking action that flips both
+    sides to 'active'.
+    """
+    try:
+        account = bind_account_to_soul(db, account_id, agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return account
+
+
+@router.put("/accounts/{account_id}/unbind", response_model=AccountResponse)
+def unbind_account_endpoint(
+    account_id: int,
+    db: Session = Depends(get_db),
+    _user: AdminUser = Depends(require_permission("agents:manage")),
+) -> AccountResponse:
+    """Detach a SoulAccount from its soul; it returns to the floating pool."""
+    try:
+        account = unbind_account(db, account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return account
 
 @router.put("/accounts/{account_id}/assign")
 def assign_account(

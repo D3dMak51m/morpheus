@@ -104,6 +104,8 @@ def force_sync(
 
 from fastapi import Header
 
+from app.router_knowledge import clean_fact_text, is_junk_fact
+
 class RawEventCaptureRequest(BaseModel):
     event_id: str
     source_platform: str
@@ -125,6 +127,14 @@ def capture_internal_event(
     if x_internal_token != "morpheus-internal-sync-key":
         raise HTTPException(status_code=403, detail="Invalid internal token")
         
+    # Stage 39 — the News Hub shows what the swarm actually read, so it gets the same
+    # scrubbing the knowledge base gets. Raw captures used to display the feed's
+    # read-more link text and, for sites whose article body never extracts, nothing but
+    # a comment widget and a subscription ad.
+    text_content = clean_fact_text(request.text_content or "")
+    if not text_content or is_junk_fact(text_content):
+        return {"status": "skipped", "message": "Boilerplate, not news"}
+
     # Check if event already exists
     existing = db.query(CapturedEvent).filter(CapturedEvent.event_id == request.event_id).first()
     if existing:
@@ -135,7 +145,7 @@ def capture_internal_event(
         source_platform=request.source_platform,
         source_target=request.source_target,
         post_id=request.post_id,
-        text_content=request.text_content,
+        text_content=text_content,
         media_type=request.media_type,
         media_path=request.media_path,
         layers=request.layers or {},

@@ -36,6 +36,12 @@ from app.router_auth_factory import router as auth_factory_router
 from app.router_sandbox import router as sandbox_router
 from app.router_missions import router as missions_router
 from app.router_scouting import router as scouting_router
+from app.router_knowledge import router as knowledge_router
+from app.router_factory import router as factory_router
+from app.router_channels import router as channels_router
+from app.router_decisions import router as decisions_router
+# SIMULATION — isolated test polygon; touches only sim_* tables (see router docstring).
+from app.router_simulation import router as simulation_router
 from app.models import AdminUser, Role, RolePermission, SoulAccount
 from app.rbac import (
     ATOM_PERMISSIONS,
@@ -159,6 +165,11 @@ app.include_router(auth_factory_router)
 app.include_router(sandbox_router)
 app.include_router(missions_router)
 app.include_router(scouting_router)
+app.include_router(knowledge_router)
+app.include_router(factory_router)
+app.include_router(channels_router)
+app.include_router(decisions_router)
+app.include_router(simulation_router)
 
 # ── Static Frontend SPA ──────────────────────────────────────────────────
 
@@ -180,7 +191,9 @@ class HealthResponse(BaseModel):
 
 
 class AgentCreateRequest(BaseModel):
-    agent_id: str
+    # Stage 23 — decoupled: an account may be created floating (no soul). When
+    # agent_id is omitted the account is stored 'unbound' for later binding.
+    agent_id: Optional[str] = None
     platform: str
     username: str
     password: str
@@ -190,7 +203,7 @@ class AgentCreateRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     id: int
-    agent_id: str
+    agent_id: Optional[str] = None  # Stage 23 — null for floating (unbound) accounts
     platform: str
     username: str
     assigned_proxy: Optional[str]
@@ -348,7 +361,7 @@ def create_agent(
         password_hash=hash_password(request.password),
         auth_cookies=request.auth_cookies,
         assigned_proxy=request.assigned_proxy,
-        status="active",
+        status="active" if request.agent_id else "unbound",
     )
     db.add(account)
     db.commit()

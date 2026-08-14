@@ -50,6 +50,73 @@ def ping(x_internal_token: str = Header(None, alias="X-Internal-Token")) -> Dict
     return {"status": "ok"}
 
 
+_session_factory = None
+
+
+def _get_session_factory():
+    global _session_factory
+    if _session_factory is None:
+        from app.main import connect_postgres
+        _session_factory = connect_postgres()
+    return _session_factory
+
+
+@app.get("/api/v1/telegram/{agent_id}/channels")
+def telegram_channels(
+    agent_id: str,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Live-enumerate the channels/groups the agent's Telegram account is subscribed
+    to (its universe of targets / news sources). Opens the Pyrogram session under
+    the per-agent lock; sync endpoint → FastAPI runs it in a threadpool.
+    """
+    _verify_token(x_internal_token)
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+
+    creds = get_agent_credentials(_get_session_factory(), agent_id, "telegram")
+    if creds is None:
+        raise HTTPException(status_code=404, detail="No active Telegram account for this agent.")
+    driver = TelegramDriver(agent_id, creds)
+    channels = driver.list_channels()
+    return {"agent_id": agent_id, "channels": channels, "total": len(channels)}
+
+
+@app.get("/api/v1/telegram/{agent_id}/export")
+def telegram_export(
+    agent_id: str,
+    channel: str,
+    post_limit: int = 10,
+    comment_limit: int = 40,
+    post_id: int = 0,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Export a channel's recent posts WITH the real comments under them.
+
+    Consumed by the SIMULATION polygon's import: a polygon thread populated only by
+    the operator and by our own agents cannot exercise the part of the pipeline that
+    reads a real crowd's mood. Comments live in the linked discussion group and need
+    MTProto, which only MYRMIDON holds.
+
+    Strictly read-only — nothing is posted, joined or reacted to.
+    """
+    _verify_token(x_internal_token)
+    from app.main import get_agent_credentials
+    from app.drivers.tg_client import TelegramDriver
+
+    creds = get_agent_credentials(_get_session_factory(), agent_id, "telegram")
+    if creds is None:
+        raise HTTPException(status_code=404, detail="No active Telegram account for this agent.")
+    driver = TelegramDriver(agent_id, creds)
+    data = driver.export_thread(channel, post_limit=post_limit,
+                                comment_limit=comment_limit, post_id=post_id or None)
+    if data.get("error"):
+        raise HTTPException(status_code=502, detail=f"Export failed: {data['error']}")
+    return {"agent_id": agent_id, **data}
+
+
 @app.get("/api/v1/devices")
 def list_devices(
     x_internal_token: str = Header(None, alias="X-Internal-Token"),
@@ -270,6 +337,102 @@ async def sandbox_execute(
 
     result["device_id"] = device_id
     result["agent_id"] = body.agent_id
+    return result
+
+
+# ── Autonomous Registration (Stage 24 — Clone Factory) ──────────────────────
+
+class AutoRegisterRequest(BaseModel):
+    platform: str = Field("instagram", description="instagram | telegram | twitter | threads | youtube")
+    agent_id: str = Field(..., description="Soul this account will be bound to")
+    full_name: str | None = Field(None, description="Display name to register with")
+    service: str | None = Field(None, description="Override SMS service code")
+
+
+@app.post("/api/v1/devices/{device_id}/auto-register")
+async def auto_register(
+    device_id: str,
+    body: AutoRegisterRequest,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Autonomously register a brand-new account on ``device_id``: buy a virtual
+    number, drive the app via coordinate typing, intercept the OTP, set up the
+    profile, and extract the live session. Returns the session payload + phone.
+    """
+    _verify_token(x_internal_token)
+    from app.drivers.registration_driver import run_auto_registration
+
+    logger.info("auto-register on %s: platform=%s agent=%s", device_id, body.platform, body.agent_id)
+    result = await run_auto_registration(
+        device_id=device_id,
+        platform=body.platform,
+        agent_id=body.agent_id,
+        full_name=body.full_name,
+        service=body.service,
+    )
+    result["device_id"] = device_id
+    return result
+
+
+# ── Autonomous Session Extraction (Stage 23) ────────────────────────────────
+
+def _run_extract_session(device_id: str, package: str | None) -> Dict[str, Any]:
+    """
+    Blocking worker (threadpool): dump the live session of the foregrounded app.
+
+    Combines two real sources:
+      • Appium WEBVIEW cookies + localStorage (web/hybrid apps).
+      • Rooted ADB ``shared_prefs`` XML dump (native apps).
+    """
+    from app.drivers.mobile_base import BaseMobileDriver
+
+    payload: Dict[str, Any] = {
+        "type": "unknown", "package": package,
+        "cookies": {}, "local_storage": {}, "shared_prefs": {}, "errors": [],
+    }
+
+    # Appium-driven webview/hybrid + (where the server permits) shared_prefs.
+    driver = BaseMobileDriver("session-extractor", {}, device_id=device_id)
+    try:
+        payload = driver.extract_session_state(package_name=package)
+    except Exception as e:
+        payload["errors"].append(f"appium_extract: {e}")
+    finally:
+        driver.close_session()
+
+    # Authoritative native fallback over rooted ADB (does not need Appium).
+    if package and not payload.get("shared_prefs"):
+        try:
+            prefs = _get_supervisor().dump_shared_prefs(device_id, package)
+            if prefs:
+                payload["shared_prefs"] = prefs
+                payload["type"] = "hybrid" if payload.get("type") == "web" else "native"
+        except Exception as e:
+            payload.setdefault("errors", []).append(f"adb_shared_prefs: {e}")
+
+    return payload
+
+
+@app.get("/api/v1/devices/{device_id}/extract-session")
+async def extract_session(
+    device_id: str,
+    package: str | None = None,
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Autonomously extract the live session (cookies / localStorage / shared_prefs)
+    from the app running on a device — eliminating manual cookie entry. DAEDALUS
+    pulls this and persists it onto the SoulAccount.
+    """
+    _verify_token(x_internal_token)
+    logger.info("extract-session on %s (package=%s)", device_id, package)
+    try:
+        result = await run_in_threadpool(_run_extract_session, device_id, package)
+    except Exception as e:
+        logger.error("extract-session crashed for %s: %s", device_id, e)
+        raise HTTPException(status_code=502, detail=f"Session extraction failed: {e}")
+    result["device_id"] = device_id
     return result
 
 

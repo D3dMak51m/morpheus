@@ -75,7 +75,12 @@ async def run_gamma_noise_scheduler(redis_client, publish_raw_event_func):
                 redis_client=redis_client,
                 event_id=event_id,
                 source_platform=target_platform,
-                source_target="Self", # Posting to their own feed/channel
+                # Stage 44 — "Self" was written for the mobile path (a bot posting to
+                # its own feed), which is broken and out of scope. On Telegram it is
+                # unresolvable, so every one of these became an execution task that
+                # slept its full human-pacing delay in the single consumer loop and
+                # then failed — blocking real mission comments behind it.
+                source_target="Self",
                 post_id=event_id,
                 text_content=text,
                 media_type=None,

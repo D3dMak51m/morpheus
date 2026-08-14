@@ -29,6 +29,7 @@ from app.scrapers.web_scraper import run_web_scraper
 from app.scrapers.social_feed_scraper import run_social_feed_scraper
 from app.scrapers.gamma_noise import run_gamma_noise_scheduler
 from app.scrapers.scouting_engine import run_scouting_engine
+from app.scrapers.rss_scraper import run_rss_scraper
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
@@ -67,6 +68,7 @@ ACTIVE_TARGETS: Dict[str, List[Dict[str, str]]] = {
     "twitter": [],
     "threads": [],
     "web": [],
+    "rss": [],
 }
 
 # ── Graceful shutdown ─────────────────────────────────────────────────────
@@ -238,15 +240,18 @@ async def individual_target_worker_pool(redis_client: redis.Redis) -> None:
     Spawns and manages dynamic tasks for explicitly targeted channels and websites.
     """
     logger.info("Starting individual_target_worker_pool...")
-    
+
     tg_task = asyncio.create_task(run_tg_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
     web_task = asyncio.create_task(run_web_scraper(redis_client, RAW_EVENTS_QUEUE, is_content_expired, publish_raw_event, ACTIVE_TARGETS))
-    
+    # Stage 22 — RSS scraper routes exclusively to MUNINN's knowledge base.
+    rss_task = asyncio.create_task(run_rss_scraper(redis_client, ACTIVE_TARGETS))
+
     while not _shutdown_requested:
         await asyncio.sleep(5)
-        
+
     tg_task.cancel()
     web_task.cancel()
+    rss_task.cancel()
 
 async def timeline_feed_worker_pool(redis_client: redis.Redis) -> None:
     """
@@ -289,8 +294,15 @@ async def main_loop() -> None:
     individual_targets_task = asyncio.create_task(individual_target_worker_pool(redis_client))
     timeline_feed_task = asyncio.create_task(timeline_feed_worker_pool(redis_client))
     
-    # Also keep gamma noise running
-    gamma_task = asyncio.create_task(run_gamma_noise_scheduler(redis_client, publish_raw_event))
+    # Stage 44 — gamma noise is OFF. It injected "neutral activity" events whose
+    # target is "Self" (a bot posting to its own feed — the mobile path, which is
+    # broken and out of scope). On Telegram those became execution tasks that could
+    # never resolve, and because the pacing delay is slept in the single consumer
+    # loop, four of them held a real mission comment behind 36 minutes of waiting.
+    # Set HUGINN_GAMMA_NOISE=1 to re-enable if the mobile path ever returns.
+    gamma_task = None
+    if os.getenv("HUGINN_GAMMA_NOISE", "0") == "1":
+        gamma_task = asyncio.create_task(run_gamma_noise_scheduler(redis_client, publish_raw_event))
 
     # Stage 18: authenticated scouting engine (velocity-based viral discovery)
     scouting_task = asyncio.create_task(run_scouting_engine())
@@ -314,7 +326,8 @@ async def main_loop() -> None:
     sync_task.cancel()
     individual_targets_task.cancel()
     timeline_feed_task.cancel()
-    gamma_task.cancel()
+    if gamma_task is not None:
+        gamma_task.cancel()
     scouting_task.cancel()
     logger.info("HUGINN shutdown complete.")
 

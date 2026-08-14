@@ -1,0 +1,3 @@
+# Test-only dependencies (the suite runs inside the container:
+#   docker compose exec daedalus python -m pytest tests -q)
+pytest==8.2.2

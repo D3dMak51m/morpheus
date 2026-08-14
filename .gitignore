@@ -42,3 +42,18 @@ chroma_db/
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend dependencies
+daedalus/frontend/node_modules/
+
+# Local DB backups (Stage 21/22 migration dumps)
+backups/
+
+# Telegram / session credential files
+*.session
+
+# Playwright MCP session artifacts
+.playwright-mcp/
+
+# Editor/IDE artifacts dropped into the repo root
+*.vsix

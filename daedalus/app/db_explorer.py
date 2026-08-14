@@ -62,17 +62,19 @@ class RawQueryResponse(BaseModel):
     row_count: int
 
 
-# ── Allowed tables (whitelist to prevent injection) ───────────────────────
+# ── Table-name validation ─────────────────────────────────────────────────
+# Validate against the LIVE list of real public tables (the same source the UI's
+# table list uses), so newly-added tables are accessible automatically AND only an
+# existing table name can be interpolated (injection-safe), instead of a stale
+# hardcoded whitelist that 400'd every new table.
 
-ALLOWED_TABLES = {"admin_users", "roles", "role_permissions", "user_roles", "souls_accounts", "agent_profiles", "scraping_landscape", "agent_activity_logs"}
-
-
-def _validate_table_name(table: str) -> None:
-    """Raise 400 if the table name is not in the whitelist."""
-    if table not in ALLOWED_TABLES:
+def _validate_table_name(table: str, db: Session) -> None:
+    """Raise 400 unless ``table`` is a real table in the public schema."""
+    tables = set(inspect(db.bind).get_table_names(schema="public"))
+    if table not in tables:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Table '{table}' is not accessible. Allowed: {sorted(ALLOWED_TABLES)}",
+            detail=f"Table '{table}' does not exist.",
         )
 
 
@@ -101,7 +103,7 @@ def read_table(
     Fetch rows from a specific table with pagination.
     Returns column names, row data as dicts, and total count.
     """
-    _validate_table_name(table_name)
+    _validate_table_name(table_name, db)
 
     count_result = db.execute(text(f"SELECT COUNT(*) FROM {table_name}"))  # noqa: S608
     total_count = count_result.scalar() or 0
@@ -131,7 +133,7 @@ def update_cell(
     Update a single cell in a table, identified by primary key.
     This is the core mechanism for the interactive DB Explorer UI.
     """
-    _validate_table_name(request.table)
+    _validate_table_name(request.table, db)
 
     stmt = text(
         f"UPDATE {request.table} "  # noqa: S608

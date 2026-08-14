@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
-import { Shield, Smartphone, HardDrive, Cpu, Link, Unlink } from 'lucide-react';
-import './DeviceGrid.css';
+import { Shield, Smartphone, HardDrive, Cpu, Link, Unlink, Trash2, Plus } from 'lucide-react';
+import { Box, Group, Stack, Title, Text, TextInput, Button, SimpleGrid, Paper, Badge, Modal, ActionIcon, Tooltip, Notification } from '@mantine/core';
+import { EntityPicker } from '../ui/EntityPicker';
 
 interface VirtualDevice {
   id: number;
@@ -54,7 +55,8 @@ const TelemetryCanvas: React.FC<{ value: number; max: number; color: string }> =
 const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
   const [devices, setDevices] = useState<VirtualDevice[]>([]);
   const [telemetry, setTelemetry] = useState<Record<string, TelemetryDevice>>({});
-  const [assignMap, setAssignMap] = useState<Record<number, string>>({});
+  const [souls, setSouls] = useState<{ agent_id: string; full_name: string; codename: string; caste: string; status: string }[]>([]);
+  const [pickerFor, setPickerFor] = useState<number | null>(null);
   const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({});
   const [toastMessage, setToastMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null);
   
@@ -104,10 +106,18 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
     }
   };
 
+  const fetchSouls = async () => {
+    try {
+      const res = await fetch('/api/v1/souls/profiles', { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setSouls(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
   useEffect(() => {
     fetchDevices();
     fetchTelemetry();
     fetchOrchestrator();
+    fetchSouls();
     const interval = setInterval(() => {
       fetchTelemetry();
       fetchOrchestrator();
@@ -140,7 +150,7 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Provisioned ${data.name} on ADB ${data.adb_port}`, 'success');
+        showToast(`Создан ${data.name} (ADB ${data.adb_port})`, 'success');
         setNewEmuName('');
         fetchOrchestrator();
         
@@ -156,10 +166,10 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
         }
 
       } else {
-        showToast(`Failed to provision: ${data.detail || data.error}`, 'error');
+        showToast(`Не удалось создать: ${data.detail || data.error}`, 'error');
       }
     } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
+      showToast(`Ошибка: ${e.message}`, 'error');
     } finally {
       setLoadingStates(prev => ({...prev, 'provision': false}));
     }
@@ -173,14 +183,14 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        showToast(`Success [${action}]`, 'success');
+        showToast(`Готово [${action}]`, 'success');
         fetchOrchestrator();
       } else {
         const data = await res.json();
-        showToast(`Error: ${data.detail || data.error}`, 'error');
+        showToast(`Ошибка: ${data.detail || data.error}`, 'error');
       }
     } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'error');
+      showToast(`Ошибка: ${e.message}`, 'error');
     } finally {
       setLoadingStates(prev => ({...prev, [`${name}-${action}`]: false}));
     }
@@ -200,12 +210,12 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Success [${action}]: ${data.status || 'OK'}`, 'success');
+        showToast(`Готово [${action}]: ${data.status || 'OK'}`, 'success');
       } else {
-        showToast(`Error [${action}]: ${data.detail || data.error || 'Failed'}`, 'error');
+        showToast(`Ошибка [${action}]: ${data.detail || data.error || 'сбой'}`, 'error');
       }
     } catch (e: any) {
-      showToast(`Error [${action}]: ${e.message}`, 'error');
+      showToast(`Ошибка [${action}]: ${e.message}`, 'error');
     } finally {
       setLoadingStates(prev => ({...prev, [actionKey]: false}));
     }
@@ -268,142 +278,99 @@ const DeviceGrid: React.FC<DeviceGridProps> = ({ token }) => {
   });
 
   return (
-    <div className="view-container device-registry relative">
+    <Box p="lg">
       {toastMessage && (
-        <div className={`absolute top-4 right-4 p-4 rounded text-white z-50 transition-opacity ${toastMessage.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
-          {toastMessage.text}
-        </div>
-      )}
-      
-      {vncUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-          <div className="bg-gray-900 rounded-lg overflow-hidden border border-white/20 shadow-2xl relative" style={{background: '#111', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', width: '80%', height: '80%', display: 'flex', flexDirection: 'column'}}>
-            <div className="p-3 border-b border-white/10 flex justify-between items-center" style={{padding: '12px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-              <h3 className="text-white font-semibold m-0">Live VNC Stream</h3>
-              <button onClick={() => setVncUrl(null)} className="text-white hover:text-red-400" style={{background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px'}}>Close</button>
-            </div>
-            <iframe src={vncUrl} className="w-full flex-grow border-none" style={{width: '100%', flexGrow: 1, border: 'none', height: '100%'}}></iframe>
-          </div>
-        </div>
+        <Notification color={toastMessage.type === 'success' ? 'teal' : 'red'} onClose={() => setToastMessage(null)}
+          style={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}>{toastMessage.text}</Notification>
       )}
 
-      <div className="header-row">
+      <Modal opened={!!vncUrl} onClose={() => setVncUrl(null)} title="Прямой VNC-поток" size="80%" centered withinPortal={false}>
+        {vncUrl && <iframe src={vncUrl} style={{ width: '100%', height: '70vh', border: 'none', borderRadius: 8 }} />}
+      </Modal>
+
+      <Group justify="space-between" mb="md" align="flex-start">
         <div>
-          <h1>Unified Device Manager</h1>
-          <p className="subtitle">Manage device allocations, live interaction, and orchestration</p>
+          <Title order={2}><HardDrive size={22} style={{ verticalAlign: -4 }} /> Устройства</Title>
+          <Text size="sm" c="dimmed" maw={620}>Управление виртуальными устройствами роя, прямое взаимодействие и оркестрация эмуляторов. (Мобильный стек вне scope — телеметрия может быть пустой.)</Text>
         </div>
-        <div className="create-device-form">
-          <input 
-            type="text" 
-            placeholder="New Emulator Name" 
-            value={newEmuName} 
-            onChange={e => setNewEmuName(e.target.value)}
-          />
-          <button onClick={handleProvision} disabled={loadingStates['provision']} className="btn-primary">
-            {loadingStates['provision'] ? 'Provisioning (Wait...)' : 'Provision Emulator'}
-          </button>
-        </div>
-      </div>
+        <Group gap="xs">
+          <TextInput placeholder="Имя нового эмулятора" value={newEmuName} onChange={e => setNewEmuName(e.currentTarget.value)} />
+          <Button leftSection={<Plus size={15} />} loading={loadingStates['provision']} onClick={handleProvision}>Создать эмулятор</Button>
+        </Group>
+      </Group>
 
-      <div className="device-grid">
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
         {mergedDevices.map((d, idx) => {
           const tel = telemetry[d.deviceId];
-          const isOnline = tel?.state === 'online';
+          const isOnline = tel?.state === 'online' || (d.isOrchestrated && d.status?.includes('Up'));
           const memUsed = tel ? (tel.mem_total_mb - tel.mem_free_mb) : 0;
-
           return (
-            <div key={`${d.deviceId}-${idx}`} className="device-card">
-              <div className="device-header" style={{display: 'flex', justifyContent: 'space-between'}}>
-                <h3><Smartphone size={16}/> {d.orchName || d.deviceId}</h3>
-                <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-                  {d.isVirtual && <button className="btn-icon text-danger" onClick={() => handleDeleteDevice(d.virtualId)} title="Remove from Daedalus"><Unlink size={14}/></button>}
-                  <div className={`status-dot ${isOnline || (d.isOrchestrated && d.status?.includes('Up')) ? 'online' : 'offline'}`} />
-                </div>
-              </div>
+            <Paper key={`${d.deviceId}-${idx}`} withBorder radius="md" p="md">
+              <Group justify="space-between" mb="xs">
+                <Group gap={6}><Smartphone size={16} /><Text fw={600} size="sm">{d.orchName || d.deviceId}</Text></Group>
+                <Group gap="xs">
+                  {d.isVirtual && <Tooltip label="Убрать из Daedalus"><ActionIcon variant="subtle" color="red" onClick={() => handleDeleteDevice(d.virtualId)}><Trash2 size={15} /></ActionIcon></Tooltip>}
+                  <Box style={{ width: 10, height: 10, borderRadius: 999, background: isOnline ? '#34c98b' : '#64748b' }} />
+                </Group>
+              </Group>
 
               {d.isOrchestrated && (
-                <div className="text-xs mt-2 text-muted" style={{display: 'flex', gap: '10px'}}>
-                  <span><strong>Docker:</strong> {d.status}</span>
-                  <span><strong>ADB:</strong> {d.adbPort}</span>
-                  <span><strong>VNC:</strong> {d.vncPort}</span>
-                </div>
+                <Group gap="md" mb="xs"><Text size="xs" c="dimmed">Docker: {d.status}</Text><Text size="xs" c="dimmed">ADB: {d.adbPort}</Text><Text size="xs" c="dimmed">VNC: {d.vncPort}</Text></Group>
               )}
 
               {d.isVirtual ? (
-                <div className="device-assignment mt-3">
-                  {d.assignedAgentId ? (
-                    <div className="flex-between">
-                      <span className="agent-tag"><Shield size={12}/> {d.assignedAgentId}</span>
-                      <button className="btn-icon text-danger" onClick={() => handleAssign(d.virtualId, null)}><Unlink size={14}/></button>
-                    </div>
-                  ) : (
-                    <div className="assign-inputs">
-                      <input 
-                        type="text" 
-                        placeholder="Assign agent..." 
-                        value={assignMap[d.virtualId] || ''}
-                        onChange={e => setAssignMap({...assignMap, [d.virtualId]: e.target.value})}
-                      />
-                      <button className="btn-icon text-success" onClick={() => handleAssign(d.virtualId, assignMap[d.virtualId])}><Link size={14}/></button>
-                    </div>
-                  )}
-                </div>
+                d.assignedAgentId ? (
+                  <Group justify="space-between" mb="sm">
+                    <Badge variant="light" color="indigo" leftSection={<Shield size={11} />}>{d.assignedAgentId}</Badge>
+                    <Button size="xs" variant="subtle" color="red" leftSection={<Unlink size={13} />} onClick={() => handleAssign(d.virtualId, null)}>Отвязать</Button>
+                  </Group>
+                ) : (
+                  <Button fullWidth size="xs" variant="light" mb="sm" leftSection={<Link size={13} />} onClick={() => setPickerFor(d.virtualId)}>Привязать агента</Button>
+                )
               ) : (
-                <div className="mt-3">
-                  <button className="btn-secondary text-xs w-full" onClick={() => handleCreateExplicit(d.deviceId)}>Register into Daedalus Fleet</button>
-                </div>
+                <Button fullWidth size="xs" variant="light" mb="sm" onClick={() => handleCreateExplicit(d.deviceId)}>Добавить в реестр Daedalus</Button>
               )}
 
-              <div className="telemetry-section mt-4">
-                {tel ? (
-                  <>
-                    <div className="telemetry-row">
-                      <label><Cpu size={12}/> Load</label>
-                      <span>{tel.cpu_load_1m?.toFixed(2) || '0.00'}</span>
-                    </div>
-                    <TelemetryCanvas value={tel.cpu_load_1m || 0} max={8} color={tel.cpu_load_1m > 4 ? '#ef4444' : '#3b82f6'} />
-                    <div className="telemetry-row">
-                      <label><HardDrive size={12}/> RAM</label>
-                      <span>{memUsed} / {tel.mem_total_mb} MB</span>
-                    </div>
-                    <TelemetryCanvas value={memUsed} max={tel.mem_total_mb || 100} color="#8b5cf6" />
-                  </>
-                ) : (
-                  <div className="offline-state text-muted text-xs mt-2">
-                    Telemetry data offline or booting
-                  </div>
-                )}
-              </div>
+              {tel ? (
+                <Stack gap={4} mb="sm">
+                  <Group justify="space-between"><Text size="xs" c="dimmed"><Cpu size={11} style={{ verticalAlign: -1 }} /> Нагрузка</Text><Text size="xs">{tel.cpu_load_1m?.toFixed(2) || '0.00'}</Text></Group>
+                  <TelemetryCanvas value={tel.cpu_load_1m || 0} max={8} color={tel.cpu_load_1m > 4 ? '#ef4444' : '#3b82f6'} />
+                  <Group justify="space-between"><Text size="xs" c="dimmed"><HardDrive size={11} style={{ verticalAlign: -1 }} /> ОЗУ</Text><Text size="xs">{memUsed} / {tel.mem_total_mb} MB</Text></Group>
+                  <TelemetryCanvas value={memUsed} max={tel.mem_total_mb || 100} color="#8b5cf6" />
+                </Stack>
+              ) : <Text size="xs" c="dimmed" mb="sm">Телеметрия недоступна или устройство загружается</Text>}
 
-              <div className="hardware-control-deck mt-4 pt-4" style={{borderTop: '1px solid rgba(255,255,255,0.1)'}}>
-                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px'}}>
-                  {d.isVirtual && (
-                    <>
-                      <button className="btn-secondary text-xs" onClick={() => handleHardwareControl(d.deviceId, 'reboot', {})}>
-                        Reboot
-                      </button>
-                      <button className="btn-warning text-xs" onClick={() => handleHardwareControl(d.deviceId, 'clear-cache', {package: 'com.android.chrome'})}>
-                        Clear Chrome
-                      </button>
-                    </>
-                  )}
-                  {d.isOrchestrated && (
-                    <>
-                      <button className="btn-primary text-xs" onClick={() => setVncUrl(`http://${window.location.hostname}:${d.vncPort}`)}>
-                        Live View
-                      </button>
-                      <button className="btn-danger text-xs" onClick={() => handleOrchControl(d.orchName, 'delete')}>
-                        Destroy
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
+              <SimpleGrid cols={2} spacing="xs" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+                {d.isVirtual && <>
+                  <Button size="xs" variant="default" onClick={() => handleHardwareControl(d.deviceId, 'reboot', {})}>Перезагрузка</Button>
+                  <Button size="xs" variant="light" color="yellow" onClick={() => handleHardwareControl(d.deviceId, 'clear-cache', { package: 'com.android.chrome' })}>Очистить Chrome</Button>
+                </>}
+                {d.isOrchestrated && <>
+                  <Button size="xs" onClick={() => setVncUrl(`http://${window.location.hostname}:${d.vncPort}`)}>Экран (VNC)</Button>
+                  <Button size="xs" color="red" variant="light" onClick={() => handleOrchControl(d.orchName, 'delete')}>Уничтожить</Button>
+                </>}
+              </SimpleGrid>
+            </Paper>
           );
         })}
-      </div>
-    </div>
+      </SimpleGrid>
+
+      <EntityPicker
+        opened={pickerFor !== null}
+        onClose={() => setPickerFor(null)}
+        title="Привязать агента к устройству"
+        rows={souls}
+        rowKey={s => s.agent_id}
+        searchText={s => `${s.full_name} ${s.codename} ${s.agent_id} ${s.caste}`}
+        emptyText="Нет доступных агентов."
+        columns={[
+          { key: 'agent', header: 'Агент', minWidth: 220, render: s => <Stack gap={0}><Text fw={600}>{s.full_name || s.codename}</Text><Text size="xs" c="dimmed" ff="monospace">{s.agent_id}</Text></Stack> },
+          { key: 'caste', header: 'Каста', minWidth: 90, render: s => <Badge variant="light">{s.caste}</Badge> },
+          { key: 'status', header: 'Статус', minWidth: 110, render: s => <Badge size="sm" variant="light">{s.status}</Badge> },
+        ]}
+        onPick={s => { if (pickerFor !== null) handleAssign(pickerFor, s.agent_id); setPickerFor(null); }}
+      />
+    </Box>
   );
 };
 

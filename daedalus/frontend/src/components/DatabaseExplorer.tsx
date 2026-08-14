@@ -1,276 +1,151 @@
-import React, { useState, useEffect } from 'react';
-import './DatabaseExplorer.css';
+import { useState, useEffect } from 'react';
+import {
+  Box, Group, Stack, Title, Text, Grid, Paper, ScrollArea, Textarea, Button, Table, TextInput,
+  NavLink, Badge, Alert, Loader, Center, Code,
+} from '@mantine/core';
+import { Database, Play } from 'lucide-react';
 
-interface DatabaseExplorerProps {
-  token: string;
-}
+interface DatabaseExplorerProps { token: string; }
+interface TableData { table: string; columns: string[]; rows: Record<string, any>[]; total_count: number; }
 
-interface TableData {
-  table: string;
-  columns: string[];
-  rows: Record<string, any>[];
-  total_count: number;
-}
-
-const DatabaseExplorer: React.FC<DatabaseExplorerProps> = ({ token }) => {
+const DatabaseExplorer = ({ token }: DatabaseExplorerProps) => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [tables, setTables] = useState<string[]>([]);
-  const [selectedTable, setSelectedTable] = useState<string>('');
+  const [selectedTable, setSelectedTable] = useState('');
   const [tableData, setTableData] = useState<TableData | null>(null);
-  
   const [limit] = useState(100);
   const [offset, setOffset] = useState(0);
-  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
-  // SQL Console
   const [sqlQuery, setSqlQuery] = useState('');
   const [sqlResult, setSqlResult] = useState<any>(null);
   const [sqlError, setSqlError] = useState('');
-  
-  // Edit mode
-  const [editingCell, setEditingCell] = useState<{rowIndex: number, col: string} | null>(null);
+  const [editingCell, setEditingCell] = useState<{ rowIndex: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState('');
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
-  };
+  useEffect(() => { (async () => {
+    try {
+      const r = await fetch('/api/v1/db/tables', { headers });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      setTables(d.tables || []);
+      if (d.tables?.length) setSelectedTable(d.tables[0]);
+    } catch (e: any) { setError(e.message || 'Не удалось загрузить таблицы'); }
+  })(); }, []);
 
   useEffect(() => {
-    fetchTables();
-  }, []);
-
-  useEffect(() => {
-    if (selectedTable) {
-      fetchTableData(selectedTable, limit, offset);
-    }
+    if (!selectedTable) return;
+    (async () => {
+      setLoading(true); setError('');
+      try {
+        const r = await fetch(`/api/v1/db/tables/${selectedTable}?limit=${limit}&offset=${offset}`, { headers });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setTableData(await r.json());
+      } catch (e: any) { setError(e.message || 'Не удалось загрузить данные'); setTableData(null); }
+      finally { setLoading(false); }
+    })();
   }, [selectedTable, limit, offset]);
-
-  const fetchTables = async () => {
-    try {
-      const res = await fetch('/api/v1/db/tables', { headers });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setTables(data.tables || []);
-      if (data.tables && data.tables.length > 0) {
-        setSelectedTable(data.tables[0]);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch tables');
-    }
-  };
-
-  const fetchTableData = async (tableName: string, l: number, o: number) => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch(`/api/v1/db/tables/${tableName}?limit=${l}&offset=${o}`, { headers });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setTableData(data);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch table data');
-      setTableData(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startEdit = (rowIndex: number, col: string, val: any) => {
-    setEditingCell({ rowIndex, col });
-    setEditValue(val === null ? '' : String(val));
-  };
 
   const saveCell = async (rowIndex: number, col: string) => {
     if (!tableData) return;
     const row = tableData.rows[rowIndex];
-    const pkCol = tableData.columns[0]; // Assuming first column is PK (usually 'id')
-    const pkVal = row[pkCol];
-
+    const pkCol = tableData.columns[0];
     try {
-      const res = await fetch('/api/v1/db/cell', {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({
-          table: selectedTable,
-          primary_key_column: pkCol,
-          primary_key_value: pkVal,
-          column: col,
-          new_value: editValue
-        })
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        throw new Error(errData?.detail || `HTTP ${res.status}`);
-      }
-      
-      // Update local state
-      const newRows = [...tableData.rows];
-      newRows[rowIndex] = { ...newRows[rowIndex], [col]: editValue };
-      setTableData({ ...tableData, rows: newRows });
-      
-      setEditingCell(null);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update cell');
-    }
+      const r = await fetch('/api/v1/db/cell', { method: 'PUT', headers, body: JSON.stringify({ table: selectedTable, primary_key_column: pkCol, primary_key_value: row[pkCol], column: col, new_value: editValue }) });
+      if (!r.ok) { const e = await r.json().catch(() => null); throw new Error(e?.detail || `HTTP ${r.status}`); }
+      const rows = [...tableData.rows]; rows[rowIndex] = { ...rows[rowIndex], [col]: editValue };
+      setTableData({ ...tableData, rows }); setEditingCell(null);
+    } catch (e: any) { setError(e.message || 'Не удалось обновить ячейку'); }
   };
 
   const executeSql = async () => {
-    setSqlError('');
-    setSqlResult(null);
+    setSqlError(''); setSqlResult(null);
     if (!sqlQuery.trim()) return;
-    
     try {
-      const res = await fetch('/api/v1/db/query', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ sql: sqlQuery })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-      setSqlResult(data);
-    } catch (e: unknown) {
-      setSqlError(e instanceof Error ? e.message : 'Query failed');
-    }
+      const r = await fetch('/api/v1/db/query', { method: 'POST', headers, body: JSON.stringify({ sql: sqlQuery }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+      setSqlResult(d);
+    } catch (e: any) { setSqlError(e.message || 'Запрос не выполнен'); }
   };
 
   return (
-    <div className="database-explorer view-container">
-      <div className="header-row">
-        <div>
-          <h1>Database Explorer</h1>
-          <p className="subtitle">Direct PostgreSQL table access and SQL execution.</p>
-        </div>
-      </div>
+    <Box p="lg">
+      <Group mb="md"><Title order={2}><Database size={22} style={{ verticalAlign: -4 }} /> База данных</Title></Group>
+      <Text size="sm" c="dimmed" mb="md">Прямой доступ к таблицам PostgreSQL и выполнение SQL.</Text>
+      {error && <Alert color="red" variant="light" mb="md">{error}</Alert>}
 
-      {error && <div className="error-banner">{error}</div>}
+      <Grid gutter="md">
+        <Grid.Col span={{ base: 12, md: 3 }}>
+          <Paper withBorder radius="md" p="xs">
+            <Text size="xs" tt="uppercase" c="dimmed" fw={600} mb="xs" px="xs">Таблицы</Text>
+            <ScrollArea.Autosize mah="70vh">
+              {tables.map(t => (
+                <NavLink key={t} label={<Text size="sm" ff="monospace">{t}</Text>} active={t === selectedTable}
+                  onClick={() => { setSelectedTable(t); setOffset(0); }} />
+              ))}
+            </ScrollArea.Autosize>
+          </Paper>
+        </Grid.Col>
 
-      <div className="explorer-layout">
-        <div className="table-sidebar">
-          <h3>Tables</h3>
-          <ul className="table-list">
-            {tables.map(t => (
-              <li 
-                key={t} 
-                className={t === selectedTable ? 'active' : ''}
-                onClick={() => { setSelectedTable(t); setOffset(0); }}
-              >
-                {t}
-              </li>
-            ))}
-          </ul>
-        </div>
-        
-        <div className="table-content">
-          <div className="sql-console">
-            <h3>Raw SQL Console (SuperAdmin)</h3>
-            <textarea 
-              value={sqlQuery} 
-              onChange={e => setSqlQuery(e.target.value)} 
-              placeholder="SELECT * FROM roles WHERE id = 1;"
-              rows={4}
-            />
-            <button className="btn-primary" onClick={executeSql}>Execute Query</button>
-            
-            {sqlError && <div className="error-banner" style={{marginTop: '10px'}}>{sqlError}</div>}
-            
-            {sqlResult && (
-              <div className="sql-result">
-                <p className="text-muted">Rows returned: {sqlResult.row_count}</p>
-                {sqlResult.rows.length > 0 && (
-                  <div className="data-grid-container" style={{maxHeight: '300px'}}>
-                    <table className="data-grid">
-                      <thead>
-                        <tr>
-                          {sqlResult.columns.map((c: string) => <th key={c}>{c}</th>)}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sqlResult.rows.map((r: any, i: number) => (
-                          <tr key={i}>
-                            {sqlResult.columns.map((c: string) => <td key={c}>{String(r[c])}</td>)}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="table-view">
-            <div className="table-header-controls">
-              <h3>{selectedTable} <span className="text-muted">({tableData?.total_count || 0} rows)</span></h3>
-              <div className="pagination">
-                <button 
-                  disabled={offset === 0} 
-                  onClick={() => setOffset(Math.max(0, offset - limit))}
-                  className="btn-secondary"
-                >Prev</button>
-                <span className="text-muted">Offset: {offset}</span>
-                <button 
-                  disabled={!tableData || offset + limit >= tableData.total_count} 
-                  onClick={() => setOffset(offset + limit)}
-                  className="btn-secondary"
-                >Next</button>
-              </div>
-            </div>
-
-            <div className="data-grid-container">
-              {loading ? <p>Loading data...</p> : tableData?.rows.length === 0 ? (
-                <p className="empty-state">Table is empty.</p>
-              ) : (
-                <table className="data-grid">
-                  <thead>
-                    <tr>
-                      {tableData?.columns.map(c => <th key={c}>{c}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableData?.rows.map((row, rowIndex) => (
-                      <tr key={rowIndex}>
-                        {tableData.columns.map(col => {
-                          const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.col === col;
-                          const val = row[col];
-                          // Do not allow editing first column (PK)
-                          const isPk = col === tableData.columns[0];
-
-                          return (
-                            <td key={col} onDoubleClick={() => { if(!isPk) startEdit(rowIndex, col, val); }}>
-                              {isEditing ? (
-                                <input
-                                  autoFocus
-                                  value={editValue}
-                                  onChange={e => setEditValue(e.target.value)}
-                                  onBlur={() => saveCell(rowIndex, col)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') saveCell(rowIndex, col);
-                                    if (e.key === 'Escape') setEditingCell(null);
-                                  }}
-                                  className="cell-editor"
-                                />
-                              ) : (
-                                <span className={val === null ? 'null-val' : ''}>
-                                  {val === null ? 'NULL' : String(val)}
-                                </span>
-                              )}
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+        <Grid.Col span={{ base: 12, md: 9 }}>
+          <Stack gap="md">
+            <Paper withBorder radius="md" p="md">
+              <Text fw={600} mb="xs">SQL-консоль (SuperAdmin)</Text>
+              <Textarea value={sqlQuery} onChange={e => setSqlQuery(e.currentTarget.value)} placeholder="SELECT * FROM roles WHERE id = 1;" autosize minRows={3} styles={{ input: { fontFamily: 'monospace' } }} />
+              <Button mt="sm" leftSection={<Play size={15} />} onClick={executeSql}>Выполнить запрос</Button>
+              {sqlError && <Alert color="red" variant="light" mt="sm">{sqlError}</Alert>}
+              {sqlResult && (
+                <Box mt="md">
+                  <Text size="sm" c="dimmed" mb="xs">Строк возвращено: {sqlResult.row_count}</Text>
+                  {sqlResult.rows.length > 0 && (
+                    <Table.ScrollContainer minWidth={sqlResult.columns.length * 140} type="native" mah={320}>
+                      <Table striped withTableBorder stickyHeader>
+                        <Table.Thead><Table.Tr>{sqlResult.columns.map((c: string) => <Table.Th key={c}>{c}</Table.Th>)}</Table.Tr></Table.Thead>
+                        <Table.Tbody>{sqlResult.rows.map((r: any, i: number) => <Table.Tr key={i}>{sqlResult.columns.map((c: string) => <Table.Td key={c}><Text size="xs" style={{ whiteSpace: 'nowrap' }}>{String(r[c])}</Text></Table.Td>)}</Table.Tr>)}</Table.Tbody>
+                      </Table>
+                    </Table.ScrollContainer>
+                  )}
+                </Box>
               )}
-            </div>
-            <p className="text-muted" style={{marginTop: '10px', fontSize: '0.8rem'}}>Double-click a cell to edit it directly (requires db:edit permission). Primary keys cannot be edited inline.</p>
-          </div>
-        </div>
-      </div>
-    </div>
+            </Paper>
+
+            <Paper withBorder radius="md" p="md">
+              <Group justify="space-between" mb="sm">
+                <Group gap="xs"><Text fw={600} ff="monospace">{selectedTable}</Text><Badge variant="light">{tableData?.total_count || 0} строк</Badge></Group>
+                <Group gap="xs">
+                  <Button size="xs" variant="default" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>← Назад</Button>
+                  <Text size="xs" c="dimmed">offset: {offset}</Text>
+                  <Button size="xs" variant="default" disabled={!tableData || offset + limit >= tableData.total_count} onClick={() => setOffset(offset + limit)}>Вперёд →</Button>
+                </Group>
+              </Group>
+              {loading ? <Center py="xl"><Loader /></Center> : tableData?.rows.length === 0 ? <Text c="dimmed" ta="center" py="lg">Таблица пуста.</Text> : (
+                <Table.ScrollContainer minWidth={(tableData?.columns.length || 1) * 160} type="native">
+                  <Table striped withTableBorder stickyHeader highlightOnHover>
+                    <Table.Thead><Table.Tr>{tableData?.columns.map(c => <Table.Th key={c}>{c}</Table.Th>)}</Table.Tr></Table.Thead>
+                    <Table.Tbody>{tableData?.rows.map((row, ri) => (
+                      <Table.Tr key={ri}>{tableData.columns.map(col => {
+                        const isEditing = editingCell?.rowIndex === ri && editingCell?.col === col;
+                        const val = row[col]; const isPk = col === tableData.columns[0];
+                        return (
+                          <Table.Td key={col} onDoubleClick={() => { if (!isPk) { setEditingCell({ rowIndex: ri, col }); setEditValue(val === null ? '' : String(val)); } }} style={{ whiteSpace: 'nowrap', maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {isEditing ? (
+                              <TextInput autoFocus size="xs" value={editValue} onChange={e => setEditValue(e.currentTarget.value)} onBlur={() => saveCell(ri, col)}
+                                onKeyDown={e => { if (e.key === 'Enter') saveCell(ri, col); if (e.key === 'Escape') setEditingCell(null); }} />
+                            ) : val === null ? <Text span size="xs" c="dimmed" fs="italic">NULL</Text> : <Text span size="xs">{String(val)}</Text>}
+                          </Table.Td>
+                        );
+                      })}</Table.Tr>
+                    ))}</Table.Tbody>
+                  </Table>
+                </Table.ScrollContainer>
+              )}
+              <Text size="xs" c="dimmed" mt="xs">Двойной клик по ячейке — редактирование (нужно право db:edit). Первичные ключи нельзя менять inline. <Code>Enter</Code> — сохранить, <Code>Esc</Code> — отмена.</Text>
+            </Paper>
+          </Stack>
+        </Grid.Col>
+      </Grid>
+    </Box>
   );
 };
 

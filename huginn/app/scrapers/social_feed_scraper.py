@@ -133,7 +133,14 @@ async def run_social_feed_scraper(redis_client, raw_events_queue, is_content_exp
             logger.info("AsyncSession started.")
             while True:
                 try:
-                    feed_platforms = ["twitter", "instagram", "web", "rss"]
+                    # Stage 39 — "web" and "rss" deliberately dropped from this list.
+                    # They were fetched here AND by rss_scraper/web_scraper, so every
+                    # feed was pulled twice on two schedules; this copy pushed the
+                    # result to `queue:raw_events`, which nothing consumes (the queue
+                    # sat at depth 0 while 60 captured events went nowhere). The
+                    # knowledge-bound scrapers own feeds now; this loop keeps only the
+                    # authenticated social timelines it was actually written for.
+                    feed_platforms = ["twitter", "instagram"]
                     
                     for platform in feed_platforms:
                         targets = active_targets.get(platform, [])

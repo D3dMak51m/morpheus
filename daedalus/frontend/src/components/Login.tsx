@@ -1,82 +1,44 @@
 import { useState } from 'react';
-import '../App.css';
+import { Center, Paper, Stack, Title, Text, TextInput, PasswordInput, Button, Alert } from '@mantine/core';
 
-interface LoginProps {
-  onLogin: (token: string) => void;
-}
+interface LoginProps { onLogin: (token: string) => void; }
 
-const Login: React.FC<LoginProps> = ({ onLogin }) => {
+const Login = ({ onLogin }: LoginProps) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setLoading(true);
-
+    setError(''); setLoading(true);
     try {
-      const formData = new URLSearchParams();
-      formData.append('username', username);
-      formData.append('password', password);
-
-      const res = await fetch('/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData.toString(),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || 'Authentication failed');
-      }
-
-      const data = await res.json();
-      onLogin(data.access_token);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Unknown error');
-      }
-    } finally {
-      setLoading(false);
-    }
+      const body = new URLSearchParams({ username, password }).toString();
+      const r = await fetch('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || 'Ошибка авторизации'); }
+      const d = await r.json();
+      onLogin(d.access_token);
+    } catch (err: any) { setError(err.message || 'Неизвестная ошибка'); }
+    finally { setLoading(false); }
   };
 
   return (
-    <div className="login-container">
-      <div className="login-card">
-        <h1>DAEDALUS</h1>
-        <p className="subtitle">MORPHEUS CONTROL PANEL</p>
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label>Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              autoFocus
-              required
-            />
-          </div>
-          <div className="form-group">
-            <label>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-            />
-          </div>
-          {error && <div className="error-banner">{error}</div>}
-          <button type="submit" className="btn-primary login-btn" disabled={loading}>
-            {loading ? 'Authenticating...' : 'Login'}
-          </button>
+    <Center h="100vh" style={{ background: 'var(--bg-base)' }}>
+      <Paper withBorder radius="lg" p="xl" w={400} style={{ background: 'var(--bg-surface)' }}>
+        <Stack gap="xs" align="center" mb="lg">
+          <Title order={1} style={{ letterSpacing: 4 }}>DAEDALUS</Title>
+          <Text size="sm" c="indigo" fw={700}>MORPHEUS CONTROL PANEL</Text>
+        </Stack>
+        <form onSubmit={submit}>
+          <Stack gap="md">
+            <TextInput label="Имя пользователя" value={username} onChange={e => setUsername(e.currentTarget.value)} autoFocus required />
+            <PasswordInput label="Пароль" value={password} onChange={e => setPassword(e.currentTarget.value)} required />
+            {error && <Alert color="red" variant="light">{error}</Alert>}
+            <Button type="submit" fullWidth loading={loading} mt="xs">Войти</Button>
+          </Stack>
         </form>
-      </div>
-    </div>
+      </Paper>
+    </Center>
   );
 };
 
